@@ -3,6 +3,7 @@ import uuid
 import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import Optional
 from backend.db import get_db, SessionLocal
 from backend.models import (
@@ -14,6 +15,44 @@ from backend.config import UPLOAD_DIR
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _match_section_to_curriculum(
+    db: Session,
+    heading: str,
+    parent_curriculum_id: Optional[int],
+) -> tuple[Optional[int], Optional[str]]:
+    """Try to match a section heading to a specific curriculum leaf node.
+
+    Searches within the subtree of parent_curriculum_id for a node whose name
+    matches the heading (case-insensitive). Falls back to the parent node if
+    no match is found.
+
+    Returns (curriculum_topic_id, curriculum_topic_path).
+    """
+    if not parent_curriculum_id:
+        return None, None
+
+    parent = db.get(Curriculum, parent_curriculum_id)
+    if not parent:
+        return None, None
+
+    # Look for a node named exactly like the heading within the parent's subtree
+    match = (
+        db.query(Curriculum)
+        .filter(
+            func.lower(Curriculum.name) == heading.lower(),
+            Curriculum.version == parent.version,
+            Curriculum.path.startswith(parent.path),
+        )
+        .first()
+    )
+
+    if match:
+        return match.id, match.path
+
+    # Fallback: use the parent node itself
+    return parent.id, parent.path
 
 
 def topic_tree_to_dict(tt: TopicTree, include_sections: bool = True) -> dict:
@@ -381,14 +420,6 @@ def _run_processing(job_id: int):
 
         existing_sections = {s.heading: s for s in tt.sections}
 
-        # Resolve curriculum topic for inheriting to sections
-        curriculum_topic_id = tt.curriculum_id
-        curriculum_topic_path = None
-        if curriculum_topic_id:
-            cur_node = db.get(Curriculum, curriculum_topic_id)
-            if cur_node:
-                curriculum_topic_path = cur_node.path
-
         for idx, (heading, elems) in enumerate(section_groups):
             heading_tree = build_heading_tree(elems)
             content_text = "\n".join(e["text"] for e in elems if e.get("text"))
@@ -396,6 +427,9 @@ def _run_processing(job_id: int):
 
             image_count = sum(1 for e in elems if e.get("type") == "image")
             table_count = sum(1 for e in elems if e.get("type") == "table")
+
+            # Match this section's heading to the deepest curriculum node possible
+            sec_topic_id, sec_topic_path = _match_section_to_curriculum(db, heading, tt.curriculum_id)
 
             if heading in existing_sections:
                 # Merge into existing section
@@ -407,9 +441,9 @@ def _run_processing(job_id: int):
                 section.table_count += table_count
                 section.updated_at = utcnow()
                 # Update topic if set and not already assigned
-                if curriculum_topic_id and not section.curriculum_topic_id:
-                    section.curriculum_topic_id = curriculum_topic_id
-                    section.curriculum_topic_path = curriculum_topic_path
+                if sec_topic_id and not section.curriculum_topic_id:
+                    section.curriculum_topic_id = sec_topic_id
+                    section.curriculum_topic_path = sec_topic_path
             else:
                 section = Section(
                     topic_tree_id=tt.id,
@@ -421,8 +455,8 @@ def _run_processing(job_id: int):
                     image_count=image_count,
                     table_count=table_count,
                     sort_order=idx,
-                    curriculum_topic_id=curriculum_topic_id,
-                    curriculum_topic_path=curriculum_topic_path,
+                    curriculum_topic_id=sec_topic_id,
+                    curriculum_topic_path=sec_topic_path,
                 )
                 db.add(section)
                 db.flush()
@@ -515,19 +549,15 @@ def _run_ai_heading_processing(job_id: int, curriculum_version: str = 'v1'):
         job.pipeline_step = "merging"
         db.commit()
 
-        curriculum_topic_id = tt.curriculum_id
-        curriculum_topic_path = None
-        if curriculum_topic_id:
-            cur_node = db.get(Curriculum, curriculum_topic_id)
-            if cur_node:
-                curriculum_topic_path = cur_node.path
-
         for idx, (heading, elems) in enumerate(section_groups):
             heading_tree = build_heading_tree(elems)
             content_text = "\n".join(e["text"] for e in elems if e.get("text"))
             content_html = build_content_html(elems)
             image_count = sum(1 for e in elems if e.get("type") == "image")
             table_count = sum(1 for e in elems if e.get("type") == "table")
+
+            # Match this section's heading to the deepest curriculum node possible
+            sec_topic_id, sec_topic_path = _match_section_to_curriculum(db, heading, tt.curriculum_id)
 
             section = Section(
                 topic_tree_id=tt.id,
@@ -539,8 +569,8 @@ def _run_ai_heading_processing(job_id: int, curriculum_version: str = 'v1'):
                 image_count=image_count,
                 table_count=table_count,
                 sort_order=idx,
-                curriculum_topic_id=curriculum_topic_id,
-                curriculum_topic_path=curriculum_topic_path,
+                curriculum_topic_id=sec_topic_id,
+                curriculum_topic_path=sec_topic_path,
             )
             db.add(section)
             db.flush()
