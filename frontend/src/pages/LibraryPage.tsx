@@ -611,9 +611,9 @@ export default function LibraryPage() {
                               />
                               <div className="flex-1 min-w-0">
                                 <span className="text-xs font-medium text-gray-700 block truncate">{section.heading}</span>
-                                {section.curriculum_topic_path && (
-                                  <span className="text-[10px] text-gray-400 block truncate">{section.curriculum_topic_path}</span>
-                                )}
+                                <span className="text-[10px] text-gray-400 block truncate">
+                                  {section.curriculum_topic_path ?? `${expandedTree.name} › ${section.heading}`}
+                                </span>
                               </div>
                               <div className="flex items-center gap-2 shrink-0">
                                 {(section.flags?.length ?? 0) > 0 && (

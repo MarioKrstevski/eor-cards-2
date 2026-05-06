@@ -501,9 +501,9 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                             />
                             <div className="flex-1 min-w-0">
                               <span className="text-xs truncate block">{section.heading}</span>
-                              {section.curriculum_topic_path && (
-                                <span className="text-[9px] text-gray-400 truncate block leading-tight">{section.curriculum_topic_path}</span>
-                              )}
+                              <span className="text-[9px] text-gray-400 truncate block leading-tight">
+                                {section.curriculum_topic_path ?? `${expandedTree.name} › ${section.heading}`}
+                              </span>
                             </div>
                             {section.card_count > 0 && (
                               <span className="text-[10px] text-gray-400 tabular-nums shrink-0">
