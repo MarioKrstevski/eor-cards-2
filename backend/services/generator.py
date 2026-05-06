@@ -1,0 +1,249 @@
+"""Card generation: produce cloze flashcards from section content."""
+from __future__ import annotations
+import re
+import anthropic
+from backend.config import DEFAULT_MODEL
+
+ANCHOR_INSTRUCTION = """CRITICAL RULE — Anchor term: Every card must contain a visible, unclosed "anchor" \
+that tells the student what topic/condition/concept they are being tested on. \
+Determine the anchor from the topic path, section heading, and content context. \
+The anchor is usually the disease, condition, or concept name. \
+NEVER cloze the anchor — it must remain readable so the student knows what \
+they are studying and can recall the associated facts.
+
+CLOZE VS BOLD DECISION RULE:
+- CLOZE ({{c1::term}}) = any independently testable clinical element: anatomical structures, \
+physiological terms, condition modifiers, dysfunction types, drug names, lab values, time frames, \
+mechanisms, findings. If a student could be tested on recalling it, it must be clozed.
+- <b>bold HTML tag</b> = ONLY for structural orientation labels (section headers within a card) \
+and explicit emphasis qualifiers already present in the source text. \
+NEVER use bold as a substitute for clozing. If a term qualifies for both, it should be CLOZED, not bolded.
+
+FORMATTING RULE — ABSOLUTE: Output plain text only. \
+NEVER use markdown formatting. \
+** characters are FORBIDDEN — outputting **term** is a formatting error. \
+* characters are FORBIDDEN for emphasis. \
+No #, no backticks, no markdown of any kind. \
+For any emphasis, use only HTML tags: <b>term</b>. \
+The output format is: number|card text|additional context (optional)|source:P1-P3 \
+The additional context after the second | is optional. When the rules specify \
+additional context, sibling footers, or supplementary information for a card, \
+place it after a second | delimiter on the same line. \
+Do NOT concatenate additional context directly into the card text. \
+The card text (between first and second |) must contain ONLY the primary testable content. \
+The fourth field (after the third |) is a source reference indicating which [P1], [P2], etc. \
+paragraph markers from the source text the card was derived from. Use format source:P3 (single), \
+source:P3-P5 (contiguous range), or source:P3,P7 (non-contiguous). This field is required. \
+CLOZE INDEX RULE — ABSOLUTE: Every card uses {{c1::term}} for ALL cloze deletions. \
+Always c1, regardless of the card number. Never use c2, c3, c4, etc. \
+Example: 1|Primary card text with {{c1::clozes}}.|Other items: item A, item B, item C|source:P1-P2"""
+
+
+def number_paragraphs(text: str) -> str:
+    """Prefix each non-empty line with [P1], [P2], etc. for source traceability."""
+    lines = text.split("\n")
+    numbered = []
+    counter = 0
+    for line in lines:
+        if line.strip():
+            counter += 1
+            numbered.append(f"[P{counter}] {line}")
+        else:
+            numbered.append(line)
+    return "\n".join(numbered)
+
+
+def strip_card_html(card_text: str) -> str:
+    """Strip HTML tags and reveal cloze terms to produce plain text."""
+    text = re.sub(r'\{\{c\d+::([^}]+)\}\}', r'\1', card_text)
+    return re.sub(r'<[^>]+>', '', text).strip()
+
+
+def extract_cloze_terms(card_text: str) -> list[str]:
+    """Extract cloze deletion terms from card HTML."""
+    return re.findall(r'\{\{c\d+::([^}]+)\}\}', card_text)
+
+
+def fix_markdown_bold(text: str) -> str:
+    """Convert any **term** markdown bold to <b>term</b> HTML bold."""
+    return re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+
+
+def format_extra_as_list(text: str) -> str:
+    """Format extra/additional context into line-separated HTML list items."""
+    if '<br' in text.lower() or '<div' in text.lower() or '<li' in text.lower():
+        return text
+    if '; ' in text:
+        label_match = re.match(r'^(.*?:\s*)', text)
+        label = label_match.group(1) if label_match else ''
+        items_text = text[len(label):]
+        items = [item.strip() for item in items_text.split(';') if item.strip()]
+        if len(items) > 1:
+            items_html = ''.join(f'<br>• {item}' for item in items)
+            return f'{label}{items_html}'
+    if re.search(r'(?:^|- )', text):
+        parts = re.split(r'\s*-\s+', text)
+        label = parts[0].strip()
+        items = [p.strip() for p in parts[1:] if p.strip()]
+        if len(items) > 1:
+            items_html = ''.join(f'<br>• {item}' for item in items)
+            return f'{label}{items_html}' if label else items_html.lstrip('<br>')
+    return text
+
+
+def parse_card_output(raw: str) -> tuple[list[dict], bool]:
+    """Parse the numbered|card format output from Claude.
+
+    Returns (cards, needs_review) where needs_review is True if NEEDS_REVIEW
+    marker was present in the output.
+    """
+    cards = []
+    needs_review = False
+    for line in raw.strip().split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if line == "NEEDS_REVIEW":
+            needs_review = True
+            continue
+        match = re.match(r'^(\d+)\|(.+)$', line)
+        if match:
+            parts = match.group(2).split('|')
+            card_text = fix_markdown_bold(parts[0].strip())
+            extra = None
+            source_ref = None
+            non_source_parts = []
+            for p in parts[1:]:
+                if p.strip().startswith("source:"):
+                    source_ref = p.strip()[len("source:"):].strip() or None
+                else:
+                    non_source_parts.append(p)
+            if non_source_parts:
+                raw_extra = "|".join(non_source_parts).strip()
+                if raw_extra:
+                    extra = format_extra_as_list(fix_markdown_bold(raw_extra))
+            cards.append({
+                "card_number": int(match.group(1)),
+                "front_html": card_text,
+                "front_text": strip_card_html(card_text),
+                "extra": extra,
+                "source_ref": source_ref,
+            })
+    return cards, needs_review
+
+
+def regenerate_single_card(
+    client: anthropic.Anthropic,
+    section_data: dict,
+    existing_card_html: str,
+    rules_text: str,
+    extra_prompt: str | None = None,
+    model: str = DEFAULT_MODEL,
+) -> tuple[list[dict], bool, dict]:
+    """Regenerate one card from the same section, optionally guided by extra_prompt."""
+    topic = section_data.get('curriculum_topic_path') or ''
+    topic_line = f"Curriculum context (for reference only): {topic}\n" if topic else ''
+
+    numbered_source = number_paragraphs(section_data.get('content_text', ''))
+
+    chunk_prompt = (
+        f"You are regenerating a single flashcard from the source content below.\n\n"
+        f"{topic_line}Section: {section_data.get('heading', '')}\n\n"
+        f"Source text:\n{numbered_source}\n\n"
+        f"The existing card (improve or replace it):\n{existing_card_html}\n"
+    )
+    if extra_prompt:
+        chunk_prompt += f"\nAdditional guidance: {extra_prompt}\n"
+    chunk_prompt += "\nGenerate ONE improved replacement card. Output exactly:\n1|cloze card text|additional context (optional)|source:P1-P3"
+
+    response = client.messages.create(
+        model=model,
+        max_tokens=512,
+        temperature=0,
+        system=[{
+            "type": "text",
+            "text": ANCHOR_INSTRUCTION + "\n\n" + rules_text,
+            "cache_control": {"type": "ephemeral"},
+        }],
+        messages=[{
+            "role": "user",
+            "content": chunk_prompt,
+        }],
+    )
+    raw = response.content[0].text.strip()
+    cards, needs_review = parse_card_output(raw)
+    usage = {
+        "input_tokens": response.usage.input_tokens,
+        "output_tokens": response.usage.output_tokens,
+        "cache_read_input_tokens": getattr(response.usage, "cache_read_input_tokens", 0) or 0,
+        "cache_creation_input_tokens": getattr(response.usage, "cache_creation_input_tokens", 0) or 0,
+    }
+    return cards, needs_review, usage
+
+
+def generate_cards_for_section(
+    client: anthropic.Anthropic,
+    section_data: dict,
+    rules_text: str,
+    model: str = DEFAULT_MODEL,
+) -> tuple[list[dict], bool, dict]:
+    """Generate cards for a single section using Claude.
+
+    section_data should have: content_text, heading, curriculum_topic_path, heading_tree (optional)
+    Returns (cards, needs_review, usage).
+    """
+    topic = section_data.get('curriculum_topic_path') or ''
+    topic_line = f"Curriculum context (for reference only): {topic}\n" if topic else ''
+
+    heading_tree = section_data.get('heading_tree')
+    tree_section = ""
+    if heading_tree:
+        tree_section = f"\nSection structure:\n{_format_heading_tree(heading_tree)}\n"
+
+    numbered_source = number_paragraphs(section_data.get('content_text', ''))
+
+    chunk_prompt = (
+        f"Now generate cards from the following study note content.\n\n"
+        f"{topic_line}Section: {section_data.get('heading', '')}\n"
+        f"{tree_section}\n"
+        f"Source text:\n{numbered_source}\n\n"
+        f"Generate the cards following ALL the rules above. Output in the exact format:\n"
+        f"number|cloze card text|additional context (optional)|source:P1-P3\n\n"
+        f"If you cannot confidently generate quality cards for this content, output NEEDS_REVIEW on its own line at the end.\n"
+        f"Remember: ALL clozes on every card use {{{{c1::term}}}} — always c1, regardless of card number."
+    )
+
+    response = client.messages.create(
+        model=model,
+        max_tokens=4096,
+        temperature=0,
+        system=[{
+            "type": "text",
+            "text": ANCHOR_INSTRUCTION + "\n\n" + rules_text,
+            "cache_control": {"type": "ephemeral"},
+        }],
+        messages=[{
+            "role": "user",
+            "content": chunk_prompt,
+        }],
+    )
+    raw = response.content[0].text.strip()
+    cards, needs_review = parse_card_output(raw)
+    usage = {
+        "input_tokens": response.usage.input_tokens,
+        "output_tokens": response.usage.output_tokens,
+        "cache_read_input_tokens": getattr(response.usage, "cache_read_input_tokens", 0) or 0,
+        "cache_creation_input_tokens": getattr(response.usage, "cache_creation_input_tokens", 0) or 0,
+    }
+    return cards, needs_review, usage
+
+
+def _format_heading_tree(tree: list[dict], indent: int = 0) -> str:
+    """Format a heading tree into indented text for the prompt."""
+    lines = []
+    for node in tree:
+        prefix = "  " * indent
+        lines.append(f"{prefix}- {node['heading']}")
+        if node.get("children"):
+            lines.append(_format_heading_tree(node["children"], indent + 1))
+    return "\n".join(lines)

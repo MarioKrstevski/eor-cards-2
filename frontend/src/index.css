@@ -1,0 +1,57 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@import "tailwindcss";
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: #fafafa;
+  color: #111827;
+  letter-spacing: -0.01em;
+}
+
+#root {
+  width: 100%;
+  min-height: 100svh;
+}
+
+/* Smooth scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* ── Document chunk HTML rendering (from docx source_html) ── */
+.chunk-content h2,
+.chunk-content h3,
+.chunk-content h4 { font-size: 13px; font-weight: 700; margin: 4px 0; color: #111; }
+.chunk-content p { font-size: 13px; margin: 3px 0; color: #222; }
+.chunk-content b { color: #000; font-weight: 700; }
+.chunk-content .bullet { font-size: 13px; padding-left: 10px; margin: 2px 0; color: #222; }
+.chunk-content .bullet::before { content: "\2022 "; color: #555; }
+.chunk-content .bullet.level-4 { padding-left: 28px; }
+.chunk-content .bullet.level-4::before { content: "\25E6 "; color: #666; }
+.chunk-content .bullet.level-5 { padding-left: 48px; }
+.chunk-content .bullet.level-5::before { content: "\25AA "; color: #555; font-size: 10px; }
+.chunk-content .bullet.level-6 { padding-left: 68px; }
+.chunk-content .bullet.level-6::before { content: "\2013 "; color: #888; }
+.chunk-content .bullet.level-7 { padding-left: 88px; }
+.chunk-content .bullet.level-7::before { content: "\2013 "; color: #999; }
+.chunk-content table { font-size: 12px; border-collapse: collapse; margin: 6px 0; width: 100%; }
+.chunk-content th,
+.chunk-content td { border: 1px solid #e5e7eb; padding: 4px 8px; text-align: left; color: #222; }
+.chunk-content th { background: #f9fafb; font-weight: 600; }
+.chunk-content img { max-width: 100%; border-radius: 6px; margin: 8px 0; }

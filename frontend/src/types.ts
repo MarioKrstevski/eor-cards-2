@@ -1,0 +1,167 @@
+export interface CurriculumNode {
+  id: number;
+  name: string;
+  parent_id: number | null;
+  level: number;
+  path: string;
+  sort_order: number;
+  children: CurriculumNode[];
+}
+
+export interface TopicCoverageStats {
+  total: number;
+  active: number;
+  rejected: number;
+  unreviewed: number;
+}
+
+export interface TopicTree {
+  id: number;
+  name: string;
+  slug: string;
+  curriculum_id: number | null;
+  section_count: number;
+  total_cards: number;
+  created_at: string;
+  sections?: Section[];
+}
+
+export interface Section {
+  id: number;
+  topic_tree_id: number;
+  heading: string;
+  slug: string;
+  heading_tree: unknown; // nested H3/H4 JSON
+  content_text: string;
+  content_html: string;
+  curriculum_topic_id: number | null;
+  curriculum_topic_path: string | null;
+  image_count: number;
+  table_count: number;
+  flags: string[];
+  is_verified: boolean;
+  card_count: number;
+  sort_order: number;
+}
+
+export interface ContentBlock {
+  id: number;
+  section_id: number;
+  upload_id: number;
+  text: string;
+  html: string;
+  block_type: 'paragraph' | 'heading' | 'table' | 'image_text';
+  heading_context: string;
+  position: number;
+  is_duplicate: boolean;
+}
+
+export interface SectionImage {
+  id: number;
+  section_id: number;
+  data_uri: string;
+  category: 'decorative' | 'diagram' | 'chart' | 'table_image' | 'unclear';
+  extracted_text: string | null;
+  alt_text_hint: string | null;
+  position: number;
+}
+
+export interface Upload {
+  id: number;
+  topic_tree_id: number;
+  original_name: string;
+  status: 'processing' | 'ready' | 'error' | 'merged';
+  uploaded_at: string;
+}
+
+export interface Card {
+  id: number;
+  section_id: number;
+  card_number: number;
+  front_html: string;
+  front_text: string;
+  tags: string[];
+  extra: string | null;
+  vignette: string | null;
+  teaching_case: string | null;
+  source_ref: string | null;
+  ref_img: string | null;
+  ref_img_id: number | null;
+  ref_img_position: 'front' | 'back';
+  note_id: number;
+  status: CardStatus;
+  needs_review: boolean;
+  is_reviewed: boolean;
+  created_at: string;
+  updated_at: string;
+  // for display
+  topic_path?: string;
+  chunk_id?: number; // alias for section_id for compat
+}
+
+export type CardStatus = 'active' | 'rejected';
+
+export interface RuleSet {
+  id: number;
+  name: string;
+  rule_type: 'generation' | 'vignette' | 'teaching_case';
+  content: string;
+  is_default: boolean;
+  created_at?: string;
+}
+
+export interface Model {
+  id: string;
+  display: string;
+  input_per_1m: number;
+  output_per_1m: number;
+}
+
+export interface GenerationJob {
+  id: number;
+  job_type: string;
+  section_id: number | null;
+  topic_tree_id: number | null;
+  status: 'pending' | 'running' | 'done' | 'failed';
+  total_sections: number;
+  processed_sections: number;
+  total_cards: number;
+  pipeline_step: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface ProcessingJob {
+  id: number;
+  upload_id: number;
+  status: 'pending' | 'running' | 'done' | 'failed';
+  pipeline_step: string | null;
+  error_message: string | null;
+}
+
+export interface PaginatedCards {
+  cards: Card[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface CostEstimate {
+  estimated_input_tokens: number;
+  estimated_output_tokens: number;
+  estimated_cost_usd: number;
+}
+
+export interface AIUsageSummary {
+  total_cost_usd: number;
+  by_operation: Record<string, { count: number; cost_usd: number }>;
+}
+
+export type PipelineStep = 'parsing' | 'images' | 'tables' | 'comparing' | 'merging' | 'done' | null;
+
+export interface SectionDetail extends Section {
+  content_blocks: ContentBlock[];
+  images: SectionImage[];
+  uploads: Upload[];
+}
