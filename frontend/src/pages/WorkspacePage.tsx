@@ -8,7 +8,10 @@ import {
   pasteDocument,
   deleteTopicTree,
   getProcessingJob,
+  getActiveJobs,
+  getGenerationJob,
 } from '../api';
+import type { GenerationJob } from '../types';
 import type {
   CurriculumNode,
   TopicCoverageStats,
@@ -131,6 +134,38 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
 
   // Refresh key for cards panel
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // Active generation jobs (for badges + resume after refresh)
+  const [activeGenJobs, setActiveGenJobs] = useState<Record<number, GenerationJob>>({});
+  const genPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Poll active generation jobs
+  useEffect(() => {
+    const pollActiveJobs = async () => {
+      try {
+        const jobs = await getActiveJobs();
+        const byTree: Record<number, GenerationJob> = {};
+        for (const j of jobs) {
+          if (j.topic_tree_id) byTree[j.topic_tree_id] = j;
+        }
+        setActiveGenJobs(byTree);
+        // If no more active jobs, stop polling
+        if (jobs.length === 0 && genPollRef.current) {
+          clearInterval(genPollRef.current);
+          genPollRef.current = null;
+          loadTopicTrees();
+          loadCurriculum();
+          setRefreshKey(k => k + 1);
+          refreshUsage();
+        }
+      } catch { /* ignore */ }
+    };
+    // Initial check
+    pollActiveJobs();
+    // Start polling interval
+    genPollRef.current = setInterval(pollActiveJobs, 3000);
+    return () => { if (genPollRef.current) clearInterval(genPollRef.current); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load topic trees
   const loadTopicTrees = useCallback(async () => {
@@ -354,7 +389,15 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                         <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                       </svg>
                       <div className="flex-1 min-w-0">
-                        <span className="text-xs font-medium text-gray-800 truncate block">{tree.name}</span>
+                        <span className="text-xs font-medium text-gray-800 truncate block">
+                          {tree.name}
+                          {activeGenJobs[tree.id] && (
+                            <span className="ml-1.5 inline-flex items-center gap-1 text-[10px] text-blue-600 font-normal">
+                              <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+                              {activeGenJobs[tree.id].pipeline_step ?? 'generating'}
+                            </span>
+                          )}
+                        </span>
                         <span className="text-[10px] text-gray-400">
                           {tree.section_count} sections &middot; {tree.total_cards} cards
                         </span>

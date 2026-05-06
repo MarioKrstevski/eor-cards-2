@@ -19,6 +19,7 @@ import {
   estimateCost,
   startGeneration,
   getGenerationJob,
+  getActiveJobs,
 } from '../api';
 import type { Card, CardStatus, CostEstimate } from '../types';
 import ConfirmModal from '../components/ConfirmModal';
@@ -442,6 +443,41 @@ export default function CardsPanel({
       setJobError(err instanceof Error ? err.message : 'Start failed');
     }
   }, [selectedRuleSetId, selectedModel, sectionId, topicTreeId, topicPath, fetchCards, onReviewChange, refreshUsage]);
+
+  // Resume polling for active jobs on mount (after page refresh)
+  useEffect(() => {
+    if (jobRunning) return; // already polling
+    getActiveJobs().then((jobs) => {
+      // Find a job relevant to current view (section or topic tree)
+      const relevant = jobs.find(j =>
+        (sectionId && j.section_id === sectionId) ||
+        (topicTreeId && j.topic_tree_id === topicTreeId) ||
+        (!sectionId && !topicTreeId)
+      );
+      if (!relevant) return;
+      setJobRunning(true);
+      setJobProgress({ processed: relevant.processed_sections, total: relevant.total_sections });
+      intervalRef.current = setInterval(async () => {
+        try {
+          const job = await getGenerationJob(relevant.id);
+          setJobProgress({ processed: job.processed_sections, total: job.total_sections });
+          if (job.status === 'done' || job.status === 'failed') {
+            if (intervalRef.current) clearInterval(intervalRef.current);
+            setJobRunning(false);
+            if (job.status === 'failed') {
+              setJobAlertError(job.error_message ?? 'Generation failed');
+            }
+            fetchCards(sectionId, topicPath);
+            onReviewChange?.();
+            refreshUsage?.();
+          }
+        } catch {
+          if (intervalRef.current) clearInterval(intervalRef.current);
+          setJobRunning(false);
+        }
+      }, 1500);
+    }).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cleanup interval on unmount
   useEffect(() => {
