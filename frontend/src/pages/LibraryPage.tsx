@@ -19,7 +19,7 @@ import {
   getProcessingJob,
   exportCardsUrl,
 } from '../api';
-import type { CurriculumNode, RuleSet, TopicCoverageStats, TopicTree, Section } from '../types';
+import type { CurriculumNode, RuleSet, TopicCoverageStats, TopicTree } from '../types';
 
 // ─── CurriculumTreeNode (editable, for Curriculum tab) ────────────────────────
 
@@ -248,7 +248,7 @@ export default function LibraryPage() {
   const [editingRule, setEditingRule] = useState<RuleSet | null>(null);
   const [newRuleName, setNewRuleName] = useState('');
   const [newRuleContent, setNewRuleContent] = useState('');
-  const [newRuleType, setNewRuleType] = useState<'generation' | 'vignette' | 'teaching_case'>('generation');
+  const [newRuleType, setNewRuleType] = useState<'generation' | 'vignette'>('generation');
   const [showNewRuleForm, setShowNewRuleForm] = useState(false);
 
   // Load data
@@ -546,16 +546,16 @@ export default function LibraryPage() {
                                 className={`w-2 h-2 rounded-full shrink-0 ${
                                   section.is_verified
                                     ? 'bg-green-400'
-                                    : section.flags.length > 0
+                                    : (section.flags?.length ?? 0) > 0
                                     ? 'bg-amber-400'
                                     : 'bg-gray-300'
                                 }`}
                               />
                               <span className="text-xs font-medium text-gray-700 flex-1 truncate">{section.heading}</span>
                               <div className="flex items-center gap-2 shrink-0">
-                                {section.flags.length > 0 && (
+                                {(section.flags?.length ?? 0) > 0 && (
                                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 font-medium">
-                                    {section.flags.length} flag{section.flags.length !== 1 ? 's' : ''}
+                                    {section.flags!.length} flag{section.flags!.length !== 1 ? 's' : ''}
                                   </span>
                                 )}
                                 <span className="text-[10px] text-gray-400 tabular-nums">{section.card_count} cards</span>
@@ -598,12 +598,11 @@ export default function LibraryPage() {
                   />
                   <select
                     value={newRuleType}
-                    onChange={(e) => setNewRuleType(e.target.value as 'generation' | 'vignette' | 'teaching_case')}
+                    onChange={(e) => setNewRuleType(e.target.value as 'generation' | 'vignette')}
                     className="text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
                   >
                     <option value="generation">Generation</option>
-                    <option value="vignette">Vignette</option>
-                    <option value="teaching_case">Teaching Case</option>
+                    <option value="vignette">Vignette + Teaching Case</option>
                   </select>
                 </div>
                 <textarea

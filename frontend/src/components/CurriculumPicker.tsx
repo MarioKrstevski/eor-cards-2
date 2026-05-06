@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { CurriculumNode } from '../types';
 
 interface CurriculumPickerProps {
@@ -17,6 +18,7 @@ export default function CurriculumPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 0 });
 
   const selectedNode = value != null ? flatNodes.find((n) => n.id === value) : null;
 
@@ -24,9 +26,24 @@ export default function CurriculumPicker({
     ? flatNodes.filter((n) => n.path.toLowerCase().includes(query.toLowerCase()))
     : flatNodes;
 
+  // Position the dropdown based on the trigger element
+  useEffect(() => {
+    if (open && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      setDropdownPos({
+        top: rect.bottom + 4,
+        left: rect.left,
+        width: rect.width,
+      });
+    }
+  }, [open]);
+
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        // Also check if the click is inside the portal dropdown
+        const dropdown = document.getElementById('curriculum-picker-dropdown');
+        if (dropdown && dropdown.contains(e.target as Node)) return;
         setOpen(false);
         setQuery('');
       }
@@ -63,9 +80,11 @@ export default function CurriculumPicker({
         </svg>
       </div>
 
-      {open && (
-        <div className="absolute z-50 mt-1 left-0 right-0 bg-white border border-gray-200 rounded-md shadow-lg overflow-hidden"
-          style={{ minWidth: '220px' }}
+      {open && createPortal(
+        <div
+          id="curriculum-picker-dropdown"
+          className="fixed bg-white border border-gray-200 rounded-md shadow-xl overflow-hidden"
+          style={{ top: dropdownPos.top, left: dropdownPos.left, width: Math.max(dropdownPos.width, 220), zIndex: 9999 }}
         >
           <div
             className="px-3 py-1.5 text-sm text-gray-400 hover:bg-gray-50 cursor-pointer border-b border-gray-100"
@@ -94,7 +113,8 @@ export default function CurriculumPicker({
               ))
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

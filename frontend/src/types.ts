@@ -38,7 +38,7 @@ export interface Section {
   curriculum_topic_path: string | null;
   image_count: number;
   table_count: number;
-  flags: string[];
+  flags: string[] | null;
   is_verified: boolean;
   card_count: number;
   sort_order: number;
@@ -104,7 +104,7 @@ export type CardStatus = 'active' | 'rejected';
 export interface RuleSet {
   id: number;
   name: string;
-  rule_type: 'generation' | 'vignette' | 'teaching_case';
+  rule_type: 'generation' | 'vignette';
   content: string;
   is_default: boolean;
   created_at?: string;
@@ -155,7 +155,7 @@ export interface CostEstimate {
 
 export interface AIUsageSummary {
   total_cost_usd: number;
-  by_operation: Record<string, { count: number; cost_usd: number }>;
+  by_operation: Record<string, { count: number; input_tokens: number; output_tokens: number; cost_usd: number }>;
 }
 
 export type PipelineStep = 'parsing' | 'images' | 'tables' | 'comparing' | 'merging' | 'done' | null;

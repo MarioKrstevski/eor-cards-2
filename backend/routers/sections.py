@@ -103,5 +103,4 @@ def verify_section(section_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404)
     section.is_verified = True
     db.commit()
-    db.refresh(section)
-    return section_to_dict(section)
+    return {"is_valid": True, "flags": section.flags or []}

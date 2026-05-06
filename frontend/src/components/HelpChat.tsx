@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { sendChatMessage, getChatSessions, getChatSession, deleteChatSession, createRequest, type ChatSessionSummary } from '../api';
+import { sendChatMessage, getChatSessions, getChatSession, deleteChatSession, type ChatSessionSummary } from '../api';
 import { APP_VERSION } from '../version';
 import { useSettings } from '../context/SettingsContext';
 
@@ -21,7 +21,6 @@ export default function HelpChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [requestAdded, setRequestAdded] = useState<number | null>(null);
   const [pendingContext, setPendingContext] = useState<string | null>(null);
   const [pendingCards, setPendingCards] = useState<any[] | null>(null);
   const [showContextDetail, setShowContextDetail] = useState(false);
@@ -57,7 +56,6 @@ export default function HelpChat() {
       setSessionName('New chat');
       setSessionVersion(APP_VERSION);
       setMessages([]);
-      setRequestAdded(null);
       setInput('');
       setPendingContext(message);
       setPendingCards((e as CustomEvent).detail.cards || null);
@@ -120,7 +118,6 @@ export default function HelpChat() {
     setSessionName('New chat');
     setSessionVersion(APP_VERSION);
     setMessages([]);
-    setRequestAdded(null);
     setView('chat');
   }
 
@@ -339,32 +336,6 @@ export default function HelpChat() {
                     }} />
                   ) : msg.content}
                 </div>
-                {msg.role === 'assistant' && /contact mario/i.test(msg.content) && (
-                  <button
-                    onClick={async () => {
-                      const match = msg.content.match(/(?:contact mario[^:]*:\s*)([\s\S]+)/i);
-                      const desc = match ? match[1].trim() : msg.content;
-                      const prevUserMsg = messages[i - 1]?.content || '';
-                      try {
-                        await createRequest({
-                          title: prevUserMsg.slice(0, 60) + (prevUserMsg.length > 60 ? '...' : ''),
-                          description: desc,
-                          source: 'chat',
-                          chat_session_id: sessionId,
-                        });
-                        setRequestAdded(i);
-                      } catch { /* ignore */ }
-                    }}
-                    disabled={requestAdded === i}
-                    className={`mt-1.5 text-xs px-2.5 py-1 rounded-lg font-medium transition-colors ${
-                      requestAdded === i
-                        ? 'bg-green-100 text-green-700 cursor-default'
-                        : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
-                    }`}
-                  >
-                    {requestAdded === i ? '✓ Request added' : '+ Add as Request'}
-                  </button>
-                )}
               </div>
             ))}
             {loading && (

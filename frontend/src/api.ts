@@ -64,11 +64,13 @@ export async function getTopicTree(id: number): Promise<TopicTree> {
 
 export async function uploadDocument(
   file: File,
-  topicTreeId?: number
+  opts?: { topicTreeId?: number; topicTreeName?: string; curriculumId?: number }
 ): Promise<{ upload_id: number; processing_job_id: number }> {
   const form = new FormData();
   form.append('file', file);
-  if (topicTreeId != null) form.append('topic_tree_id', String(topicTreeId));
+  if (opts?.topicTreeId != null) form.append('topic_tree_id', String(opts.topicTreeId));
+  if (opts?.topicTreeName) form.append('topic_tree_name', opts.topicTreeName);
+  if (opts?.curriculumId != null) form.append('curriculum_id', String(opts.curriculumId));
   const res = await http.post<{ upload_id: number; processing_job_id: number }>(
     '/topic-trees/upload',
     form
@@ -79,11 +81,16 @@ export async function uploadDocument(
 export async function pasteDocument(
   html: string,
   name: string,
-  topicTreeId?: number
+  opts?: { topicTreeId?: number; curriculumId?: number }
 ): Promise<{ upload_id: number; processing_job_id: number }> {
   const res = await http.post<{ upload_id: number; processing_job_id: number }>(
     '/topic-trees/paste',
-    { html, name, topic_tree_id: topicTreeId ?? null }
+    {
+      html,
+      name,
+      topic_tree_id: opts?.topicTreeId ?? null,
+      curriculum_id: opts?.curriculumId ?? null,
+    }
   );
   return res.data;
 }
@@ -215,6 +222,16 @@ export async function getGenerationJob(jobId: number): Promise<GenerationJob> {
 
 export async function getActiveJobs(): Promise<GenerationJob[]> {
   const res = await http.get<GenerationJob[]>('/generate/jobs/active');
+  return res.data;
+}
+
+export async function startSupplemental(params: {
+  card_ids: number[];
+  rule_set_id: number;
+  model: string;
+  replace_existing?: boolean;
+}): Promise<{ job_id: number }> {
+  const res = await http.post<{ job_id: number }>('/generate/supplemental/start', params);
   return res.data;
 }
 

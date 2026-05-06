@@ -97,12 +97,70 @@ def parse_docx(filepath: str) -> list[dict]:
                 html_parts.append(t)
             html = "".join(html_parts) or text
 
-            elements.append({
-                "type": "paragraph",
-                "text": text,
-                "html": f"<p>{html}</p>",
-                "heading_context": _build_heading_context(current_headings),
-            })
+            # Detect list items by style name or numbering XML
+            is_list = False
+            list_type = "ul"  # default unordered
+            indent_level = 0
+
+            if "list" in style_name:
+                is_list = True
+                if "number" in style_name or "ordered" in style_name:
+                    list_type = "ol"
+            else:
+                # Check for Word numbering (numPr element)
+                num_pr = para._element.find('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}numPr')
+                if num_pr is not None:
+                    is_list = True
+                    # Check numId to distinguish bullet vs number
+                    num_id_el = num_pr.find('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}numId')
+                    if num_id_el is not None:
+                        num_id_val = int(num_id_el.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val', '0'))
+                        # numId 0 means no numbering
+                        if num_id_val == 0:
+                            is_list = False
+
+            if is_list:
+                # Get indentation level from ilvl
+                ilvl_el = para._element.find('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}ilvl')
+                if ilvl_el is not None:
+                    indent_level = int(ilvl_el.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val', '0'))
+                else:
+                    # Try indentation from paragraph properties
+                    ind_el = para._element.find('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}ind')
+                    if ind_el is not None:
+                        left = ind_el.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}left', '0')
+                        indent_level = max(0, int(left) // 720)  # 720 twips ≈ 0.5 inch
+
+            if is_list:
+                elements.append({
+                    "type": "list_item",
+                    "text": text,
+                    "html": html,
+                    "list_type": list_type,
+                    "indent_level": indent_level,
+                    "heading_context": _build_heading_context(current_headings),
+                })
+            else:
+                # Check for indentation on regular paragraphs
+                ind_el = para._element.find('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}ind')
+                if ind_el is not None:
+                    left = ind_el.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}left', '0')
+                    indent_level = max(0, int(left) // 720)
+
+                if indent_level > 0:
+                    elements.append({
+                        "type": "paragraph",
+                        "text": text,
+                        "html": f'<p style="margin-left:{indent_level * 1.5}em">{html}</p>',
+                        "heading_context": _build_heading_context(current_headings),
+                    })
+                else:
+                    elements.append({
+                        "type": "paragraph",
+                        "text": text,
+                        "html": f"<p>{html}</p>",
+                        "heading_context": _build_heading_context(current_headings),
+                    })
 
     # Process tables
     for table in doc.tables:
@@ -277,6 +335,56 @@ def _build_heading_context(headings: dict) -> Optional[str]:
     for level in sorted(headings.keys()):
         parts.append(f"H{level}: {headings[level]}")
     return " > ".join(parts)
+
+
+def build_content_html(elements: list[dict]) -> str:
+    """Build HTML from elements, properly grouping list items into <ul>/<ol> tags."""
+    html_parts = []
+    list_stack = []  # stack of (list_type, indent_level)
+    img_counter = 0
+
+    for elem in elements:
+        elem_type = elem.get("type", "paragraph")
+
+        if elem_type == "list_item":
+            target_indent = elem.get("indent_level", 0)
+            lt = elem.get("list_type", "ul")
+
+            # Close deeper lists
+            while list_stack and list_stack[-1][1] > target_indent:
+                html_parts.append(f"</li></{list_stack[-1][0]}>")
+                list_stack.pop()
+
+            if not list_stack or list_stack[-1][1] < target_indent:
+                # Open new nested list
+                html_parts.append(f"<{lt}>")
+                list_stack.append((lt, target_indent))
+            else:
+                # Same level — close previous <li>
+                html_parts.append("</li>")
+
+            html_parts.append(f"<li>{elem.get('html', elem.get('text', ''))}")
+        else:
+            # Close all open lists before non-list content
+            while list_stack:
+                html_parts.append(f"</li></{list_stack[-1][0]}>")
+                list_stack.pop()
+
+            if elem_type == "image":
+                img_counter += 1
+                html_parts.append(
+                    f'<div class="image-placeholder" data-img-index="{img_counter}">'
+                    f'[Image {img_counter}]</div>'
+                )
+            else:
+                html_parts.append(elem.get("html", elem.get("text", "")))
+
+    # Close remaining open lists
+    while list_stack:
+        html_parts.append(f"</li></{list_stack[-1][0]}>")
+        list_stack.pop()
+
+    return "\n".join(html_parts)
 
 
 def _table_to_text(rows: list[list[str]]) -> str:

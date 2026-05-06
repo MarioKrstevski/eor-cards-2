@@ -124,9 +124,9 @@ export default function AnkifyModal({ cards, onClose }: AnkifyModalProps) {
           <span className="text-sm font-medium text-gray-500 tabular-nums">
             {index + 1} <span className="text-gray-300">/</span> {cards.length}
           </span>
-          {card.chunk_heading && (
+          {card.topic_path && (
             <span className="text-xs text-gray-400 truncate max-w-xs hidden sm:block">
-              {card.chunk_heading}
+              {card.topic_path}
             </span>
           )}
         </div>

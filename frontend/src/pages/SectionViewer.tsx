@@ -13,6 +13,7 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<{ is_valid: boolean; flags: string[] } | null>(null);
   const [selectedImage, setSelectedImage] = useState<SectionImage | null>(null);
+  const [showImages, setShowImages] = useState(false);
 
   const loadSection = useCallback(async () => {
     setLoading(true);
@@ -52,6 +53,22 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
             {section?.heading ?? 'Loading...'}
           </h2>
 
+          {section && (section.images?.length ?? 0) > 0 && (
+            <button
+              onClick={() => setShowImages(v => !v)}
+              className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-colors duration-150 ${
+                showImages
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              {section.images!.length} image{section.images!.length !== 1 ? 's' : ''}
+            </button>
+          )}
+
           {section && !section.is_verified && (
             <button
               onClick={handleVerify}
@@ -90,9 +107,9 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
             {/* Main content */}
             <div className="flex-1 overflow-y-auto p-6">
               {/* Flags */}
-              {section.flags.length > 0 && (
+              {(section.flags?.length ?? 0) > 0 && (
                 <div className="mb-4 flex flex-wrap gap-1.5">
-                  {section.flags.map((flag, i) => (
+                  {section.flags!.map((flag, i) => (
                     <span key={i} className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
                       {flag}
                     </span>
@@ -103,7 +120,7 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
               {/* Verify result */}
               {verifyResult && (
                 <div className={`mb-4 p-3 rounded-lg text-xs ${verifyResult.is_valid ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
-                  {verifyResult.is_valid ? 'Section verified successfully.' : `Issues found: ${verifyResult.flags.join(', ')}`}
+                  {verifyResult.is_valid ? 'Section verified successfully.' : `Issues found: ${(verifyResult.flags ?? []).join(', ')}`}
                 </div>
               )}
 
@@ -124,7 +141,7 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
 
               {/* Content HTML */}
               <div
-                className="chunk-content prose prose-sm max-w-none"
+                className="section-content prose prose-sm max-w-none"
                 dangerouslySetInnerHTML={{ __html: section.content_html }}
               />
 
@@ -180,12 +197,12 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
               )}
             </div>
 
-            {/* Image sidebar */}
-            {section.images && section.images.length > 0 && (
-              <div className="w-60 border-l border-gray-200 overflow-y-auto p-3 shrink-0 bg-gray-50">
+            {/* Image sidebar — toggled */}
+            {showImages && section.images && section.images.length > 0 && (
+              <div className="w-64 border-l border-gray-200 overflow-y-auto p-3 shrink-0 bg-gray-50">
                 <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Images ({section.images.length})</h3>
                 <div className="space-y-2">
-                  {section.images.map((img) => (
+                  {section.images.map((img, idx) => (
                     <div
                       key={img.id}
                       onClick={() => setSelectedImage(img)}
@@ -193,17 +210,23 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
                     >
                       <img src={img.data_uri} alt={img.alt_text_hint ?? ''} className="w-full object-contain max-h-32" />
                       <div className="px-2 py-1.5">
-                        <span className={`text-[10px] font-medium px-1 py-0.5 rounded ${
-                          img.category === 'diagram' ? 'bg-blue-50 text-blue-600'
-                          : img.category === 'chart' ? 'bg-green-50 text-green-600'
-                          : img.category === 'table_image' ? 'bg-purple-50 text-purple-600'
-                          : img.category === 'decorative' ? 'bg-gray-100 text-gray-500'
-                          : 'bg-amber-50 text-amber-600'
-                        }`}>
-                          {img.category}
-                        </span>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="text-[11px] font-semibold text-gray-700">Image {idx + 1}</span>
+                          <span className={`text-[10px] font-medium px-1 py-0.5 rounded ${
+                            img.category === 'diagram' ? 'bg-blue-50 text-blue-600'
+                            : img.category === 'chart' ? 'bg-green-50 text-green-600'
+                            : img.category === 'table_image' ? 'bg-purple-50 text-purple-600'
+                            : img.category === 'decorative' ? 'bg-gray-100 text-gray-500'
+                            : 'bg-amber-50 text-amber-600'
+                          }`}>
+                            {img.category}
+                          </span>
+                        </div>
+                        {img.alt_text_hint && (
+                          <p className="text-[10px] text-gray-500 line-clamp-1">{img.alt_text_hint}</p>
+                        )}
                         {img.extracted_text && (
-                          <p className="text-[10px] text-gray-500 mt-1 line-clamp-2">{img.extracted_text}</p>
+                          <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{img.extracted_text}</p>
                         )}
                       </div>
                     </div>

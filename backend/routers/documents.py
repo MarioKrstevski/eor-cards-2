@@ -7,7 +7,7 @@ from typing import Optional
 from backend.db import get_db, SessionLocal
 from backend.models import (
     TopicTree, Section, Upload, ProcessingJob, JobStatus,
-    ContentBlock, SectionImage, slugify, utcnow,
+    ContentBlock, SectionImage, Curriculum, slugify, utcnow,
 )
 from backend.config import UPLOAD_DIR
 
@@ -59,12 +59,13 @@ def section_to_dict(s: Section, include_content: bool = True) -> dict:
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
-    topic_tree_name: str = Form(...),
+    topic_tree_name: Optional[str] = Form(None),
     topic_tree_id: Optional[int] = Form(None),
     curriculum_id: Optional[int] = Form(None),
+    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db),
 ):
-    """Upload a .docx file, creating or targeting a topic tree."""
+    """Upload a .docx file, creating or targeting a topic tree, then auto-process."""
     if not file.filename.endswith(".docx"):
         raise HTTPException(400, "Only .docx files are supported")
 
@@ -81,9 +82,18 @@ async def upload_document(
         if not tt:
             raise HTTPException(404, "Topic tree not found")
     else:
+        name = topic_tree_name or os.path.splitext(file.filename)[0]
+        slug = slugify(name)
+        existing = db.query(TopicTree).filter_by(slug=slug).first()
+        if existing:
+            raise HTTPException(
+                409,
+                f"A topic tree named '{existing.name}' already exists. "
+                f"Upload into it by selecting it, or use a different name."
+            )
         tt = TopicTree(
-            name=topic_tree_name,
-            slug=slugify(topic_tree_name),
+            name=name,
+            slug=slug,
             curriculum_id=curriculum_id,
         )
         db.add(tt)
@@ -96,12 +106,20 @@ async def upload_document(
         status="processing",
     )
     db.add(upload)
+    db.flush()
+
+    # Auto-start processing
+    job = ProcessingJob(upload_id=upload.id, status=JobStatus.pending)
+    db.add(job)
     db.commit()
     db.refresh(upload)
     db.refresh(tt)
 
+    background_tasks.add_task(_run_processing, job.id)
+
     return {
         "upload_id": upload.id,
+        "processing_job_id": job.id,
         "topic_tree_id": tt.id,
         "topic_tree": topic_tree_to_dict(tt),
     }
@@ -110,11 +128,12 @@ async def upload_document(
 @router.post("/paste")
 def paste_document(
     body: dict,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    """Paste HTML content, creating or targeting a topic tree."""
+    """Paste HTML content, creating or targeting a topic tree, then auto-process."""
     html = body.get("html", "")
-    topic_tree_name = body.get("topic_tree_name", "Pasted Content")
+    topic_tree_name = body.get("topic_tree_name") or body.get("name") or "Pasted Content"
     topic_tree_id = body.get("topic_tree_id")
     curriculum_id = body.get("curriculum_id")
 
@@ -147,12 +166,20 @@ def paste_document(
         status="processing",
     )
     db.add(upload)
+    db.flush()
+
+    # Auto-start processing
+    job = ProcessingJob(upload_id=upload.id, status=JobStatus.pending)
+    db.add(job)
     db.commit()
     db.refresh(upload)
     db.refresh(tt)
 
+    background_tasks.add_task(_run_processing, job.id)
+
     return {
         "upload_id": upload.id,
+        "processing_job_id": job.id,
         "topic_tree_id": tt.id,
         "topic_tree": topic_tree_to_dict(tt),
     }
@@ -243,7 +270,7 @@ def start_processing(
     return {"jobs": jobs}
 
 
-@router.get("/processing/{job_id}")
+@router.get("/processing-jobs/{job_id}")
 def get_processing_status(job_id: int, db: Session = Depends(get_db)):
     job = db.get(ProcessingJob, job_id)
     if not job:
@@ -270,7 +297,7 @@ def delete_topic_tree(topic_tree_id: int, db: Session = Depends(get_db)):
 
 def _run_processing(job_id: int):
     """Background task: process an upload into sections and content blocks."""
-    from backend.services.doc_processor import parse_docx, parse_html, split_by_h2, build_heading_tree
+    from backend.services.doc_processor import parse_docx, parse_html, split_by_h2, build_heading_tree, build_content_html
     from backend.services.table_converter import convert_table_elements
 
     db = SessionLocal()
@@ -307,10 +334,18 @@ def _run_processing(job_id: int):
 
         existing_sections = {s.heading: s for s in tt.sections}
 
+        # Resolve curriculum topic for inheriting to sections
+        curriculum_topic_id = tt.curriculum_id
+        curriculum_topic_path = None
+        if curriculum_topic_id:
+            cur_node = db.get(Curriculum, curriculum_topic_id)
+            if cur_node:
+                curriculum_topic_path = cur_node.path
+
         for idx, (heading, elems) in enumerate(section_groups):
             heading_tree = build_heading_tree(elems)
             content_text = "\n".join(e["text"] for e in elems if e.get("text"))
-            content_html = "\n".join(e.get("html", e.get("text", "")) for e in elems)
+            content_html = build_content_html(elems)
 
             image_count = sum(1 for e in elems if e.get("type") == "image")
             table_count = sum(1 for e in elems if e.get("type") == "table")
@@ -324,6 +359,10 @@ def _run_processing(job_id: int):
                 section.image_count += image_count
                 section.table_count += table_count
                 section.updated_at = utcnow()
+                # Update topic if set and not already assigned
+                if curriculum_topic_id and not section.curriculum_topic_id:
+                    section.curriculum_topic_id = curriculum_topic_id
+                    section.curriculum_topic_path = curriculum_topic_path
             else:
                 section = Section(
                     topic_tree_id=tt.id,
@@ -335,6 +374,8 @@ def _run_processing(job_id: int):
                     image_count=image_count,
                     table_count=table_count,
                     sort_order=idx,
+                    curriculum_topic_id=curriculum_topic_id,
+                    curriculum_topic_path=curriculum_topic_path,
                 )
                 db.add(section)
                 db.flush()

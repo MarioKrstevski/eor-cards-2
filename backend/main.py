@@ -73,7 +73,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="EOR Card Studio v4", lifespan=lifespan)
 
-app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
+app.include_router(documents.router, prefix="/api/topic-trees", tags=["documents"])
 app.include_router(sections.router, prefix="/api/sections", tags=["sections"])
 app.include_router(cards.router, prefix="/api/cards", tags=["cards"])
 app.include_router(generate.router, prefix="/api/generate", tags=["generate"])

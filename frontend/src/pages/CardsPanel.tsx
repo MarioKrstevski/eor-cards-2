@@ -20,6 +20,7 @@ import {
   startGeneration,
   getGenerationJob,
   getActiveJobs,
+  startSupplemental,
 } from '../api';
 import type { Card, CardStatus, CostEstimate } from '../types';
 import ConfirmModal from '../components/ConfirmModal';
@@ -51,8 +52,158 @@ function renderClozeHtml(html: string): string {
   return result;
 }
 
-function stripHtmlKeepCloze(html: string): string {
+function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, '').trim();
+}
+
+// ── EditableCell ───────────────────────────────────────────────────────────────
+interface EditableCellProps {
+  value: string;
+  cellId: string;
+  onSave: (val: string) => void;
+  onSelect: (cellId: string) => void;
+  onNavigate: (dir: 'up' | 'down' | 'left' | 'right') => void;
+  multiline?: boolean;
+  renderDisplay?: (val: string) => React.ReactNode;
+}
+
+function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, renderDisplay }: EditableCellProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [localVal, setLocalVal] = useState(value);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => { setLocalVal(value); }, [value]);
+
+  function autoResize(el: HTMLTextAreaElement) {
+    el.style.height = 'auto';
+    el.style.height = el.scrollHeight + 'px';
+  }
+
+  useEffect(() => {
+    if (isEditing && taRef.current) autoResize(taRef.current);
+  }, [isEditing, localVal]);
+
+  function startEdit() { setLocalVal(value); setIsEditing(true); }
+  function save() { setIsEditing(false); if (localVal !== value) onSave(localVal); }
+  function cancel() { setIsEditing(false); setLocalVal(value); }
+
+  if (isEditing) {
+    return multiline ? (
+      <textarea
+        ref={taRef}
+        className="w-full text-sm bg-white border-0 outline-none p-0 leading-relaxed resize-none"
+        value={localVal}
+        onChange={(e) => { setLocalVal(e.target.value); autoResize(e.target); }}
+        onBlur={save}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+          if (e.key === 'Tab') { e.preventDefault(); save(); }
+        }}
+        autoFocus
+      />
+    ) : (
+      <input
+        type="text"
+        className="w-full text-sm bg-white border-0 outline-none p-0 leading-relaxed"
+        value={localVal}
+        onChange={(e) => setLocalVal(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+          if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); save(); }
+        }}
+        autoFocus
+      />
+    );
+  }
+
+  return (
+    <div
+      data-cell-id={cellId}
+      tabIndex={0}
+      className="cursor-default outline-none w-full h-full min-h-[1.5em]"
+      onClick={() => onSelect(cellId)}
+      onDoubleClick={startEdit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); startEdit(); }
+        if (e.key === 'ArrowUp') { e.preventDefault(); onNavigate('up'); }
+        if (e.key === 'ArrowDown') { e.preventDefault(); onNavigate('down'); }
+        if (e.key === 'ArrowLeft') { e.preventDefault(); onNavigate('left'); }
+        if (e.key === 'ArrowRight') { e.preventDefault(); onNavigate('right'); }
+      }}
+    >
+      {renderDisplay ? renderDisplay(value) : (
+        value
+          ? <span className="text-sm text-gray-700">{value}</span>
+          : <span className="text-gray-300 text-xs">—</span>
+      )}
+    </div>
+  );
+}
+
+// ── TagsCell ───────────────────────────────────────────────────────────────────
+interface TagsCellProps {
+  tags: string[];
+  cellId: string;
+  onSave: (tags: string[]) => void;
+  onSelect: (cellId: string) => void;
+  onNavigate: (dir: 'up' | 'down' | 'left' | 'right') => void;
+}
+
+function TagsCell({ tags, cellId, onSave, onSelect, onNavigate }: TagsCellProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [localVal, setLocalVal] = useState(tags.join(', '));
+
+  useEffect(() => { setLocalVal(tags.join(', ')); }, [tags]);
+
+  function startEdit() { setLocalVal(tags.join(', ')); setIsEditing(true); }
+  function save() {
+    setIsEditing(false);
+    const newTags = localVal.split(',').map(t => t.trim()).filter(Boolean);
+    if (JSON.stringify(newTags) !== JSON.stringify(tags)) onSave(newTags);
+  }
+  function cancel() { setIsEditing(false); setLocalVal(tags.join(', ')); }
+
+  if (isEditing) {
+    return (
+      <input
+        type="text"
+        className="w-full text-sm bg-white border-0 outline-none p-0 leading-relaxed"
+        value={localVal}
+        onChange={(e) => setLocalVal(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+          if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); save(); }
+        }}
+        autoFocus
+      />
+    );
+  }
+
+  return (
+    <div
+      data-cell-id={cellId}
+      tabIndex={0}
+      className="cursor-default outline-none w-full h-full flex flex-wrap gap-1 min-h-[1.5em]"
+      onClick={() => onSelect(cellId)}
+      onDoubleClick={startEdit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); startEdit(); }
+        if (e.key === 'ArrowUp') { e.preventDefault(); onNavigate('up'); }
+        if (e.key === 'ArrowDown') { e.preventDefault(); onNavigate('down'); }
+        if (e.key === 'ArrowLeft') { e.preventDefault(); onNavigate('left'); }
+        if (e.key === 'ArrowRight') { e.preventDefault(); onNavigate('right'); }
+      }}
+    >
+      {tags.length === 0
+        ? <span className="text-gray-300 text-xs">—</span>
+        : tags.map(tag => (
+            <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded text-[11px] bg-blue-50 text-blue-700 border border-blue-200 font-medium">{tag}</span>
+          ))
+      }
+    </div>
+  );
 }
 
 // ── CardTile component ─────────────────────────────────────────────────────────
@@ -107,9 +258,7 @@ function CardTile({
     if (kind === 'regen') setRegenPrompt('');
   }
 
-  function closePopover() {
-    setPopover(null);
-  }
+  function closePopover() { setPopover(null); }
 
   return (
     <div
@@ -278,6 +427,10 @@ export default function CardsPanel({
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [statusFilter, setStatusFilter] = useState<'all' | CardStatus>('all');
 
+  // ── Search + display mode ────────────────────────────────────────────────
+  const [searchQ, setSearchQ] = useState('');
+  const [showAnkiFormat, setShowAnkiFormat] = useState(false);
+
   // ── Tile view editing ────────────────────────────────────────────────────
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editFrontHtml, setEditFrontHtml] = useState('');
@@ -320,6 +473,72 @@ export default function CardsPanel({
   });
 
   const [colVisPopover, setColVisPopover] = useState(false);
+
+  // ── Cell selection (DOM refs — no React re-render on select) ─────────────
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const selectedTdRef = useRef<HTMLElement | null>(null);
+
+  // ── Filtered cards ───────────────────────────────────────────────────────
+  const filteredCards = useMemo(() => {
+    if (!searchQ.trim()) return cards;
+    const q = searchQ.toLowerCase();
+    return cards.filter(c =>
+      (c.front_text ?? stripHtml(c.front_html)).toLowerCase().includes(q) ||
+      c.tags.some(t => t.toLowerCase().includes(q))
+    );
+  }, [cards, searchQ]);
+
+  // ── Cell selection handlers ──────────────────────────────────────────────
+  const handleCellSelect = useCallback((cellId: string) => {
+    if (selectedTdRef.current) {
+      selectedTdRef.current.style.boxShadow = '';
+      selectedTdRef.current.style.position = '';
+    }
+    const colonIdx = cellId.indexOf(':');
+    const rowIdx = cellId.slice(0, colonIdx);
+    const colId = cellId.slice(colonIdx + 1);
+    const td = tableContainerRef.current?.querySelector(
+      `td[data-row="${rowIdx}"][data-col="${colId}"]`
+    ) as HTMLElement | null;
+    if (td) {
+      td.style.boxShadow = 'inset 0 0 0 2px #3b82f6';
+      td.style.position = 'relative';
+      selectedTdRef.current = td;
+    }
+  }, []);
+
+  const handleCellNavigate = useCallback((rowIndex: number, colId: string, dir: 'up' | 'down' | 'left' | 'right') => {
+    const navigableCols = ['front_html', 'tags'];
+    if (columnVisibility['extra'] !== false) navigableCols.push('extra');
+    if (columnVisibility['vignette'] !== false) navigableCols.push('vignette');
+    if (columnVisibility['teaching_case'] !== false) navigableCols.push('teaching_case');
+
+    const colIdx = navigableCols.indexOf(colId);
+    let newRow = rowIndex;
+    let newCol = colId;
+
+    if (dir === 'up') newRow = Math.max(0, rowIndex - 1);
+    if (dir === 'down') newRow = Math.min(filteredCards.length - 1, rowIndex + 1);
+    if (dir === 'left') newCol = navigableCols[Math.max(0, colIdx - 1)];
+    if (dir === 'right') newCol = navigableCols[Math.min(navigableCols.length - 1, colIdx + 1)];
+
+    const target = tableContainerRef.current?.querySelector(
+      `[data-cell-id="${newRow}:${newCol}"]`
+    ) as HTMLElement | null;
+    target?.focus({ preventScroll: false });
+    handleCellSelect(`${newRow}:${newCol}`);
+  }, [columnVisibility, filteredCards.length, handleCellSelect]);
+
+  // ── Inline cell save handler ─────────────────────────────────────────────
+  const handleCellSave = useCallback(async (id: number, params: Parameters<typeof updateCard>[1]) => {
+    try {
+      await updateCard(id, params);
+      // Optimistically update local state (silent refresh)
+      setCards(prev => prev.map(c => c.id === id ? { ...c, ...params } as Card : c));
+    } catch {
+      setActionError('Save failed');
+    }
+  }, []);
 
   // ── Fetch cards (server-side pagination) ─────────────────────────────────
   const fetchCards = useCallback(
@@ -364,6 +583,7 @@ export default function CardsPanel({
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
     fetchCards(sectionId, topicPath);
+    setSearchQ('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sectionId, topicPath, refreshKey, statusFilter]);
 
@@ -381,6 +601,271 @@ export default function CardsPanel({
   useEffect(() => {
     localStorage.setItem('cards_column_visibility', JSON.stringify(columnVisibility));
   }, [columnVisibility]);
+
+  // ── Table columns ────────────────────────────────────────────────────────
+
+  const columns = useMemo(
+    () => [
+      columnHelper.display({
+        id: 'select',
+        size: 36,
+        enableResizing: false,
+        header: () => (
+          <input
+            type="checkbox"
+            checked={filteredCards.length > 0 && selectedIds.size === filteredCards.length}
+            onChange={() => {
+              if (selectedIds.size === filteredCards.length) {
+                setSelectedIds(new Set());
+              } else {
+                setSelectedIds(new Set(filteredCards.map((c) => c.id)));
+              }
+            }}
+            className="rounded border-gray-300 text-blue-700 focus:ring-blue-500"
+          />
+        ),
+        cell: ({ row }) => (
+          <input
+            type="checkbox"
+            checked={selectedIds.has(row.original.id)}
+            onChange={() => {
+              setSelectedIds((prev) => {
+                const next = new Set(prev);
+                if (next.has(row.original.id)) next.delete(row.original.id);
+                else next.add(row.original.id);
+                return next;
+              });
+            }}
+            className="rounded border-gray-300 text-blue-700 focus:ring-blue-500"
+          />
+        ),
+      }),
+      columnHelper.accessor('card_number', {
+        header: '#',
+        size: 50,
+        enableResizing: false,
+        cell: (info) => (
+          <div className="flex items-center gap-1">
+            <span
+              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                info.row.original.status === 'rejected' ? 'bg-red-400' :
+                info.row.original.is_reviewed ? 'bg-gray-300' : 'bg-amber-400'
+              }`}
+              title={
+                info.row.original.status === 'rejected' ? 'Rejected' :
+                info.row.original.is_reviewed ? 'Reviewed' : 'Pending'
+              }
+            />
+            <span className={`text-xs tabular-nums ${!info.row.original.is_reviewed ? 'font-bold' : 'text-gray-400'}`}>
+              {info.getValue()}
+            </span>
+          </div>
+        ),
+      }),
+      columnHelper.accessor('front_html', {
+        header: 'Card',
+        size: 400,
+        cell: (info) => {
+          const row = info.row;
+          const val = info.getValue();
+          const cellId = `${row.index}:front_html`;
+          return (
+            <EditableCell
+              value={val}
+              cellId={cellId}
+              onSave={(newVal) => handleCellSave(row.original.id, { front_html: newVal })}
+              onSelect={handleCellSelect}
+              onNavigate={(dir) => handleCellNavigate(row.index, 'front_html', dir)}
+              multiline
+              renderDisplay={(v) => (
+                <div
+                  className="text-sm leading-relaxed text-gray-800"
+                  dangerouslySetInnerHTML={{
+                    __html: showAnkiFormat ? renderClozeHtml(v) : v,
+                  }}
+                />
+              )}
+            />
+          );
+        },
+      }),
+      columnHelper.accessor('tags', {
+        header: 'Tags',
+        size: 160,
+        cell: (info) => {
+          const row = info.row;
+          const cellId = `${row.index}:tags`;
+          return (
+            <TagsCell
+              tags={info.getValue()}
+              cellId={cellId}
+              onSave={(newTags) => handleCellSave(row.original.id, { tags: newTags })}
+              onSelect={handleCellSelect}
+              onNavigate={(dir) => handleCellNavigate(row.index, 'tags', dir)}
+            />
+          );
+        },
+      }),
+      columnHelper.accessor('extra', {
+        header: 'Extra',
+        size: 200,
+        cell: (info) => {
+          const row = info.row;
+          const val = info.getValue() ?? '';
+          const cellId = `${row.index}:extra`;
+          return (
+            <EditableCell
+              value={val}
+              cellId={cellId}
+              onSave={(newVal) => handleCellSave(row.original.id, { extra: newVal || null })}
+              onSelect={handleCellSelect}
+              onNavigate={(dir) => handleCellNavigate(row.index, 'extra', dir)}
+              multiline
+              renderDisplay={(v) => v
+                ? <div className="text-xs text-gray-600" dangerouslySetInnerHTML={{ __html: v }} />
+                : <span className="text-gray-300 text-xs">—</span>
+              }
+            />
+          );
+        },
+      }),
+      columnHelper.accessor('ref_img', {
+        header: 'Ref Image',
+        size: 80,
+        cell: (info) => {
+          const val = info.getValue();
+          return val ? (
+            <img src={val} alt="ref" className="max-h-12 rounded" />
+          ) : (
+            <span className="text-gray-300 text-xs">—</span>
+          );
+        },
+      }),
+      columnHelper.accessor('vignette', {
+        header: 'Vignette',
+        size: 200,
+        cell: (info) => {
+          const row = info.row;
+          const val = info.getValue() ?? '';
+          const cellId = `${row.index}:vignette`;
+          return (
+            <EditableCell
+              value={val}
+              cellId={cellId}
+              onSave={(newVal) => handleCellSave(row.original.id, { vignette: newVal || null })}
+              onSelect={handleCellSelect}
+              onNavigate={(dir) => handleCellNavigate(row.index, 'vignette', dir)}
+              multiline
+              renderDisplay={(v) => v
+                ? <div className="text-xs text-gray-600 line-clamp-3">{v}</div>
+                : <span className="text-gray-300 text-xs">—</span>
+              }
+            />
+          );
+        },
+      }),
+      columnHelper.accessor('teaching_case', {
+        header: 'Teaching Case',
+        size: 200,
+        cell: (info) => {
+          const row = info.row;
+          const val = info.getValue() ?? '';
+          const cellId = `${row.index}:teaching_case`;
+          return (
+            <EditableCell
+              value={val}
+              cellId={cellId}
+              onSave={(newVal) => handleCellSave(row.original.id, { teaching_case: newVal || null })}
+              onSelect={handleCellSelect}
+              onNavigate={(dir) => handleCellNavigate(row.index, 'teaching_case', dir)}
+              multiline
+              renderDisplay={(v) => v
+                ? <div className="text-xs text-gray-600 line-clamp-3">{v}</div>
+                : <span className="text-gray-300 text-xs">—</span>
+              }
+            />
+          );
+        },
+      }),
+      columnHelper.display({
+        id: 'row_actions',
+        size: 88,
+        enableResizing: false,
+        header: () => null,
+        cell: ({ row }) => {
+          const card = row.original;
+          const isRejected = card.status === 'rejected';
+          return (
+            <div className="flex items-center gap-1 opacity-0 group-hover/row:opacity-100 transition-opacity duration-100">
+              <button
+                onClick={() => {
+                  setEditingId(card.id);
+                  setEditFrontHtml(card.front_html);
+                  setEditTags(card.tags.join(', '));
+                  setViewMode('cards');
+                }}
+                className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50"
+                title="Edit in card view"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </button>
+              <button
+                onClick={async () => {
+                  if (isRejected) {
+                    await updateCard(card.id, { status: 'active' });
+                  } else {
+                    await rejectCard(card.id);
+                  }
+                  fetchCards(sectionId, topicPath, true);
+                  onReviewChange?.();
+                }}
+                className={`p-1 rounded ${isRejected ? 'text-gray-400 hover:text-green-600 hover:bg-green-50' : 'text-gray-400 hover:text-red-600 hover:bg-red-50'}`}
+                title={isRejected ? 'Restore' : 'Reject'}
+              >
+                {isRejected ? (
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                ) : (
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                )}
+              </button>
+              <button
+                onClick={() => setConfirmDeleteCardId(card.id)}
+                className="p-1 rounded text-gray-400 hover:text-red-700 hover:bg-red-50"
+                title="Delete"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            </div>
+          );
+        },
+      }),
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filteredCards.length, selectedIds, handleCellSelect, handleCellNavigate, handleCellSave, showAnkiFormat, sectionId, topicPath, onReviewChange, fetchCards]
+  );
+
+  const pageCount = Math.ceil(totalCards / pagination.pageSize);
+
+  const table = useReactTable({
+    data: filteredCards,
+    columns,
+    state: { pagination, columnSizing, columnVisibility },
+    onPaginationChange: setPagination,
+    onColumnSizingChange: setColumnSizing,
+    onColumnVisibilityChange: setColumnVisibility,
+    getCoreRowModel: getCoreRowModel(),
+    manualPagination: true,
+    pageCount,
+    columnResizeMode: 'onChange',
+  });
 
   // ── Generation flow ──────────────────────────────────────────────────────
 
@@ -446,9 +931,8 @@ export default function CardsPanel({
 
   // Resume polling for active jobs on mount (after page refresh)
   useEffect(() => {
-    if (jobRunning) return; // already polling
+    if (jobRunning) return;
     getActiveJobs().then((jobs) => {
-      // Find a job relevant to current view (section or topic tree)
       const relevant = jobs.find(j =>
         (sectionId && j.section_id === sectionId) ||
         (topicTreeId && j.topic_tree_id === topicTreeId) ||
@@ -576,166 +1060,38 @@ export default function CardsPanel({
     }
   }, [selectedIds, fetchCards, sectionId, topicPath, onReviewChange]);
 
-  const toggleSelect = useCallback((id: number) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
-  const toggleSelectAll = useCallback(() => {
-    if (selectedIds.size === cards.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(cards.map((c) => c.id)));
+  const handleGenSupplemental = useCallback(async () => {
+    if (selectedIds.size === 0 || !selectedRuleSetId || !selectedModel) return;
+    try {
+      const { job_id } = await startSupplemental({
+        card_ids: [...selectedIds],
+        rule_set_id: selectedRuleSetId,
+        model: selectedModel,
+      });
+      setJobRunning(true);
+      setJobProgress(null);
+      intervalRef.current = setInterval(async () => {
+        try {
+          const job = await getGenerationJob(job_id);
+          setJobProgress({ processed: job.processed_sections, total: job.total_sections });
+          if (job.status === 'done' || job.status === 'failed') {
+            if (intervalRef.current) clearInterval(intervalRef.current);
+            setJobRunning(false);
+            if (job.status === 'failed') {
+              setJobAlertError(job.error_message ?? 'Supplemental generation failed');
+            }
+            fetchCards(sectionId, topicPath, true);
+            refreshUsage?.();
+          }
+        } catch {
+          if (intervalRef.current) clearInterval(intervalRef.current);
+          setJobRunning(false);
+        }
+      }, 1500);
+    } catch {
+      setActionError('Failed to start vignette & case generation');
     }
-  }, [selectedIds, cards]);
-
-  // ── Table columns ────────────────────────────────────────────────────────
-
-  const columns = useMemo(
-    () => [
-      columnHelper.display({
-        id: 'select',
-        size: 36,
-        enableResizing: false,
-        header: () => (
-          <input
-            type="checkbox"
-            checked={cards.length > 0 && selectedIds.size === cards.length}
-            onChange={toggleSelectAll}
-            className="rounded border-gray-300 text-blue-700 focus:ring-blue-500"
-          />
-        ),
-        cell: ({ row }) => (
-          <input
-            type="checkbox"
-            checked={selectedIds.has(row.original.id)}
-            onChange={() => toggleSelect(row.original.id)}
-            className="rounded border-gray-300 text-blue-700 focus:ring-blue-500"
-          />
-        ),
-      }),
-      columnHelper.accessor('card_number', {
-        header: '#',
-        size: 50,
-        cell: (info) => (
-          <span className={`text-xs tabular-nums ${!info.row.original.is_reviewed ? 'font-bold' : 'text-gray-400'}`}>
-            {info.getValue()}
-          </span>
-        ),
-      }),
-      columnHelper.accessor('front_html', {
-        header: 'Card',
-        size: 400,
-        cell: (info) => (
-          <div
-            className="text-sm leading-relaxed text-gray-800"
-            dangerouslySetInnerHTML={{ __html: renderClozeHtml(info.getValue()) }}
-          />
-        ),
-      }),
-      columnHelper.accessor('tags', {
-        header: 'Tags',
-        size: 160,
-        cell: (info) => {
-          const tags = info.getValue();
-          return tags.length === 0 ? (
-            <span className="text-gray-300 text-xs">--</span>
-          ) : (
-            <div className="flex flex-wrap gap-1">
-              {tags.map((tag) => (
-                <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded text-[11px] bg-blue-50 text-blue-700 border border-blue-200 font-medium">
-                  {tag}
-                </span>
-              ))}
-            </div>
-          );
-        },
-      }),
-      columnHelper.accessor('extra', {
-        header: 'Extra',
-        size: 200,
-        cell: (info) => {
-          const val = info.getValue();
-          return val ? (
-            <div className="text-xs text-gray-600" dangerouslySetInnerHTML={{ __html: val }} />
-          ) : (
-            <span className="text-gray-300 text-xs">--</span>
-          );
-        },
-      }),
-      columnHelper.accessor('ref_img', {
-        header: 'Ref Image',
-        size: 80,
-        cell: (info) => {
-          const val = info.getValue();
-          return val ? (
-            <img src={val} alt="ref" className="max-h-12 rounded" />
-          ) : (
-            <span className="text-gray-300 text-xs">--</span>
-          );
-        },
-      }),
-      columnHelper.accessor('vignette', {
-        header: 'Vignette',
-        size: 200,
-        cell: (info) => {
-          const val = info.getValue();
-          return val ? (
-            <div className="text-xs text-gray-600 line-clamp-3">{val}</div>
-          ) : (
-            <span className="text-gray-300 text-xs">--</span>
-          );
-        },
-      }),
-      columnHelper.accessor('teaching_case', {
-        header: 'Teaching Case',
-        size: 200,
-        cell: (info) => {
-          const val = info.getValue();
-          return val ? (
-            <div className="text-xs text-gray-600 line-clamp-3">{val}</div>
-          ) : (
-            <span className="text-gray-300 text-xs">--</span>
-          );
-        },
-      }),
-      columnHelper.accessor('status', {
-        header: 'Status',
-        size: 80,
-        cell: (info) => {
-          const s = info.getValue();
-          const isReviewed = info.row.original.is_reviewed;
-          return (
-            <span className={`text-xs font-medium ${
-              s === 'rejected' ? 'text-red-500' : isReviewed ? 'text-green-600' : 'text-amber-600'
-            }`}>
-              {s === 'rejected' ? 'Rejected' : isReviewed ? 'Reviewed' : 'Pending'}
-            </span>
-          );
-        },
-      }),
-    ],
-    [cards.length, selectedIds, toggleSelectAll, toggleSelect]
-  );
-
-  const pageCount = Math.ceil(totalCards / pagination.pageSize);
-
-  const table = useReactTable({
-    data: cards,
-    columns,
-    state: { pagination, columnSizing, columnVisibility },
-    onPaginationChange: setPagination,
-    onColumnSizingChange: setColumnSizing,
-    onColumnVisibilityChange: setColumnVisibility,
-    getCoreRowModel: getCoreRowModel(),
-    manualPagination: true,
-    pageCount,
-    columnResizeMode: 'onChange',
-  });
+  }, [selectedIds, selectedRuleSetId, selectedModel, fetchCards, sectionId, topicPath, refreshUsage]);
 
   // ── Empty state ──────────────────────────────────────────────────────────
 
@@ -785,6 +1141,27 @@ export default function CardsPanel({
           <option value="rejected">Rejected</option>
         </select>
 
+        {/* Global search */}
+        <div className="relative">
+          <svg className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 pointer-events-none" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            type="text"
+            value={searchQ}
+            onChange={(e) => setSearchQ(e.target.value)}
+            placeholder="Search cards…"
+            className="w-44 text-xs border border-gray-200 rounded-lg pl-7 pr-6 py-1.5 text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          {searchQ && (
+            <button onClick={() => setSearchQ('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
+
         {/* Column visibility (table mode) */}
         {viewMode === 'table' && (
           <div className="relative">
@@ -815,20 +1192,30 @@ export default function CardsPanel({
           </div>
         )}
 
+        {/* Anki / Text toggle (table mode) */}
+        {viewMode === 'table' && (
+          <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden" title="Toggle cloze rendering">
+            <button
+              onClick={() => setShowAnkiFormat(false)}
+              className={`px-2 py-1 text-xs font-medium transition-colors duration-150 ${!showAnkiFormat ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}
+            >
+              Text
+            </button>
+            <button
+              onClick={() => setShowAnkiFormat(true)}
+              className={`px-2 py-1 text-xs font-medium transition-colors duration-150 ${showAnkiFormat ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}
+            >
+              Anki
+            </button>
+          </div>
+        )}
+
         <div className="flex-1" />
 
-        {/* Card count */}
-        <span className="text-xs text-gray-400 tabular-nums">{totalCards} cards</span>
-
-        {/* Ankify */}
-        {cards.length > 0 && (
-          <button
-            onClick={() => setAnkifyOpen(true)}
-            className="px-2.5 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors duration-150"
-          >
-            Ankify
-          </button>
-        )}
+        {/* Search result count vs total */}
+        <span className="text-xs text-gray-400 tabular-nums">
+          {searchQ.trim() ? `${filteredCards.length} / ${totalCards}` : totalCards} cards
+        </span>
 
         {/* Export */}
         {exportUrl && (
@@ -839,20 +1226,50 @@ export default function CardsPanel({
             Export CSV
           </a>
         )}
-
-        {/* Bulk actions */}
-        {selectedIds.size > 0 && (
-          <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-gray-200">
-            <span className="text-xs text-gray-500">{selectedIds.size} selected</span>
-            <button onClick={handleBulkReview} className="px-2 py-1 text-xs font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100 transition-colors duration-150">
-              Mark Reviewed
-            </button>
-            <button onClick={handleBulkDelete} className="px-2 py-1 text-xs font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors duration-150">
-              Delete
-            </button>
-          </div>
-        )}
       </div>
+
+      {/* Selection action bar — only shown when cards are selected */}
+      {selectedIds.size > 0 && (
+        <div className="shrink-0 bg-blue-50 border-b border-blue-200 px-4 py-1.5 flex items-center gap-2">
+          <span className="text-xs text-blue-700 font-semibold">{selectedIds.size} selected</span>
+          <div className="w-px h-4 bg-blue-200" />
+          <button
+            onClick={() => setAnkifyOpen(true)}
+            className="px-2.5 py-1 text-xs font-medium text-violet-700 bg-violet-50 border border-violet-200 rounded-lg hover:bg-violet-100 transition-colors duration-150"
+          >
+            Ankify
+          </button>
+          <button
+            onClick={handleBulkReview}
+            className="px-2.5 py-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors duration-150"
+          >
+            Mark Reviewed
+          </button>
+          <button
+            onClick={handleGenSupplemental}
+            disabled={jobRunning || !selectedRuleSetId}
+            className="px-2.5 py-1 text-xs font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 disabled:opacity-50 transition-colors duration-150"
+            title="Generate vignette + teaching case for selected cards (grouped by condition)"
+          >
+            Gen Vignettes &amp; Cases
+          </button>
+          <button
+            onClick={handleBulkDelete}
+            className="px-2.5 py-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors duration-150"
+          >
+            Delete
+          </button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="ml-auto p-1 text-blue-400 hover:text-blue-700 rounded"
+            title="Clear selection"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {/* Generation controls */}
       {sectionId != null && (
@@ -875,7 +1292,7 @@ export default function CardsPanel({
             className="px-3 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 disabled:opacity-50 transition-colors duration-150"
           >
             {jobRunning
-              ? `Generating... ${jobProgress ? `${jobProgress.processed}/${jobProgress.total}` : ''}`
+              ? `Generating… ${jobProgress ? `${jobProgress.processed}/${jobProgress.total}` : ''}`
               : 'Generate Cards'}
           </button>
           {jobError && <span className="text-xs text-red-600">{jobError}</span>}
@@ -886,7 +1303,7 @@ export default function CardsPanel({
       <div className="flex-1 overflow-auto">
         {cardsLoading ? (
           <div className="flex items-center justify-center h-32">
-            <span className="text-xs text-gray-400">Loading cards...</span>
+            <span className="text-xs text-gray-400">Loading cards…</span>
           </div>
         ) : cards.length === 0 ? (
           <div className="flex items-center justify-center h-32">
@@ -895,7 +1312,7 @@ export default function CardsPanel({
         ) : viewMode === 'cards' ? (
           // Card grid view
           <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {cards.map((card, idx) => (
+            {filteredCards.map((card, idx) => (
               <CardTile
                 key={card.id}
                 card={card}
@@ -914,21 +1331,28 @@ export default function CardsPanel({
                 regenLoading={regenLoading}
                 onRegen={handleRegen}
                 selected={selectedIds.has(card.id)}
-                onToggleSelect={toggleSelect}
+                onToggleSelect={(id) => {
+                  setSelectedIds((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(id)) next.delete(id);
+                    else next.add(id);
+                    return next;
+                  });
+                }}
               />
             ))}
           </div>
         ) : (
-          // Table view
-          <div className="overflow-auto">
-            <table className="w-full text-left">
+          // Table view — Excel-like grid
+          <div ref={tableContainerRef} className="overflow-auto">
+            <table className="w-full text-left border-collapse">
               <thead className="bg-gray-50 sticky top-0 z-10">
                 {table.getHeaderGroups().map((headerGroup) => (
                   <tr key={headerGroup.id}>
                     {headerGroup.headers.map((header) => (
                       <th
                         key={header.id}
-                        className="px-3 py-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200 relative"
+                        className="px-3 py-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wide border border-gray-200 relative bg-gray-50"
                         style={{ width: header.getSize() }}
                       >
                         {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
@@ -946,9 +1370,23 @@ export default function CardsPanel({
               </thead>
               <tbody>
                 {table.getRowModel().rows.map((row) => (
-                  <tr key={row.id} className="border-b border-gray-100 hover:bg-gray-50/50 transition-colors duration-100">
+                  <tr
+                    key={row.id}
+                    className={`border-b border-gray-100 group/row transition-colors duration-100 ${
+                      selectedIds.has(row.original.id) ? 'bg-blue-50/40' : 'hover:bg-gray-50/60'
+                    }`}
+                  >
                     {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-3 py-2 align-top" style={{ width: cell.column.getSize() }}>
+                      <td
+                        key={cell.id}
+                        data-row={row.index}
+                        data-col={cell.column.id}
+                        className="border border-gray-100 align-top"
+                        style={{
+                          width: cell.column.getSize(),
+                          padding: ['select', 'card_number', 'status', 'row_actions'].includes(cell.column.id) ? '6px 8px' : '6px 10px',
+                        }}
+                      >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>
                     ))}
@@ -1023,7 +1461,7 @@ export default function CardsPanel({
 
       {ankifyOpen && (
         <AnkifyModal
-          cards={cards}
+          cards={selectedIds.size > 0 ? cards.filter(c => selectedIds.has(c.id)) : filteredCards}
           onClose={() => setAnkifyOpen(false)}
         />
       )}

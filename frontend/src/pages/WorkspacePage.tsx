@@ -9,7 +9,6 @@ import {
   deleteTopicTree,
   getProcessingJob,
   getActiveJobs,
-  getGenerationJob,
 } from '../api';
 import type { GenerationJob } from '../types';
 import type {
@@ -21,6 +20,7 @@ import type {
 import CardsPanel from './CardsPanel';
 import SectionViewer from './SectionViewer';
 import ConfirmModal from '../components/ConfirmModal';
+import CurriculumPicker from '../components/CurriculumPicker';
 import { buildAggregatedCounts, sortTree } from '../utils';
 
 // ── TopicNode: read-only collapsible curriculum node for sidebar tree ─────────
@@ -111,7 +111,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
   const [expandedTreeId, setExpandedTreeId] = useState<number | null>(null);
   const [expandedTree, setExpandedTree] = useState<TopicTree | null>(null);
   const [selectedSectionId, setSelectedSectionId] = useState<number | null>(null);
-  const [selectedSection, setSelectedSection] = useState<Section | null>(null);
+  const [, setSelectedSection] = useState<Section | null>(null);
 
   // Curriculum
   const [curriculum, setCurriculum] = useState<CurriculumNode[]>([]);
@@ -128,6 +128,20 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
 
   // Section viewer
   const [viewingSectionId, setViewingSectionId] = useState<number | null>(null);
+
+  // Paste modal
+  const [showPasteModal, setShowPasteModal] = useState(false);
+  const [pastedHtml, setPastedHtml] = useState<string | null>(null);
+  const [pasteName, setPasteName] = useState('');
+  const [pasteError, setPasteError] = useState<string | null>(null);
+  const [pasteCurriculumId, setPasteCurriculumId] = useState<number | null>(null);
+  const pasteAreaRef = useRef<HTMLDivElement>(null);
+
+  // Upload modal
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadName, setUploadName] = useState('');
+  const [uploadCurriculumId, setUploadCurriculumId] = useState<number | null>(null);
 
   // Delete confirm
   const [confirmDelete, setConfirmDelete] = useState<{ id: number; name: string } | null>(null);
@@ -224,19 +238,29 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
     setSelectedSection(null);
   }, [curriculum]);
 
+  // Flat curriculum for pickers
+  const flatCurriculum = useMemo(() => flattenCurriculum(curriculum), [curriculum]);
+
   // Upload handler
-  const handleUpload = useCallback(async (file: File) => {
+  const handleUploadConfirm = useCallback(async () => {
+    if (!uploadFile) return;
+    setShowUploadModal(false);
     setUploading(true);
     setUploadError(null);
     try {
-      const result = await uploadDocument(file, expandedTreeId ?? undefined);
+      const result = await uploadDocument(uploadFile, {
+        topicTreeId: expandedTreeId ?? undefined,
+        topicTreeName: uploadName || undefined,
+        curriculumId: uploadCurriculumId ?? undefined,
+      });
       setProcessingJobId(result.processing_job_id);
+      setUploadFile(null);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Upload failed';
       setUploadError(msg);
       setUploading(false);
     }
-  }, [expandedTreeId]);
+  }, [uploadFile, expandedTreeId, uploadName, uploadCurriculumId]);
 
   // Poll processing job
   useEffect(() => {
@@ -284,21 +308,51 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
 
   const sortedCurriculum = useMemo(() => sortTree(curriculum, 'curriculum'), [curriculum]);
 
-  // Paste handler
-  const handlePaste = useCallback(async () => {
+  // Open paste modal
+  const openPasteModal = useCallback(() => {
+    setPastedHtml(null);
+    setPasteName('');
+    setPasteError(null);
+    setPasteCurriculumId(null);
+    setShowPasteModal(true);
+    setTimeout(() => pasteAreaRef.current?.focus(), 50);
+  }, []);
+
+  // Handle paste event in modal
+  const handlePasteEvent = useCallback((e: React.ClipboardEvent) => {
+    e.preventDefault();
+    const html = e.clipboardData.getData('text/html');
+    const text = e.clipboardData.getData('text/plain');
+    const content = html || text;
+    if (!content.trim()) return;
+    setPastedHtml(content);
+    // Auto-detect name from first heading
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(content, 'text/html');
+    const heading = doc.querySelector('h1, h2, h3, h4, b, strong');
+    if (heading?.textContent && !pasteName) {
+      setPasteName(heading.textContent.slice(0, 100).trim());
+    }
+  }, [pasteName]);
+
+  // Submit paste
+  const handlePasteSubmit = useCallback(async () => {
+    if (!pastedHtml || !pasteName.trim()) return;
+    setShowPasteModal(false);
+    setUploading(true);
+    setUploadError(null);
     try {
-      const text = await navigator.clipboard.readText();
-      if (!text.trim()) return;
-      setUploading(true);
-      setUploadError(null);
-      const result = await pasteDocument(text, 'Pasted Content', expandedTreeId ?? undefined);
+      const result = await pasteDocument(pastedHtml, pasteName.trim(), {
+        topicTreeId: expandedTreeId ?? undefined,
+        curriculumId: pasteCurriculumId ?? undefined,
+      });
       setProcessingJobId(result.processing_job_id);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Paste failed';
       setUploadError(msg);
       setUploading(false);
     }
-  }, [expandedTreeId]);
+  }, [pastedHtml, pasteName, expandedTreeId, pasteCurriculumId]);
 
   return (
     <div className="flex flex-1 overflow-hidden">
@@ -315,7 +369,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
               {uploading ? (processingStep ?? 'Processing...') : 'Upload .docx'}
             </button>
             <button
-              onClick={handlePaste}
+              onClick={openPasteModal}
               disabled={uploading}
               className="px-3 py-2 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors duration-150"
             >
@@ -329,7 +383,12 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
-              if (f) handleUpload(f);
+              if (f) {
+                setUploadFile(f);
+                setUploadName(f.name.replace(/\.docx$/i, ''));
+                setUploadCurriculumId(null);
+                setShowUploadModal(true);
+              }
               e.target.value = '';
             }}
           />
@@ -432,7 +491,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                               className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                                 section.is_verified
                                   ? 'bg-green-400'
-                                  : section.flags.length > 0
+                                  : (section.flags?.length ?? 0) > 0
                                   ? 'bg-amber-400'
                                   : 'bg-gray-300'
                               }`}
@@ -515,6 +574,157 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
           onConfirm={handleDeleteTree}
           onCancel={() => setConfirmDelete(null)}
         />
+      )}
+
+      {/* Upload modal — pick name + topic before processing */}
+      {showUploadModal && uploadFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowUploadModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[480px] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-sm font-bold text-gray-900">Upload Document</h2>
+              <p className="text-xs text-gray-500 mt-0.5">Configure before processing</p>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">File</label>
+                <p className="text-sm text-gray-600 bg-gray-50 rounded-lg px-3 py-2">{uploadFile.name}</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Document Name</label>
+                <input
+                  type="text"
+                  value={uploadName}
+                  onChange={(e) => setUploadName(e.target.value)}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter a name..."
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Assign to Topic (optional)</label>
+                <CurriculumPicker
+                  flatNodes={flatCurriculum}
+                  value={uploadCurriculumId}
+                  onChange={setUploadCurriculumId}
+                  placeholder="— no topic —"
+                />
+                <p className="text-[10px] text-gray-400 mt-1">All sections will inherit this topic for tag generation</p>
+              </div>
+            </div>
+            <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
+              <button
+                onClick={() => setShowUploadModal(false)}
+                className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUploadConfirm}
+                className="px-4 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800"
+              >
+                Upload & Process
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Paste modal — paste content, preview, pick topic */}
+      {showPasteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowPasteModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[900px] max-h-[calc(100vh-48px)] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-gray-200 shrink-0 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-bold text-gray-900">Paste Content</h2>
+                <p className="text-xs text-gray-500 mt-0.5">Preserves bold, bullets, tables, and images from Word or Google Docs</p>
+              </div>
+              <button onClick={() => setShowPasteModal(false)} className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              {/* Name + Topic row */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Document Name</label>
+                  <input
+                    type="text"
+                    value={pasteName}
+                    onChange={(e) => setPasteName(e.target.value)}
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Auto-detected from content..."
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Assign to Topic (optional)</label>
+                  <CurriculumPicker
+                    flatNodes={flatCurriculum}
+                    value={pasteCurriculumId}
+                    onChange={setPasteCurriculumId}
+                    placeholder="— no topic —"
+                  />
+                </div>
+              </div>
+
+              {/* Paste area / Preview */}
+              {!pastedHtml ? (
+                <div
+                  ref={pasteAreaRef}
+                  tabIndex={0}
+                  onPaste={handlePasteEvent}
+                  className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-text focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-colors min-h-[300px] flex flex-col items-center justify-center gap-3"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <p className="text-sm text-gray-500 font-medium">Click here, then paste</p>
+                  <p className="text-xs text-gray-400">Cmd+V / Ctrl+V</p>
+                </div>
+              ) : (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Preview</span>
+                    <button
+                      onClick={() => { setPastedHtml(null); setPasteName(''); }}
+                      className="text-xs text-gray-500 hover:text-gray-700"
+                    >
+                      Clear & paste again
+                    </button>
+                  </div>
+                  <div
+                    className="border border-gray-200 rounded-xl p-4 max-h-[400px] overflow-y-auto section-content prose prose-sm max-w-none"
+                    dangerouslySetInnerHTML={{ __html: pastedHtml }}
+                  />
+                </div>
+              )}
+
+              {pasteError && (
+                <div className="p-3 rounded-lg bg-red-50 text-xs text-red-600">{pasteError}</div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex justify-end gap-2 shrink-0">
+              <button
+                onClick={() => setShowPasteModal(false)}
+                className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePasteSubmit}
+                disabled={!pastedHtml || !pasteName.trim()}
+                className="px-4 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 disabled:opacity-50"
+              >
+                Process & Import
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
