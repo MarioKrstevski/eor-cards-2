@@ -22,6 +22,7 @@ import SectionViewer from './SectionViewer';
 import ConfirmModal from '../components/ConfirmModal';
 import CurriculumPicker from '../components/CurriculumPicker';
 import { buildAggregatedCounts, sortTree } from '../utils';
+import { useSettings } from '../context/SettingsContext';
 
 // ── TopicNode: read-only collapsible curriculum node for sidebar tree ─────────
 
@@ -103,6 +104,8 @@ interface WorkspacePageProps {
 }
 
 export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
+  const { curriculumVersion } = useSettings();
+
   // Sidebar tab
   const [sidebarTab, setSidebarTab] = useState<'documents' | 'topics'>('documents');
 
@@ -192,11 +195,11 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
   // Load curriculum
   const loadCurriculum = useCallback(async () => {
     try {
-      const [tree, coverage] = await Promise.all([getCurriculum(), getCurriculumCoverage()]);
+      const [tree, coverage] = await Promise.all([getCurriculum(curriculumVersion), getCurriculumCoverage(curriculumVersion)]);
       setCurriculum(tree);
       setCardCounts(buildAggregatedCounts(tree, coverage));
     } catch { /* ignore */ }
-  }, []);
+  }, [curriculumVersion]);
 
   useEffect(() => {
     loadTopicTrees();
@@ -496,7 +499,12 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                                   : 'bg-gray-300'
                               }`}
                             />
-                            <span className="text-xs truncate flex-1">{section.heading}</span>
+                            <div className="flex-1 min-w-0">
+                              <span className="text-xs truncate block">{section.heading}</span>
+                              {section.curriculum_topic_path && (
+                                <span className="text-[9px] text-gray-400 truncate block leading-tight">{section.curriculum_topic_path}</span>
+                              )}
+                            </div>
                             {section.card_count > 0 && (
                               <span className="text-[10px] text-gray-400 tabular-nums shrink-0">
                                 {section.card_count}

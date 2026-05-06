@@ -13,6 +13,8 @@ interface Settings {
   setVignetteRuleSetId: (id: number | null) => void;
   teachingCaseRuleSetId: number | null;
   setTeachingCaseRuleSetId: (id: number | null) => void;
+  curriculumVersion: string;
+  setCurriculumVersion: (v: string) => void;
 }
 
 const defaults: Settings = {
@@ -28,6 +30,8 @@ const defaults: Settings = {
   setVignetteRuleSetId: () => {},
   teachingCaseRuleSetId: null,
   setTeachingCaseRuleSetId: () => {},
+  curriculumVersion: 'v1',
+  setCurriculumVersion: () => {},
 };
 
 export const SettingsContext = createContext<Settings>(defaults);
@@ -54,6 +58,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     const v = localStorage.getItem('settings_teaching_case_ruleset');
     return v ? Number(v) : null;
   });
+  const [curriculumVersion, setCurriculumVersionState] = useState<string>(
+    () => localStorage.getItem('settings_curriculum_version') || 'v1'
+  );
 
   function setSelectedModel(m: string) {
     setSelectedModelState(m);
@@ -88,6 +95,11 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     else localStorage.setItem('settings_teaching_case_ruleset', String(id));
   }
 
+  function setCurriculumVersion(v: string) {
+    setCurriculumVersionState(v);
+    localStorage.setItem('settings_curriculum_version', v);
+  }
+
   return (
     <SettingsContext.Provider
       value={{
@@ -97,6 +109,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
         selectedRuleSetId, setSelectedRuleSetId,
         vignetteRuleSetId, setVignetteRuleSetId,
         teachingCaseRuleSetId, setTeachingCaseRuleSetId,
+        curriculumVersion, setCurriculumVersion,
       }}
     >
       {children}

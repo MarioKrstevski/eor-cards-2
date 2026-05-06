@@ -18,8 +18,10 @@ import {
   uploadDocument,
   getProcessingJob,
   exportCardsUrl,
+  aiDetectHeadings,
 } from '../api';
 import type { CurriculumNode, RuleSet, TopicCoverageStats, TopicTree } from '../types';
+import { useSettings } from '../context/SettingsContext';
 
 // ─── CurriculumTreeNode (editable, for Curriculum tab) ────────────────────────
 
@@ -222,6 +224,7 @@ function CoverageNode({ node, depth, cardCounts }: CoverageNodeProps) {
 // ─── Main Library Page ───────────────────────────────────────────────────────
 
 export default function LibraryPage() {
+  const { curriculumVersion } = useSettings();
   const [activeTab, setActiveTab] = useState<'topics' | 'documents' | 'rules'>('topics');
 
   // Curriculum
@@ -235,6 +238,9 @@ export default function LibraryPage() {
   const [expandedTreeId, setExpandedTreeId] = useState<number | null>(null);
   const [expandedTree, setExpandedTree] = useState<TopicTree | null>(null);
   const [confirmDeleteTree, setConfirmDeleteTree] = useState<{ id: number; name: string } | null>(null);
+  const [aiDetectingTreeId, setAiDetectingTreeId] = useState<number | null>(null);
+  const [aiDetectStep, setAiDetectStep] = useState<string | null>(null);
+  const [aiDetectError, setAiDetectError] = useState<string | null>(null);
 
   // Upload
   const [uploading, setUploading] = useState(false);
@@ -254,11 +260,11 @@ export default function LibraryPage() {
   // Load data
   const loadCurriculum = useCallback(async () => {
     try {
-      const [tree, coverage] = await Promise.all([getCurriculum(), getCurriculumCoverage()]);
+      const [tree, coverage] = await Promise.all([getCurriculum(curriculumVersion), getCurriculumCoverage(curriculumVersion)]);
       setCurriculum(tree);
       setCardCounts(buildAggregatedCounts(tree, coverage));
     } catch { /* ignore */ }
-  }, []);
+  }, [curriculumVersion]);
 
   const loadTopicTrees = useCallback(async () => {
     try {
@@ -317,6 +323,44 @@ export default function LibraryPage() {
       loadTopicTrees();
     } catch { /* ignore */ }
   }, [confirmDeleteTree, expandedTreeId, loadTopicTrees]);
+
+  // AI heading detection
+  const handleAiDetect = useCallback(async (treeId: number) => {
+    setAiDetectingTreeId(treeId);
+    setAiDetectStep('detecting…');
+    setAiDetectError(null);
+    try {
+      const { processing_job_id } = await aiDetectHeadings(treeId, curriculumVersion);
+      const interval = setInterval(async () => {
+        try {
+          const job = await getProcessingJob(processing_job_id);
+          setAiDetectStep(job.pipeline_step ?? 'processing…');
+          if (job.status === 'done' || job.status === 'failed') {
+            clearInterval(interval);
+            setAiDetectingTreeId(null);
+            setAiDetectStep(null);
+            if (job.status === 'failed') {
+              setAiDetectError(job.error_message ?? 'AI heading detection failed');
+            } else {
+              loadTopicTrees();
+              if (expandedTreeId === treeId) {
+                const tree = await getTopicTree(treeId);
+                setExpandedTree(tree);
+              }
+            }
+          }
+        } catch {
+          clearInterval(interval);
+          setAiDetectingTreeId(null);
+          setAiDetectStep(null);
+        }
+      }, 1500);
+    } catch (err: unknown) {
+      setAiDetectingTreeId(null);
+      setAiDetectStep(null);
+      setAiDetectError(err instanceof Error ? err.message : 'AI detection failed');
+    }
+  }, [loadTopicTrees, expandedTreeId]);
 
   // Upload
   const handleUpload = useCallback(async (file: File) => {
@@ -425,7 +469,7 @@ export default function LibraryPage() {
                 <button
                   onClick={() => {
                     const name = prompt('New top-level topic name:');
-                    if (name?.trim()) createCurriculumNode({ name: name.trim() }).then(loadCurriculum);
+                    if (name?.trim()) createCurriculumNode({ name: name.trim(), version: curriculumVersion }).then(loadCurriculum);
                   }}
                   className="px-2 py-1 text-xs text-blue-600 hover:text-blue-800 font-medium"
                 >
@@ -485,6 +529,9 @@ export default function LibraryPage() {
                 }}
               />
               {uploadError && <span className="text-xs text-red-600">{uploadError}</span>}
+              {aiDetectError && (
+                <span className="text-xs text-red-600">AI headings: {aiDetectError} <button onClick={() => setAiDetectError(null)} className="underline ml-1">dismiss</button></span>
+              )}
             </div>
 
             {/* Topic tree list */}
@@ -511,6 +558,17 @@ export default function LibraryPage() {
                         </p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
+                        {/* AI heading detection — useful when Word heading styles weren't applied */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleAiDetect(tree.id); }}
+                          disabled={aiDetectingTreeId === tree.id}
+                          title="Re-process with AI-detected headings (use when document has no heading styles)"
+                          className="px-2 py-1 text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded-lg hover:bg-indigo-50 disabled:opacity-50 transition-colors duration-150"
+                        >
+                          {aiDetectingTreeId === tree.id
+                            ? (aiDetectStep ?? 'detecting…')
+                            : 'AI Headings'}
+                        </button>
                         {tree.total_cards > 0 && (
                           <a
                             href={exportCardsUrl({ topic_tree_id: tree.id })}
@@ -551,7 +609,12 @@ export default function LibraryPage() {
                                     : 'bg-gray-300'
                                 }`}
                               />
-                              <span className="text-xs font-medium text-gray-700 flex-1 truncate">{section.heading}</span>
+                              <div className="flex-1 min-w-0">
+                                <span className="text-xs font-medium text-gray-700 block truncate">{section.heading}</span>
+                                {section.curriculum_topic_path && (
+                                  <span className="text-[10px] text-gray-400 block truncate">{section.curriculum_topic_path}</span>
+                                )}
+                              </div>
                               <div className="flex items-center gap-2 shrink-0">
                                 {(section.flags?.length ?? 0) > 0 && (
                                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 font-medium">

@@ -63,10 +63,23 @@ def _seed_curriculum(db, nodes, parent_id, level, parent_path):
             _seed_curriculum(db, node["children"], c.id, level + 1, path)
 
 
+def _migrate_db():
+    """Run lightweight SQLite migrations for new columns."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        # Add version column to curriculum if missing
+        try:
+            conn.execute(text("ALTER TABLE curriculum ADD COLUMN version VARCHAR(10) NOT NULL DEFAULT 'v1'"))
+            conn.commit()
+        except Exception:
+            pass  # column already exists
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     os.makedirs(os.path.join(os.path.dirname(__file__), "..", "data", "uploads"), exist_ok=True)
     Base.metadata.create_all(bind=engine)
+    _migrate_db()
     seed_data()
     yield
 

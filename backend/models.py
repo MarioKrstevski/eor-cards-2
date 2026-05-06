@@ -30,6 +30,7 @@ class Curriculum(Base):
     level: Mapped[int] = mapped_column(Integer, default=0)
     path: Mapped[str] = mapped_column(String(500))
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    version: Mapped[str] = mapped_column(String(10), default='v1', server_default='v1')
     children: Mapped[list["Curriculum"]] = relationship("Curriculum", back_populates="parent")
     parent: Mapped[Optional["Curriculum"]] = relationship("Curriculum", back_populates="children", remote_side="Curriculum.id")
 

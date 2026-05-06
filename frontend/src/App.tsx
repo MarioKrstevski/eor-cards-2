@@ -15,7 +15,7 @@ function AppInner() {
   const [showUsage, setShowUsage] = useState(false);
   const [displayedCost, setDisplayedCost] = useState<number | null>(null);
   const prevCostRef = useRef(0);
-  const { selectedRuleSetId, setSelectedRuleSetId } = useSettings();
+  const { selectedRuleSetId, setSelectedRuleSetId, curriculumVersion, setCurriculumVersion } = useSettings();
 
   function refreshUsage() {
     const prev = prevCostRef.current;
@@ -107,6 +107,23 @@ function AppInner() {
           Library
         </NavLink>
         <div className="flex-1" />
+
+        {/* Curriculum version toggle */}
+        <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden mr-1" title="Active curriculum version">
+          <button
+            onClick={() => setCurriculumVersion('v1')}
+            className={`px-2 py-1 text-[11px] font-medium transition-colors duration-150 ${curriculumVersion === 'v1' ? 'bg-blue-50 text-blue-700' : 'text-gray-400 hover:bg-gray-50'}`}
+          >
+            Old
+          </button>
+          <button
+            onClick={() => setCurriculumVersion('v2')}
+            className={`px-2 py-1 text-[11px] font-medium transition-colors duration-150 ${curriculumVersion === 'v2' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-400 hover:bg-gray-50'}`}
+          >
+            New
+          </button>
+        </div>
+
         <span className="text-[10px] text-gray-300 font-mono mr-2">v{APP_VERSION}</span>
 
         {displayedCost != null && (

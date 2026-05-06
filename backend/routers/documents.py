@@ -295,6 +295,53 @@ def delete_topic_tree(topic_tree_id: int, db: Session = Depends(get_db)):
     db.commit()
 
 
+@router.post("/{topic_tree_id}/ai-headings")
+def ai_detect_headings(
+    topic_tree_id: int,
+    background_tasks: BackgroundTasks,
+    curriculum_version: str = "v1",
+    db: Session = Depends(get_db),
+):
+    """Re-process the latest upload using AI-detected headings.
+
+    Use this when a document was uploaded without proper Word heading styles.
+    Claude analyzes paragraph formatting to infer the heading hierarchy, then
+    the document is re-processed with those headings injected.
+    """
+    tt = db.get(TopicTree, topic_tree_id)
+    if not tt:
+        raise HTTPException(404, "Topic tree not found")
+
+    # Find the most recent .docx upload
+    docx_uploads = [u for u in tt.uploads if u.filename.endswith(".docx")]
+    if not docx_uploads:
+        raise HTTPException(400, "No .docx uploads found for this topic tree. AI heading detection only works on Word documents.")
+
+    upload = sorted(docx_uploads, key=lambda u: u.id, reverse=True)[0]
+    filepath = os.path.join(UPLOAD_DIR, upload.filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(400, "Upload file no longer exists on disk (was it cleared?). Please re-upload the document.")
+
+    # Clear existing sections so re-processing starts fresh
+    for section in list(tt.sections):
+        db.delete(section)
+    db.flush()
+
+    job = ProcessingJob(upload_id=upload.id, status=JobStatus.pending)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    background_tasks.add_task(_run_ai_heading_processing, job.id, curriculum_version)
+
+    return {
+        "processing_job_id": job.id,
+        "upload_id": upload.id,
+        "topic_tree_id": tt.id,
+        "message": "AI heading detection started. This may take 15–60 seconds depending on document size.",
+    }
+
+
 def _run_processing(job_id: int):
     """Background task: process an upload into sections and content blocks."""
     from backend.services.doc_processor import parse_docx, parse_html, split_by_h2, build_heading_tree, build_content_html
@@ -428,5 +475,118 @@ def _run_processing(job_id: int):
             db.commit()
         except Exception:
             logger.exception("Failed to write error status for processing job %d", job_id)
+    finally:
+        db.close()
+
+
+def _run_ai_heading_processing(job_id: int, curriculum_version: str = 'v1'):
+    """Background task: re-process with AI-detected headings."""
+    from backend.services.heading_detector import parse_docx_with_ai_headings
+    from backend.services.table_converter import convert_table_elements
+    from backend.services.doc_processor import split_by_h2, build_heading_tree, build_content_html
+    from backend.config import DEFAULT_MODEL
+
+    db = SessionLocal()
+    try:
+        job = db.get(ProcessingJob, job_id)
+        job.status = JobStatus.running
+        job.started_at = utcnow()
+        job.pipeline_step = "ai_detecting"
+        db.commit()
+
+        upload = db.get(Upload, job.upload_id)
+        tt = db.get(TopicTree, upload.topic_tree_id)
+        filepath = os.path.join(UPLOAD_DIR, upload.filename)
+
+        # Step 1: AI-assisted parse (auto-falls back to normal parse if headings already exist)
+        elements = parse_docx_with_ai_headings(filepath, model=DEFAULT_MODEL, curriculum_version=curriculum_version)
+
+        # Step 2: Table conversion
+        job.pipeline_step = "tables"
+        db.commit()
+        elements = convert_table_elements(elements)
+
+        # Step 3: Split by H2
+        job.pipeline_step = "splitting"
+        db.commit()
+        section_groups = split_by_h2(elements)
+
+        # Step 4: Create sections
+        job.pipeline_step = "merging"
+        db.commit()
+
+        curriculum_topic_id = tt.curriculum_id
+        curriculum_topic_path = None
+        if curriculum_topic_id:
+            cur_node = db.get(Curriculum, curriculum_topic_id)
+            if cur_node:
+                curriculum_topic_path = cur_node.path
+
+        for idx, (heading, elems) in enumerate(section_groups):
+            heading_tree = build_heading_tree(elems)
+            content_text = "\n".join(e["text"] for e in elems if e.get("text"))
+            content_html = build_content_html(elems)
+            image_count = sum(1 for e in elems if e.get("type") == "image")
+            table_count = sum(1 for e in elems if e.get("type") == "table")
+
+            section = Section(
+                topic_tree_id=tt.id,
+                heading=heading,
+                slug=slugify(heading),
+                heading_tree=heading_tree,
+                content_text=content_text,
+                content_html=content_html,
+                image_count=image_count,
+                table_count=table_count,
+                sort_order=idx,
+                curriculum_topic_id=curriculum_topic_id,
+                curriculum_topic_path=curriculum_topic_path,
+            )
+            db.add(section)
+            db.flush()
+
+            position = 0
+            for elem in elems:
+                block_type = elem.get("type", "paragraph")
+                if block_type == "image":
+                    if elem.get("data_uri"):
+                        img = SectionImage(
+                            section_id=section.id,
+                            upload_id=upload.id,
+                            data_uri=elem["data_uri"],
+                            alt_text_hint=elem.get("alt_text"),
+                            position=position,
+                        )
+                        db.add(img)
+                else:
+                    cb = ContentBlock(
+                        section_id=section.id,
+                        upload_id=upload.id,
+                        text=elem.get("text", ""),
+                        html=elem.get("html", elem.get("text", "")),
+                        block_type=block_type,
+                        heading_context=elem.get("heading_context"),
+                        position=position,
+                    )
+                    db.add(cb)
+                position += 1
+
+        upload.status = "ready"
+        job.pipeline_step = "done"
+        job.status = JobStatus.done
+        job.finished_at = utcnow()
+        db.commit()
+
+    except Exception as e:
+        logger.exception("AI heading processing failed for job %d", job_id)
+        try:
+            job = db.get(ProcessingJob, job_id)
+            if job:
+                job.status = JobStatus.failed
+                job.error_message = str(e)
+                job.finished_at = utcnow()
+            db.commit()
+        except Exception:
+            pass
     finally:
         db.close()

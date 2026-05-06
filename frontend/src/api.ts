@@ -20,19 +20,25 @@ const http = axios.create({ baseURL: '/api' });
 
 // ─── Curriculum ───────────────────────────────────────────────────────────────
 
-export async function getCurriculum(): Promise<CurriculumNode[]> {
-  const res = await http.get<CurriculumNode[]>('/curriculum');
+export async function getCurriculum(version = 'v1'): Promise<CurriculumNode[]> {
+  const res = await http.get<CurriculumNode[]>('/curriculum', { params: { version } });
   return res.data;
 }
 
-export async function getCurriculumCoverage(): Promise<Record<string, TopicCoverageStats>> {
-  const res = await http.get<Record<string, TopicCoverageStats>>('/curriculum/coverage');
+export async function getCurriculumCoverage(version = 'v1'): Promise<Record<string, TopicCoverageStats>> {
+  const res = await http.get<Record<string, TopicCoverageStats>>('/curriculum/coverage', { params: { version } });
+  return res.data;
+}
+
+export async function importCurriculum(version: string, nodes: unknown[]): Promise<{ imported: number }> {
+  const res = await http.post<{ imported: number }>('/curriculum/import', { version, nodes });
   return res.data;
 }
 
 export async function createCurriculumNode(params: {
   name: string;
   parent_id?: number | null;
+  version?: string;
 }): Promise<CurriculumNode> {
   const res = await http.post<CurriculumNode>('/curriculum', params);
   return res.data;
@@ -97,6 +103,13 @@ export async function pasteDocument(
 
 export async function deleteTopicTree(id: number): Promise<void> {
   await http.delete(`/topic-trees/${id}`);
+}
+
+export async function aiDetectHeadings(id: number, curriculumVersion = 'v1'): Promise<{ processing_job_id: number }> {
+  const res = await http.post<{ processing_job_id: number }>(`/topic-trees/${id}/ai-headings`, null, {
+    params: { curriculum_version: curriculumVersion },
+  });
+  return res.data;
 }
 
 export async function getProcessingJob(jobId: number): Promise<ProcessingJob> {

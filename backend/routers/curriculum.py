@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, case
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -12,6 +12,7 @@ router = APIRouter()
 class CurriculumCreate(BaseModel):
     name: str
     parent_id: Optional[int] = None
+    version: str = 'v1'
 
 
 class CurriculumUpdate(BaseModel):
@@ -26,6 +27,7 @@ def node_to_dict(node: Curriculum, children: list = None) -> dict:
         "path": node.path,
         "parent_id": node.parent_id,
         "sort_order": node.sort_order,
+        "version": node.version,
         "children": children or [],
     }
 
@@ -48,8 +50,8 @@ def build_tree(nodes: list[Curriculum]) -> list[dict]:
 
 
 @router.get("")
-def get_tree(db: Session = Depends(get_db)):
-    nodes = db.query(Curriculum).all()
+def get_tree(version: str = Query('v1'), db: Session = Depends(get_db)):
+    nodes = db.query(Curriculum).filter(Curriculum.version == version).all()
     return build_tree(nodes)
 
 
@@ -62,12 +64,46 @@ def create_node(body: CurriculumCreate, db: Session = Depends(get_db)):
             raise HTTPException(404, "Parent not found")
     level = (parent.level + 1) if parent else 0
     path = f"{parent.path} > {body.name}" if parent else body.name
+    version = parent.version if parent else body.version
     max_order = db.query(func.max(Curriculum.sort_order)).filter_by(parent_id=body.parent_id).scalar() or -1
-    node = Curriculum(name=body.name, parent_id=body.parent_id, level=level, path=path, sort_order=max_order + 1)
+    node = Curriculum(name=body.name, parent_id=body.parent_id, level=level, path=path, sort_order=max_order + 1, version=version)
     db.add(node)
     db.commit()
     db.refresh(node)
     return node_to_dict(node)
+
+
+@router.post("/import", status_code=201)
+def import_curriculum(body: dict, db: Session = Depends(get_db)):
+    """Import a curriculum tree from JSON. Replaces all nodes for the given version.
+
+    Body: { "version": "v2", "nodes": [...] }  — nodes use the same tree format as curriculum.json
+    """
+    version = body.get("version", "v2")
+    nodes = body.get("nodes", [])
+    if not nodes:
+        raise HTTPException(400, "No nodes provided")
+
+    # Delete existing nodes for this version
+    db.query(Curriculum).filter(Curriculum.version == version).delete(synchronize_session=False)
+    db.flush()
+
+    def _seed(node_list, parent_id, level, parent_path):
+        for idx, node in enumerate(node_list):
+            path = f"{parent_path} > {node['name']}" if parent_path else node["name"]
+            c = Curriculum(
+                parent_id=parent_id, name=node["name"], level=level,
+                path=path, sort_order=idx, version=version,
+            )
+            db.add(c)
+            db.flush()
+            if node.get("children"):
+                _seed(node["children"], c.id, level + 1, path)
+
+    _seed(nodes, None, 0, "")
+    db.commit()
+    count = db.query(Curriculum).filter(Curriculum.version == version).count()
+    return {"version": version, "imported": count}
 
 
 def _cascade_path_update(db, parent: Curriculum):
@@ -96,7 +132,7 @@ def rename_node(node_id: int, body: CurriculumUpdate, db: Session = Depends(get_
 
 
 @router.get("/coverage")
-def get_coverage(db: Session = Depends(get_db)):
+def get_coverage(version: str = Query('v1'), db: Session = Depends(get_db)):
     """Return card breakdown per curriculum topic_id."""
     rows = (
         db.query(
