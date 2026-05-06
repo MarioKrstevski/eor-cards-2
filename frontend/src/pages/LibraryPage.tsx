@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import ConfirmModal from '../components/ConfirmModal';
-import { buildAggregatedCounts, sortTree } from '../utils';
+import CurriculumPicker from '../components/CurriculumPicker';
+import { buildAggregatedCounts, flattenTree, sortTree } from '../utils';
 import {
   getCurriculum,
   getCurriculumCoverage,
@@ -16,6 +17,7 @@ import {
   getTopicTree,
   deleteTopicTree,
   uploadDocument,
+  updateSection,
   getProcessingJob,
   exportCardsUrl,
   aiDetectHeadings,
@@ -248,6 +250,15 @@ export default function LibraryPage() {
   const [processingStep, setProcessingStep] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Upload modal
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadName, setUploadName] = useState('');
+  const [uploadCurriculumId, setUploadCurriculumId] = useState<number | null>(null);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+
+  // Section topic edit
+  const [editingSectionId, setEditingSectionId] = useState<number | null>(null);
+  const [editingTopicId, setEditingTopicId] = useState<number | null>(null);
 
   // Rules
   const [ruleSets, setRuleSets] = useState<RuleSet[]>([]);
@@ -362,19 +373,50 @@ export default function LibraryPage() {
     }
   }, [loadTopicTrees, expandedTreeId]);
 
-  // Upload
-  const handleUpload = useCallback(async (file: File) => {
+  // Upload — open modal first
+  const handleUpload = useCallback((file: File) => {
+    setUploadFile(file);
+    setUploadName(file.name.replace(/\.docx$/i, ''));
+    setUploadCurriculumId(null);
+    setShowUploadModal(true);
+  }, []);
+
+  const handleUploadConfirm = useCallback(async () => {
+    if (!uploadFile) return;
+    setShowUploadModal(false);
     setUploading(true);
     setUploadError(null);
     try {
-      const result = await uploadDocument(file);
+      const result = await uploadDocument(uploadFile, {
+        topicTreeName: uploadName || undefined,
+        curriculumId: uploadCurriculumId ?? undefined,
+      });
       setProcessingJobId(result.processing_job_id);
+      setUploadFile(null);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Upload failed';
       setUploadError(msg);
       setUploading(false);
     }
-  }, []);
+  }, [uploadFile, uploadName, uploadCurriculumId]);
+
+  // Save section curriculum assignment
+  const handleSaveSectionTopic = useCallback(async (sectionId: number) => {
+    const node = flatCurriculum.find((n) => n.id === editingTopicId) ?? null;
+    try {
+      await updateSection(sectionId, {
+        curriculum_topic_id: editingTopicId ?? undefined,
+        curriculum_topic_path: node?.path ?? undefined,
+      });
+      // Refresh the expanded tree so the path updates in the list
+      if (expandedTreeId) {
+        const tree = await getTopicTree(expandedTreeId);
+        setExpandedTree(tree);
+      }
+    } catch { /* ignore */ }
+    setEditingSectionId(null);
+    setEditingTopicId(null);
+  }, [editingTopicId, flatCurriculum, expandedTreeId]);
 
   // Poll processing job
   useEffect(() => {
@@ -436,6 +478,8 @@ export default function LibraryPage() {
       loadRuleSets();
     } catch { /* ignore */ }
   }, [loadRuleSets]);
+
+  const flatCurriculum = useMemo(() => flattenTree(sortTree(curriculum, 'curriculum')), [curriculum]);
 
   const sortedCurriculum = sortTree(curriculum, 'curriculum');
 
@@ -596,34 +640,72 @@ export default function LibraryPage() {
                           <p className="px-4 py-3 text-xs text-gray-400">No sections</p>
                         ) : (
                           expandedTree.sections.map((section) => (
-                            <div
-                              key={section.id}
-                              className="flex items-center gap-3 px-6 py-2.5 border-b border-gray-50 last:border-b-0 hover:bg-gray-50/50 transition-colors duration-150"
-                            >
-                              <span
-                                className={`w-2 h-2 rounded-full shrink-0 ${
-                                  section.is_verified
-                                    ? 'bg-green-400'
-                                    : (section.flags?.length ?? 0) > 0
-                                    ? 'bg-amber-400'
-                                    : 'bg-gray-300'
-                                }`}
-                              />
-                              <div className="flex-1 min-w-0">
-                                <span className="text-xs font-medium text-gray-700 block truncate">{section.heading}</span>
-                                <span className="text-[10px] text-gray-400 block truncate">
-                                  {section.curriculum_topic_path ?? `${expandedTree.name} › ${section.heading}`}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                {(section.flags?.length ?? 0) > 0 && (
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 font-medium">
-                                    {section.flags!.length} flag{section.flags!.length !== 1 ? 's' : ''}
+                            <div key={section.id}>
+                              <div
+                                className="flex items-center gap-3 px-6 py-2.5 border-b border-gray-50 last:border-b-0 hover:bg-gray-50/50 transition-colors duration-150 group/section"
+                              >
+                                <span
+                                  className={`w-2 h-2 rounded-full shrink-0 ${
+                                    section.is_verified
+                                      ? 'bg-green-400'
+                                      : (section.flags?.length ?? 0) > 0
+                                      ? 'bg-amber-400'
+                                      : 'bg-gray-300'
+                                  }`}
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <span className="text-xs font-medium text-gray-700 block truncate">{section.heading}</span>
+                                  <span className="text-[10px] text-gray-400 block truncate">
+                                    {section.curriculum_topic_path ?? `${expandedTree.name} › ${section.heading}`}
                                   </span>
-                                )}
-                                <span className="text-[10px] text-gray-400 tabular-nums">{section.card_count} cards</span>
-                                <span className="text-[10px] text-gray-300">{section.image_count} img</span>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {(section.flags?.length ?? 0) > 0 && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 font-medium">
+                                      {section.flags!.length} flag{section.flags!.length !== 1 ? 's' : ''}
+                                    </span>
+                                  )}
+                                  <span className="text-[10px] text-gray-400 tabular-nums">{section.card_count} cards</span>
+                                  <span className="text-[10px] text-gray-300">{section.image_count} img</span>
+                                  <button
+                                    onClick={() => {
+                                      setEditingSectionId(section.id);
+                                      setEditingTopicId(section.curriculum_topic_id);
+                                    }}
+                                    className="opacity-0 group-hover/section:opacity-100 p-1 text-gray-300 hover:text-blue-500 transition-all duration-150"
+                                    title="Edit topic assignment"
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                    </svg>
+                                  </button>
+                                </div>
                               </div>
+                              {/* Inline topic editor */}
+                              {editingSectionId === section.id && (
+                                <div className="px-6 py-3 bg-blue-50 border-b border-blue-100 flex items-center gap-3">
+                                  <div className="flex-1">
+                                    <CurriculumPicker
+                                      flatNodes={flatCurriculum}
+                                      value={editingTopicId}
+                                      onChange={setEditingTopicId}
+                                      placeholder="— unassigned —"
+                                    />
+                                  </div>
+                                  <button
+                                    onClick={() => handleSaveSectionTopic(section.id)}
+                                    className="px-3 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 shrink-0"
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    onClick={() => { setEditingSectionId(null); setEditingTopicId(null); }}
+                                    className="px-2 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 shrink-0"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           ))
                         )}
@@ -756,6 +838,58 @@ export default function LibraryPage() {
           onConfirm={handleDeleteTree}
           onCancel={() => setConfirmDeleteTree(null)}
         />
+      )}
+
+      {/* Upload modal */}
+      {showUploadModal && uploadFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowUploadModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[480px] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-sm font-bold text-gray-900">Upload Document</h2>
+              <p className="text-xs text-gray-500 mt-0.5">Configure before processing</p>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">File</label>
+                <p className="text-sm text-gray-600 bg-gray-50 rounded-lg px-3 py-2">{uploadFile.name}</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Document Name</label>
+                <input
+                  type="text"
+                  value={uploadName}
+                  onChange={(e) => setUploadName(e.target.value)}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter a name..."
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Assign to Topic (optional)</label>
+                <CurriculumPicker
+                  flatNodes={flatCurriculum}
+                  value={uploadCurriculumId}
+                  onChange={setUploadCurriculumId}
+                  placeholder="— no topic —"
+                />
+                <p className="text-[10px] text-gray-400 mt-1">All sections will inherit this topic for tag generation</p>
+              </div>
+            </div>
+            <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
+              <button
+                onClick={() => setShowUploadModal(false)}
+                className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUploadConfirm}
+                className="px-4 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800"
+              >
+                Upload & Process
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
