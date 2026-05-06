@@ -297,6 +297,8 @@ export default function LibraryPage() {
     loadRuleSets();
   }, [loadCurriculum, loadTopicTrees, loadRuleSets]);
 
+  const flatCurriculum = useMemo(() => flattenTree(sortTree(curriculum, 'curriculum')), [curriculum]);
+
   // Expand topic tree
   const expandTree = useCallback(async (id: number) => {
     if (expandedTreeId === id) {
@@ -478,8 +480,6 @@ export default function LibraryPage() {
       loadRuleSets();
     } catch { /* ignore */ }
   }, [loadRuleSets]);
-
-  const flatCurriculum = useMemo(() => flattenTree(sortTree(curriculum, 'curriculum')), [curriculum]);
 
   const sortedCurriculum = sortTree(curriculum, 'curriculum');
 
