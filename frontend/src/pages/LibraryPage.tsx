@@ -25,6 +25,51 @@ import {
 import type { CurriculumNode, RuleSet, TopicCoverageStats, TopicTree } from '../types';
 import { useSettings } from '../context/SettingsContext';
 
+// ─── Search result tree node (ancestors as context, matches bold) ─────────────
+
+const LEVEL_BADGE = ['bg-purple-50 text-purple-700', 'bg-blue-50 text-blue-700', 'bg-green-50 text-green-700', 'bg-orange-50 text-orange-700'];
+
+interface SearchNodeProps {
+  node: CurriculumNode;
+  matchIds: Set<number>;
+  ancestorIds: Set<number>;
+  cardCounts: Record<string, TopicCoverageStats>;
+}
+
+function SearchNode({ node, matchIds, ancestorIds, cardCounts }: SearchNodeProps) {
+  const isMatch = matchIds.has(node.id);
+  const isAncestor = ancestorIds.has(node.id);
+  if (!isMatch && !isAncestor) return null;
+
+  const stats = cardCounts[String(node.id)] ?? { total: 0, active: 0, unreviewed: 0, rejected: 0 };
+  const reviewed = stats.active - stats.unreviewed;
+  const isDimmed = isAncestor && !isMatch;
+  const levelBadge = LEVEL_BADGE[Math.min(node.level, 3)];
+
+  return (
+    <div>
+      <div
+        className={`flex items-center gap-1.5 py-1.5 pr-2 rounded-lg ${isDimmed ? 'hover:bg-gray-50' : 'hover:bg-gray-50'}`}
+        style={{ paddingLeft: `${8 + node.level * 14}px` }}
+      >
+        <span className={`text-[9px] font-bold w-4 text-center rounded shrink-0 py-px ${levelBadge}`}>{node.level + 1}</span>
+        <span className={`flex-1 text-xs truncate ${isDimmed ? 'text-gray-400' : 'font-semibold text-gray-800'}`}>{node.name}</span>
+        {!isDimmed && stats.active > 0 && (
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold tabular-nums shrink-0 ${stats.unreviewed === 0 ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
+            {reviewed}/{stats.active}
+          </span>
+        )}
+        {!isDimmed && stats.unreviewed > 0 && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold tabular-nums bg-amber-50 text-amber-700 shrink-0">{stats.unreviewed}</span>
+        )}
+      </div>
+      {node.children.map((child) => (
+        <SearchNode key={child.id} node={child} matchIds={matchIds} ancestorIds={ancestorIds} cardCounts={cardCounts} />
+      ))}
+    </div>
+  );
+}
+
 // ─── Unified TopicNode (coverage + optional edit controls) ───────────────────
 
 interface TopicNodeProps {
@@ -486,27 +531,26 @@ export default function LibraryPage() {
               {curriculum.length === 0 ? (
                 <p className="text-xs text-gray-400 text-center py-8">No curriculum topics loaded.</p>
               ) : topicSearch.trim() ? (
-                // Flat search results
+                // Tree-aware search results with ancestors as context
                 (() => {
                   const q = topicSearch.toLowerCase();
-                  const results = flatCurriculumForSearch.filter((n) => n.name.toLowerCase().includes(q));
-                  return results.length === 0 ? (
+                  const matchIds = new Set<number>();
+                  for (const n of flatCurriculumForSearch) {
+                    if (n.name.toLowerCase().includes(q)) matchIds.add(n.id);
+                  }
+                  if (matchIds.size === 0) return (
                     <p className="text-xs text-gray-400 italic px-2 py-2">No matches for "{topicSearch}"</p>
-                  ) : results.map((node) => {
-                    const stats = cardCounts[String(node.id)] ?? { total: 0, active: 0, unreviewed: 0, rejected: 0 };
-                    const reviewed = stats.active - stats.unreviewed;
-                    return (
-                      <div key={node.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50" title={node.path}>
-                        <span className="flex-1 text-xs font-medium text-gray-700 truncate">{node.name}</span>
-                        <span className="text-[10px] text-gray-400 truncate max-w-[160px]">{node.path.split(' > ').slice(0, -1).join(' › ')}</span>
-                        {stats.active > 0 && (
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold tabular-nums shrink-0 ${stats.unreviewed === 0 ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
-                            {reviewed}/{stats.active}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  });
+                  );
+                  // Collect ancestors
+                  const ancestorIds = new Set<number>();
+                  const parentMap = new Map(flatCurriculumForSearch.map((n) => [n.id, n.parent_id]));
+                  for (const id of matchIds) {
+                    let cur = parentMap.get(id) ?? null;
+                    while (cur != null) { ancestorIds.add(cur); cur = parentMap.get(cur) ?? null; }
+                  }
+                  return sortedCurriculum.map((root) => (
+                    <SearchNode key={root.id} node={root} matchIds={matchIds} ancestorIds={ancestorIds} cardCounts={cardCounts} />
+                  ));
                 })()
               ) : (
                 // Collapsible tree
