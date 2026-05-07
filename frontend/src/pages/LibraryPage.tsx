@@ -25,199 +25,130 @@ import {
 import type { CurriculumNode, RuleSet, TopicCoverageStats, TopicTree } from '../types';
 import { useSettings } from '../context/SettingsContext';
 
-// ─── CurriculumTreeNode (editable, for Curriculum tab) ────────────────────────
+// ─── Unified TopicNode (coverage + optional edit controls) ───────────────────
 
-interface TreeNodeProps {
+interface TopicNodeProps {
   node: CurriculumNode;
-  selectedId: number | null;
-  onSelect: (node: CurriculumNode) => void;
+  depth: number;
+  cardCounts: Record<string, TopicCoverageStats>;
+  editMode: boolean;
   onRefresh: () => void;
   onDeleteRequest: (id: number, name: string) => void;
-  defaultOpen?: boolean;
 }
 
-function CurriculumTreeNode({
-  node,
-  selectedId,
-  onSelect,
-  onRefresh,
-  onDeleteRequest,
-  defaultOpen = false,
-}: TreeNodeProps) {
-  const [open, setOpen] = useState(defaultOpen);
+function topicStyle(active: number, unreviewed: number) {
+  if (active === 0) return 'text-gray-400';
+  if (unreviewed === 0) return 'text-green-700';
+  return 'text-gray-800';
+}
+
+function TopicNode({ node, depth, cardCounts, editMode, onRefresh, onDeleteRequest }: TopicNodeProps) {
+  const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(node.name);
   const [addingChild, setAddingChild] = useState(false);
   const [childName, setChildName] = useState('');
-  const [error, setError] = useState<string | null>(null);
 
-  const isSelected = node.id === selectedId;
   const hasChildren = node.children.length > 0;
+  const stats = cardCounts[String(node.id)] ?? { total: 0, active: 0, rejected: 0, unreviewed: 0 };
+  const active = stats.active;
+  const unreviewed = stats.unreviewed;
+  const reviewed = active - unreviewed;
 
   async function handleRename() {
-    if (!renameValue.trim()) return;
-    try {
-      await updateCurriculumNode(node.id, { name: renameValue.trim() });
-      setRenaming(false);
-      onRefresh();
-    } catch {
-      setError('Rename failed');
-    }
+    if (!renameValue.trim() || renameValue === node.name) { setRenaming(false); setRenameValue(node.name); return; }
+    try { await updateCurriculumNode(node.id, { name: renameValue.trim() }); onRefresh(); } catch { /* ignore */ }
+    setRenaming(false);
   }
 
   async function handleAddChild() {
     if (!childName.trim()) return;
-    try {
-      await createCurriculumNode({ name: childName.trim(), parent_id: node.id });
-      setChildName('');
-      setAddingChild(false);
-      onRefresh();
-    } catch {
-      setError('Add child failed');
-    }
+    try { await createCurriculumNode({ name: childName.trim(), parent_id: node.id }); onRefresh(); } catch { /* ignore */ }
+    setAddingChild(false); setChildName('');
   }
 
   return (
     <div>
       <div
-        className={[
-          'group flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg cursor-pointer text-sm transition-colors duration-150',
-          isSelected ? 'bg-blue-50 text-blue-800' : 'hover:bg-gray-50 text-gray-700',
-        ].join(' ')}
-        onClick={() => onSelect(node)}
+        className="group/node flex items-center gap-1.5 py-1.5 pr-2 rounded-lg hover:bg-gray-50 transition-colors duration-150 cursor-default"
+        style={{ paddingLeft: `${8 + depth * 14}px` }}
       >
-        <button
-          className="shrink-0 w-4 h-4 flex items-center justify-center text-gray-400 hover:text-gray-600 rounded transition-colors duration-150"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (hasChildren) setOpen((v) => !v);
-          }}
-        >
-          {hasChildren ? (
-            <svg
-              className={`w-3 h-3 transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2.5}
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-            </svg>
-          ) : (
-            <span className="w-3 h-3 block" />
-          )}
-        </button>
-
-        {renaming ? (
-          <input
-            autoFocus
-            className="flex-1 border border-gray-200 rounded-lg px-2 py-0.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-600 transition-colors duration-150"
-            value={renameValue}
-            onChange={(e) => setRenameValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleRename();
-              if (e.key === 'Escape') { setRenaming(false); setRenameValue(node.name); }
-            }}
-            onClick={(e) => e.stopPropagation()}
-          />
-        ) : (
-          <span className="flex-1 truncate text-xs leading-tight font-medium">{node.name}</span>
-        )}
-
-        {renaming ? (
-          <>
-            <button onClick={(e) => { e.stopPropagation(); handleRename(); }} className="text-xs text-green-600 hover:text-green-800 px-1 font-medium shrink-0">OK</button>
-            <button onClick={(e) => { e.stopPropagation(); setRenaming(false); setRenameValue(node.name); }} className="text-xs text-gray-400 hover:text-gray-600 px-0.5 shrink-0">x</button>
-          </>
-        ) : (
-          <span className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 shrink-0 transition-opacity duration-150">
-            <button title="Add child" onClick={(e) => { e.stopPropagation(); setAddingChild((v) => !v); }} className="p-0.5 text-xs text-blue-600 hover:text-blue-800 rounded leading-none">+</button>
-            <button title="Rename" onClick={(e) => { e.stopPropagation(); setRenaming(true); }} className="p-0.5 text-xs text-gray-400 hover:text-gray-600 rounded leading-none">e</button>
-            <button title="Delete" onClick={(e) => { e.stopPropagation(); onDeleteRequest(node.id, node.name); }} className="p-0.5 text-xs text-red-400 hover:text-red-600 rounded leading-none">x</button>
-          </span>
-        )}
-      </div>
-
-      {error && <p className="text-red-500 text-xs pl-6 mt-0.5">{error}</p>}
-
-      {addingChild && (
-        <div className="pl-8 flex items-center gap-1 mt-1 mb-1">
-          <input
-            autoFocus
-            className="border border-gray-200 rounded-lg px-2 py-0.5 text-xs flex-1 focus:outline-none focus:ring-2 focus:ring-blue-600 transition-colors duration-150"
-            placeholder="Child name"
-            value={childName}
-            onChange={(e) => setChildName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleAddChild();
-              if (e.key === 'Escape') { setAddingChild(false); setChildName(''); }
-            }}
-          />
-          <button onClick={handleAddChild} className="text-xs text-green-600 hover:text-green-800 font-medium">OK</button>
-          <button onClick={() => { setAddingChild(false); setChildName(''); }} className="text-xs text-gray-400 hover:text-gray-600">x</button>
-        </div>
-      )}
-
-      {open && hasChildren && (
-        <div className="pl-3 border-l border-gray-200 ml-3">
-          {node.children.map((child) => (
-            <CurriculumTreeNode
-              key={child.id}
-              node={child}
-              selectedId={selectedId}
-              onSelect={onSelect}
-              onRefresh={onRefresh}
-              onDeleteRequest={onDeleteRequest}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── CoverageNode (read-only, with card count badges) ─────────────────────────
-
-interface CoverageNodeProps {
-  node: CurriculumNode;
-  depth: number;
-  cardCounts: Record<string, TopicCoverageStats>;
-}
-
-function CoverageNode({ node, depth, cardCounts }: CoverageNodeProps) {
-  const [expanded, setExpanded] = useState(false);
-  const stats = cardCounts[String(node.id)] ?? { total: 0, active: 0, rejected: 0, unreviewed: 0 };
-  const hasCards = stats.total > 0;
-
-  return (
-    <div>
-      <div
-        className="flex items-center gap-1.5 py-1.5 rounded-lg mx-1 transition-colors duration-150 hover:bg-gray-50"
-        style={{ paddingLeft: `${10 + depth * 14}px`, paddingRight: '8px' }}
-      >
-        {node.children.length > 0 ? (
-          <button onClick={() => setExpanded((v) => !v)} className="shrink-0 text-gray-400 hover:text-gray-600 transition-colors duration-150">
-            <svg className={`h-3 w-3 transition-transform duration-150 ${expanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+        {/* Expand arrow */}
+        {hasChildren ? (
+          <button onClick={() => setOpen((v) => !v)} className="shrink-0 text-gray-400 hover:text-gray-600 transition-colors duration-150">
+            <svg className={`h-3 w-3 transition-transform duration-150 ${open ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
             </svg>
           </button>
         ) : (
           <span className="w-3 shrink-0" />
         )}
-        <span className={`flex-1 text-xs truncate font-medium ${hasCards ? 'text-gray-800' : 'text-gray-400'}`}>{node.name}</span>
-        <div className="flex items-center gap-1 shrink-0">
-          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold tabular-nums ${hasCards ? 'bg-green-50 text-green-700' : 'bg-gray-50 text-gray-400'}`}>
-            {stats.total}
-          </span>
-          {stats.unreviewed > 0 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold tabular-nums bg-amber-50 text-amber-700">
-              {stats.unreviewed}
-            </span>
-          )}
-        </div>
+
+        {/* Name / rename input */}
+        {renaming ? (
+          <input
+            autoFocus
+            className="flex-1 border border-blue-300 rounded px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onBlur={handleRename}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleRename(); if (e.key === 'Escape') { setRenaming(false); setRenameValue(node.name); } }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span className={`flex-1 text-xs font-medium truncate ${topicStyle(active, unreviewed)}`}>{node.name}</span>
+        )}
+
+        {/* Coverage badges (always visible, hidden while renaming) */}
+        {!renaming && (
+          <div className="flex items-center gap-1 shrink-0">
+            {active > 0 && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold tabular-nums ${unreviewed === 0 ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
+                {reviewed}/{active}
+              </span>
+            )}
+            {unreviewed > 0 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold tabular-nums bg-amber-50 text-amber-700">
+                {unreviewed}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Edit-mode CRUD buttons (hover-revealed) */}
+        {editMode && !renaming && (
+          <div className="opacity-0 group-hover/node:opacity-100 flex items-center gap-0.5 shrink-0 ml-0.5 transition-opacity duration-150" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => { setAddingChild((v) => !v); setChildName(''); }} title="Add child" className="p-0.5 text-gray-300 hover:text-blue-500 rounded transition-colors duration-150">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+            </button>
+            <button onClick={() => { setRenaming(true); setRenameValue(node.name); }} title="Rename" className="p-0.5 text-gray-300 hover:text-amber-500 rounded transition-colors duration-150">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+            </button>
+            <button onClick={() => onDeleteRequest(node.id, node.name)} disabled={hasChildren} title={hasChildren ? 'Remove children first' : 'Delete'} className={`p-0.5 rounded transition-colors duration-150 ${hasChildren ? 'text-gray-200 cursor-not-allowed' : 'text-gray-300 hover:text-red-500'}`}>
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6" /></svg>
+            </button>
+          </div>
+        )}
       </div>
-      {expanded && node.children.map((child) => (
-        <CoverageNode key={child.id} node={child} depth={depth + 1} cardCounts={cardCounts} />
+
+      {/* Add child inline input */}
+      {editMode && addingChild && (
+        <div className="flex items-center gap-1 pr-2 mb-1" style={{ paddingLeft: `${8 + (depth + 1) * 14}px` }} onClick={(e) => e.stopPropagation()}>
+          <input
+            autoFocus
+            className="flex-1 border border-blue-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-blue-50/50"
+            placeholder="New topic name…"
+            value={childName}
+            onChange={(e) => setChildName(e.target.value)}
+            onBlur={() => { setAddingChild(false); setChildName(''); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddChild(); } if (e.key === 'Escape') { setAddingChild(false); setChildName(''); } }}
+          />
+        </div>
+      )}
+
+      {/* Children */}
+      {open && hasChildren && node.children.map((child) => (
+        <TopicNode key={child.id} node={child} depth={depth + 1} cardCounts={cardCounts} editMode={editMode} onRefresh={onRefresh} onDeleteRequest={onDeleteRequest} />
       ))}
     </div>
   );
@@ -232,8 +163,13 @@ export default function LibraryPage() {
   // Curriculum
   const [curriculum, setCurriculum] = useState<CurriculumNode[]>([]);
   const [cardCounts, setCardCounts] = useState<Record<string, TopicCoverageStats>>({});
-  const [selectedNode, setSelectedNode] = useState<CurriculumNode | null>(null);
   const [confirmDeleteNode, setConfirmDeleteNode] = useState<{ id: number; name: string } | null>(null);
+  // Topics tab controls
+  const [topicSearch, setTopicSearch] = useState('');
+  const [topicEditMode, setTopicEditMode] = useState(false);
+  const [topicSort, setTopicSort] = useState<'curriculum' | 'alpha'>('curriculum');
+  const [addingRootTopic, setAddingRootTopic] = useState(false);
+  const [rootTopicName, setRootTopicName] = useState('');
 
   // Topic trees / documents
   const [topicTrees, setTopicTrees] = useState<TopicTree[]>([]);
@@ -298,6 +234,7 @@ export default function LibraryPage() {
   }, [loadCurriculum, loadTopicTrees, loadRuleSets]);
 
   const flatCurriculum = useMemo(() => flattenTree(sortTree(curriculum, 'curriculum')), [curriculum]);
+  const flatCurriculumForSearch = useMemo(() => flattenTree(curriculum), [curriculum]);
 
   // Expand topic tree
   const expandTree = useCallback(async (id: number) => {
@@ -481,7 +418,7 @@ export default function LibraryPage() {
     } catch { /* ignore */ }
   }, [loadRuleSets]);
 
-  const sortedCurriculum = sortTree(curriculum, 'curriculum');
+  const sortedCurriculum = useMemo(() => sortTree(curriculum, topicSort), [curriculum, topicSort]);
 
   return (
     <div className="flex-1 overflow-auto bg-gray-50">
@@ -505,46 +442,118 @@ export default function LibraryPage() {
 
         {/* Topics tab */}
         {activeTab === 'topics' && (
-          <div className="grid grid-cols-2 gap-6">
-            {/* Curriculum tree */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Curriculum Tree</h3>
-                <button
-                  onClick={() => {
-                    const name = prompt('New top-level topic name:');
-                    if (name?.trim()) createCurriculumNode({ name: name.trim(), version: curriculumVersion }).then(loadCurriculum);
-                  }}
-                  className="px-2 py-1 text-xs text-blue-600 hover:text-blue-800 font-medium"
-                >
-                  + Add Root
-                </button>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            {/* Toolbar */}
+            <div className="px-4 py-3 border-b border-gray-100 flex flex-col gap-2">
+              {/* Search */}
+              <div className="relative">
+                <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input
+                  className="w-full pl-8 pr-7 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-colors duration-150"
+                  placeholder="Search topics…"
+                  value={topicSearch}
+                  onChange={(e) => setTopicSearch(e.target.value)}
+                />
+                {topicSearch && (
+                  <button onClick={() => setTopicSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                )}
               </div>
-              <div className="max-h-[60vh] overflow-y-auto p-2">
-                {sortedCurriculum.map((node) => (
-                  <CurriculumTreeNode
-                    key={node.id}
-                    node={node}
-                    selectedId={selectedNode?.id ?? null}
-                    onSelect={setSelectedNode}
-                    onRefresh={loadCurriculum}
-                    onDeleteRequest={(id, name) => setConfirmDeleteNode({ id, name })}
-                    defaultOpen
-                  />
-                ))}
+              {/* Controls row */}
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setTopicEditMode((v) => !v)}
+                  className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-lg border transition-colors duration-150 ${topicEditMode ? 'bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                  {topicEditMode ? 'Done' : 'Edit'}
+                </button>
+                <button
+                  onClick={() => setTopicSort((v) => v === 'curriculum' ? 'alpha' : 'curriculum')}
+                  title={topicSort === 'curriculum' ? 'Curriculum order — click for A–Z' : 'Alphabetical — click for curriculum order'}
+                  className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-lg border bg-white text-gray-600 border-gray-200 hover:bg-gray-50 transition-colors duration-150 ml-auto"
+                >
+                  {topicSort === 'alpha' ? 'A–Z' : '# Order'}
+                </button>
               </div>
             </div>
 
-            {/* Coverage view */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-100">
-                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Card Coverage</h3>
-              </div>
-              <div className="max-h-[60vh] overflow-y-auto p-2">
-                {sortedCurriculum.map((node) => (
-                  <CoverageNode key={node.id} node={node} depth={0} cardCounts={cardCounts} />
-                ))}
-              </div>
+            {/* Tree / search results */}
+            <div className="overflow-y-auto p-2" style={{ maxHeight: 'calc(100vh - 260px)' }}>
+              {curriculum.length === 0 ? (
+                <p className="text-xs text-gray-400 text-center py-8">No curriculum topics loaded.</p>
+              ) : topicSearch.trim() ? (
+                // Flat search results
+                (() => {
+                  const q = topicSearch.toLowerCase();
+                  const results = flatCurriculumForSearch.filter((n) => n.name.toLowerCase().includes(q));
+                  return results.length === 0 ? (
+                    <p className="text-xs text-gray-400 italic px-2 py-2">No matches for "{topicSearch}"</p>
+                  ) : results.map((node) => {
+                    const stats = cardCounts[String(node.id)] ?? { total: 0, active: 0, unreviewed: 0, rejected: 0 };
+                    const reviewed = stats.active - stats.unreviewed;
+                    return (
+                      <div key={node.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50" title={node.path}>
+                        <span className="flex-1 text-xs font-medium text-gray-700 truncate">{node.name}</span>
+                        <span className="text-[10px] text-gray-400 truncate max-w-[160px]">{node.path.split(' > ').slice(0, -1).join(' › ')}</span>
+                        {stats.active > 0 && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold tabular-nums shrink-0 ${stats.unreviewed === 0 ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
+                            {reviewed}/{stats.active}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  });
+                })()
+              ) : (
+                // Collapsible tree
+                sortedCurriculum.map((node) => (
+                  <TopicNode
+                    key={node.id}
+                    node={node}
+                    depth={0}
+                    cardCounts={cardCounts}
+                    editMode={topicEditMode}
+                    onRefresh={loadCurriculum}
+                    onDeleteRequest={(id, name) => setConfirmDeleteNode({ id, name })}
+                  />
+                ))
+              )}
+
+              {/* Add root topic (edit mode only) */}
+              {topicEditMode && !topicSearch && (
+                <div className="px-2 pt-1 pb-2">
+                  {addingRootTopic ? (
+                    <input
+                      autoFocus
+                      className="w-full border border-blue-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-blue-50/50"
+                      placeholder="New root topic name…"
+                      value={rootTopicName}
+                      onChange={(e) => setRootTopicName(e.target.value)}
+                      onBlur={() => { setAddingRootTopic(false); setRootTopicName(''); }}
+                      onKeyDown={async (e) => {
+                        if (e.key === 'Enter' && rootTopicName.trim()) {
+                          await createCurriculumNode({ name: rootTopicName.trim(), version: curriculumVersion });
+                          setAddingRootTopic(false); setRootTopicName('');
+                          loadCurriculum();
+                        }
+                        if (e.key === 'Escape') { setAddingRootTopic(false); setRootTopicName(''); }
+                      }}
+                    />
+                  ) : (
+                    <button
+                      onClick={() => { setAddingRootTopic(true); setRootTopicName(''); }}
+                      className="flex items-center gap-1 w-full px-2 py-1 text-xs text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors duration-150"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+                      Add root topic
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
