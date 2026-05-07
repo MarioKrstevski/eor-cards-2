@@ -33,17 +33,18 @@ interface PickerNodeProps {
   onChange: (id: number) => void;
   expandedIds: Set<number>;
   toggleExpand: (id: number) => void;
-  // null = no active search; otherwise IDs of nodes that directly match query
   matchIds: Set<number> | null;
-  // IDs of ancestors of matching nodes (shown as context when searching)
   ancestorIds: Set<number>;
+  // ancestors of the currently selected value (for persistent highlight)
+  selectedAncestorIds: Set<number>;
 }
 
 function PickerNode({
-  node, value, onChange, expandedIds, toggleExpand, matchIds, ancestorIds,
+  node, value, onChange, expandedIds, toggleExpand, matchIds, ancestorIds, selectedAncestorIds,
 }: PickerNodeProps) {
   const hasChildren = node.children.length > 0;
   const isSelected = node.id === value;
+  const isSelectedAncestor = selectedAncestorIds.has(node.id);
 
   // When searching: only render if this node matches or is an ancestor of a match
   if (matchIds !== null) {
@@ -65,7 +66,9 @@ function PickerNode({
         className={[
           'flex items-center gap-1.5 py-1.5 pr-3 cursor-pointer select-none',
           isSelected
-            ? 'bg-blue-100 text-blue-800'
+            ? 'bg-blue-200 text-blue-900'
+            : isSelectedAncestor
+            ? 'bg-blue-50 text-blue-800 hover:bg-blue-100'
             : isDimmed
             ? 'text-gray-400 hover:bg-gray-50'
             : 'text-gray-700 hover:bg-blue-50',
@@ -118,6 +121,7 @@ function PickerNode({
           toggleExpand={toggleExpand}
           matchIds={matchIds}
           ancestorIds={ancestorIds}
+          selectedAncestorIds={selectedAncestorIds}
         />
       ))}
     </div>
@@ -150,6 +154,12 @@ export default function CurriculumPicker({
     return m;
   }, [flatNodes]);
 
+  // Ancestors of the currently selected value — for persistent highlight
+  const selectedAncestorIds = useMemo(
+    () => value != null ? getAncestorIds(value, parentMap) : new Set<number>(),
+    [value, parentMap]
+  );
+
   // Compute which nodes match the search query and which are ancestors of matches
   const { matchIds, ancestorIds } = useMemo(() => {
     if (!query.trim()) return { matchIds: null, ancestorIds: new Set<number>() };
@@ -180,6 +190,17 @@ export default function CurriculumPicker({
     setOpen(false);
     setQuery('');
   };
+
+  // Auto-expand ancestors of the selected node when opening
+  useEffect(() => {
+    if (open && selectedAncestorIds.size > 0) {
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of selectedAncestorIds) next.add(id);
+        return next;
+      });
+    }
+  }, [open, selectedAncestorIds]);
 
   useEffect(() => {
     if (open && containerRef.current) {
@@ -278,6 +299,7 @@ export default function CurriculumPicker({
                   toggleExpand={toggleExpand}
                   matchIds={matchIds}
                   ancestorIds={ancestorIds}
+                  selectedAncestorIds={selectedAncestorIds}
                 />
               ))
             )}
