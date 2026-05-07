@@ -26,29 +26,26 @@ import { useSettings } from '../context/SettingsContext';
 
 // ── TopicNode: read-only collapsible curriculum node for sidebar tree ─────────
 
+const TOPIC_LEVEL_BADGE = ['bg-purple-50 text-purple-700', 'bg-blue-50 text-blue-700', 'bg-green-50 text-green-700', 'bg-orange-50 text-orange-700'];
+
 interface TopicNodeProps {
   node: CurriculumNode;
   depth: number;
   onSelect: (id: number) => void;
   selectedId: number | null;
+  selectedAncestorIds: Set<number>;
   cardCounts: Record<string, TopicCoverageStats>;
 }
 
-function topicReviewStyle(active: number, unreviewed: number, isSelected: boolean) {
-  if (isSelected) return { text: 'text-blue-700', badge: 'bg-blue-100 text-blue-700' };
-  if (active === 0) return { text: 'text-gray-400', badge: '' };
-  if (unreviewed === 0) return { text: 'text-green-700', badge: 'bg-green-100 text-green-700' };
-  return { text: 'text-blue-600', badge: 'bg-blue-50 text-blue-700' };
-}
-
-function TopicNode({ node, depth, onSelect, selectedId, cardCounts }: TopicNodeProps) {
+function TopicNode({ node, depth, onSelect, selectedId, selectedAncestorIds, cardCounts }: TopicNodeProps) {
   const [expanded, setExpanded] = useState(false);
   const stats = cardCounts[String(node.id)];
   const active = stats?.active ?? 0;
   const unreviewed = stats?.unreviewed ?? 0;
   const reviewed = active - unreviewed;
   const isSelected = node.id === selectedId;
-  const style = topicReviewStyle(active, unreviewed, isSelected);
+  const isAncestor = selectedAncestorIds.has(node.id);
+  const levelBadge = TOPIC_LEVEL_BADGE[Math.min(node.level, 3)];
 
   return (
     <div>
@@ -56,9 +53,9 @@ function TopicNode({ node, depth, onSelect, selectedId, cardCounts }: TopicNodeP
         onClick={() => onSelect(node.id)}
         className={[
           'flex items-center gap-1.5 py-1.5 rounded-lg mx-1 cursor-pointer transition-colors duration-150',
-          isSelected ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50',
+          isSelected ? 'bg-blue-100 text-blue-800' : isAncestor ? 'bg-blue-50 text-blue-700 hover:bg-blue-100' : 'hover:bg-gray-50',
         ].join(' ')}
-        style={{ paddingLeft: `${10 + depth * 14}px`, paddingRight: '8px' }}
+        style={{ paddingLeft: `${8 + depth * 14}px`, paddingRight: '8px' }}
       >
         {node.children.length > 0 ? (
           <button
@@ -72,9 +69,10 @@ function TopicNode({ node, depth, onSelect, selectedId, cardCounts }: TopicNodeP
         ) : (
           <span className="w-3 shrink-0" />
         )}
-        <span className={`flex-1 text-xs truncate ${isSelected ? 'font-semibold' : 'font-medium'} ${style.text}`}>{node.name}</span>
+        <span className={`text-[9px] font-bold w-4 text-center rounded shrink-0 py-px ${levelBadge}`}>{node.level + 1}</span>
+        <span className={`flex-1 text-xs truncate ${isSelected ? 'font-semibold' : 'font-medium'} ${active === 0 && !isSelected && !isAncestor ? 'text-gray-400' : ''}`}>{node.name}</span>
         {active > 0 && (
-          <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 font-semibold tabular-nums ${style.badge}`}>
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 font-semibold tabular-nums ${isSelected ? 'bg-blue-200 text-blue-800' : unreviewed === 0 ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
             {reviewed}/{active}
           </span>
         )}
@@ -88,11 +86,59 @@ function TopicNode({ node, depth, onSelect, selectedId, cardCounts }: TopicNodeP
               depth={depth + 1}
               onSelect={onSelect}
               selectedId={selectedId}
+              selectedAncestorIds={selectedAncestorIds}
               cardCounts={cardCounts}
             />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Search result node — shows ancestors dimmed, matches bold
+interface TopicSearchNodeProps {
+  node: CurriculumNode;
+  matchIds: Set<number>;
+  ancestorIds: Set<number>;
+  onSelect: (id: number) => void;
+  selectedId: number | null;
+  cardCounts: Record<string, TopicCoverageStats>;
+}
+
+function TopicSearchNode({ node, matchIds, ancestorIds, onSelect, selectedId, cardCounts }: TopicSearchNodeProps) {
+  const isMatch = matchIds.has(node.id);
+  const isAncestor = ancestorIds.has(node.id);
+  if (!isMatch && !isAncestor) return null;
+
+  const isSelected = node.id === selectedId;
+  const stats = cardCounts[String(node.id)] ?? { active: 0, unreviewed: 0 };
+  const reviewed = stats.active - stats.unreviewed;
+  const isDimmed = isAncestor && !isMatch;
+  const levelBadge = TOPIC_LEVEL_BADGE[Math.min(node.level, 3)];
+
+  return (
+    <div>
+      <div
+        onClick={() => !isDimmed && onSelect(node.id)}
+        className={[
+          'flex items-center gap-1.5 py-1.5 rounded-lg mx-1 transition-colors duration-150',
+          isDimmed ? 'cursor-default' : 'cursor-pointer',
+          isSelected ? 'bg-blue-100 text-blue-800' : isDimmed ? 'hover:bg-gray-50' : 'hover:bg-gray-50',
+        ].join(' ')}
+        style={{ paddingLeft: `${8 + node.level * 14}px`, paddingRight: '8px' }}
+      >
+        <span className={`text-[9px] font-bold w-4 text-center rounded shrink-0 py-px ${levelBadge}`}>{node.level + 1}</span>
+        <span className={`flex-1 text-xs truncate ${isDimmed ? 'text-gray-400' : isSelected ? 'font-semibold text-blue-800' : 'font-semibold text-gray-800'}`}>{node.name}</span>
+        {!isDimmed && stats.active > 0 && (
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 font-semibold tabular-nums ${stats.unreviewed === 0 ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
+            {reviewed}/{stats.active}
+          </span>
+        )}
+      </div>
+      {node.children.map((child) => (
+        <TopicSearchNode key={child.id} node={child} matchIds={matchIds} ancestorIds={ancestorIds} onSelect={onSelect} selectedId={selectedId} cardCounts={cardCounts} />
+      ))}
     </div>
   );
 }
@@ -309,7 +355,49 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
     } catch { /* ignore */ }
   }, [confirmDelete, expandedTreeId, loadTopicTrees]);
 
-  const sortedCurriculum = useMemo(() => sortTree(curriculum, 'curriculum'), [curriculum]);
+  // Topics sidebar state
+  const [topicSearch, setTopicSearch] = useState('');
+  const [topicSort, setTopicSort] = useState<'curriculum' | 'alpha'>('curriculum');
+
+  const sortedCurriculum = useMemo(() => sortTree(curriculum, topicSort), [curriculum, topicSort]);
+
+  // Flat curriculum for search
+  const flatCurriculumForSearch = useMemo(() => flattenCurriculum(curriculum), [curriculum]);
+
+  // parentMap for ancestor lookups
+  const parentMap = useMemo(() => {
+    const m = new Map<number, number | null>();
+    for (const n of flatCurriculumForSearch) m.set(n.id, n.parent_id ?? null);
+    return m;
+  }, [flatCurriculumForSearch]);
+
+  // Ancestors of the currently selected topic — for persistent highlight
+  const selectedAncestorIds = useMemo(() => {
+    if (selectedTopicId == null) return new Set<number>();
+    const ancestors = new Set<number>();
+    let cur = parentMap.get(selectedTopicId) ?? null;
+    while (cur != null) {
+      ancestors.add(cur);
+      cur = parentMap.get(cur) ?? null;
+    }
+    return ancestors;
+  }, [selectedTopicId, parentMap]);
+
+  // Search: matchIds + ancestorIds for tree-aware results
+  const { topicMatchIds, topicAncestorIds } = useMemo(() => {
+    if (!topicSearch.trim()) return { topicMatchIds: null, topicAncestorIds: new Set<number>() };
+    const q = topicSearch.toLowerCase();
+    const matches = new Set<number>();
+    for (const n of flatCurriculumForSearch) {
+      if (n.name.toLowerCase().includes(q)) matches.add(n.id);
+    }
+    const ancestors = new Set<number>();
+    for (const id of matches) {
+      let cur = parentMap.get(id) ?? null;
+      while (cur != null) { ancestors.add(cur); cur = parentMap.get(cur) ?? null; }
+    }
+    return { topicMatchIds: matches, topicAncestorIds: ancestors };
+  }, [topicSearch, flatCurriculumForSearch, parentMap]);
 
   // Open paste modal
   const openPasteModal = useCallback(() => {
@@ -532,17 +620,73 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
               )}
             </div>
           ) : (
-            <div className="py-1">
-              {sortedCurriculum.map((node) => (
-                <TopicNode
-                  key={node.id}
-                  node={node}
-                  depth={0}
-                  onSelect={selectTopic}
-                  selectedId={selectedTopicId}
-                  cardCounts={cardCounts}
-                />
-              ))}
+            <div className="flex flex-col h-full">
+              {/* Search + sort toolbar */}
+              <div className="px-2 pt-2 pb-1.5 border-b border-gray-100 shrink-0 space-y-1.5">
+                <div className="relative">
+                  <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
+                  </svg>
+                  <input
+                    type="text"
+                    value={topicSearch}
+                    onChange={(e) => setTopicSearch(e.target.value)}
+                    placeholder="Search topics…"
+                    className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
+                  />
+                  {topicSearch && (
+                    <button onClick={() => setTopicSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center justify-end">
+                  <button
+                    onClick={() => setTopicSort((s) => s === 'curriculum' ? 'alpha' : 'curriculum')}
+                    className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-blue-700 font-medium"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 4h13M3 8h9m-9 4h9m5-4v12m0 0l-4-4m4 4l4-4" />
+                    </svg>
+                    {topicSort === 'alpha' ? 'A–Z' : 'Curriculum'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Tree */}
+              <div className="flex-1 overflow-y-auto py-1">
+                {topicMatchIds !== null ? (
+                  topicMatchIds.size === 0 ? (
+                    <p className="text-xs text-gray-400 italic px-3 py-4">No matches for "{topicSearch}"</p>
+                  ) : (
+                    sortedCurriculum.map((node) => (
+                      <TopicSearchNode
+                        key={node.id}
+                        node={node}
+                        matchIds={topicMatchIds}
+                        ancestorIds={topicAncestorIds}
+                        onSelect={selectTopic}
+                        selectedId={selectedTopicId}
+                        cardCounts={cardCounts}
+                      />
+                    ))
+                  )
+                ) : (
+                  sortedCurriculum.map((node) => (
+                    <TopicNode
+                      key={node.id}
+                      node={node}
+                      depth={0}
+                      onSelect={selectTopic}
+                      selectedId={selectedTopicId}
+                      selectedAncestorIds={selectedAncestorIds}
+                      cardCounts={cardCounts}
+                    />
+                  ))
+                )}
+              </div>
             </div>
           )}
         </div>
