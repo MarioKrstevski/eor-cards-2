@@ -134,9 +134,9 @@ export default function CurriculumPicker({
   const [query, setQuery] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number }>({
-    top: 0, left: 0, width: 0,
-  });
+  const [dropdownPos, setDropdownPos] = useState<{
+    top?: number; bottom?: number; left: number; width: number;
+  }>({ left: 0, width: 0 });
 
   const selectedNode = value != null ? flatNodes.find((n) => n.id === value) : null;
 
@@ -184,7 +184,16 @@ export default function CurriculumPicker({
   useEffect(() => {
     if (open && containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect();
-      setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+      const dropdownMaxHeight = 320;
+      const spaceBelow = window.innerHeight - rect.bottom - 8;
+      const spaceAbove = rect.top - 8;
+      if (spaceBelow >= dropdownMaxHeight || spaceBelow >= spaceAbove) {
+        // Open below, cap height to available space
+        setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+      } else {
+        // Open above
+        setDropdownPos({ bottom: window.innerHeight - rect.top + 4, left: rect.left, width: rect.width });
+      }
     }
   }, [open]);
 
@@ -234,7 +243,15 @@ export default function CurriculumPicker({
         <div
           id="curriculum-picker-dropdown"
           className="fixed bg-white border border-gray-200 rounded-lg shadow-xl overflow-hidden flex flex-col"
-          style={{ top: dropdownPos.top, left: dropdownPos.left, width: Math.max(dropdownPos.width, 300), zIndex: 9999, maxHeight: 320 }}
+          style={{
+            ...(dropdownPos.bottom != null
+              ? { bottom: dropdownPos.bottom }
+              : { top: dropdownPos.top }),
+            left: dropdownPos.left,
+            width: Math.max(dropdownPos.width, 300),
+            zIndex: 9999,
+            maxHeight: 320,
+          }}
         >
           {/* Unassigned option */}
           <div
