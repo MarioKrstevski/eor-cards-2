@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel
 from typing import Optional
 from backend.db import get_db
@@ -61,6 +61,44 @@ def section_to_dict(s: Section) -> dict:
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
     }
+
+
+@router.get("/by-curriculum")
+def get_sections_by_curriculum(
+    path: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Return all sections whose curriculum_topic_path starts with the given path prefix.
+
+    Note: the path itself may contain literal '%' (e.g. 'Pulmonary – 10%'), so we escape
+    LIKE wildcards before appending the trailing '%' wildcard.
+    """
+    escaped = path.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    sections = (
+        db.query(Section)
+        .options(joinedload(Section.topic_tree), joinedload(Section.cards))
+        .filter(Section.curriculum_topic_path.like(escaped + "%", escape="\\"))
+        .order_by(Section.sort_order)
+        .all()
+    )
+    return [
+        {
+            "id": s.id,
+            "topic_tree_id": s.topic_tree_id,
+            "topic_tree_name": s.topic_tree.name if s.topic_tree else None,
+            "heading": s.heading,
+            "slug": s.slug,
+            "curriculum_topic_id": s.curriculum_topic_id,
+            "curriculum_topic_path": s.curriculum_topic_path,
+            "image_count": s.image_count,
+            "table_count": s.table_count,
+            "flags": s.flags,
+            "is_verified": s.is_verified,
+            "sort_order": s.sort_order,
+            "card_count": len(s.cards) if s.cards else 0,
+        }
+        for s in sections
+    ]
 
 
 @router.get("/{section_id}")

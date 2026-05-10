@@ -160,6 +160,22 @@ export interface AIUsageSummary {
 
 export type PipelineStep = 'parsing' | 'images' | 'tables' | 'comparing' | 'merging' | 'done' | null;
 
+export interface CurriculumSection {
+  id: number;
+  topic_tree_id: number;
+  topic_tree_name: string | null;
+  heading: string;
+  slug: string;
+  curriculum_topic_id: number | null;
+  curriculum_topic_path: string | null;
+  image_count: number;
+  table_count: number;
+  flags: string[] | null;
+  is_verified: boolean;
+  sort_order: number;
+  card_count: number;
+}
+
 export interface SectionDetail extends Section {
   content_blocks: ContentBlock[];
   images: SectionImage[];

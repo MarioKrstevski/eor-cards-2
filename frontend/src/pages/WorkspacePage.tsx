@@ -9,8 +9,12 @@ import {
   deleteTopicTree,
   getProcessingJob,
   getActiveJobs,
+  getSectionsByCurriculum,
+  estimateCost,
+  startGeneration,
+  getGenerationJob,
 } from '../api';
-import type { GenerationJob } from '../types';
+import type { GenerationJob, CurriculumSection, CostEstimate } from '../types';
 import type {
   CurriculumNode,
   TopicCoverageStats,
@@ -21,12 +25,177 @@ import CardsPanel from './CardsPanel';
 import SectionViewer from './SectionViewer';
 import ConfirmModal from '../components/ConfirmModal';
 import CurriculumPicker from '../components/CurriculumPicker';
+import CurriculumSectionPreview from '../components/CurriculumSectionPreview';
 import { buildAggregatedCounts, sortTree } from '../utils';
 import { useSettings } from '../context/SettingsContext';
 
 // ── TopicNode: read-only collapsible curriculum node for sidebar tree ─────────
 
 const TOPIC_LEVEL_BADGE = ['bg-purple-50 text-purple-700', 'bg-blue-50 text-blue-700', 'bg-green-50 text-green-700', 'bg-orange-50 text-orange-700'];
+
+// ── Curriculum expansion config (passed through the recursive TopicNode tree) ─
+
+interface CurriculumExpansionConfig {
+  expandedPath: string | null;
+  sections: CurriculumSection[];
+  loading: boolean;
+  onPreview: (path: string) => void;
+  onViewSection: (id: number) => void;
+  onGenerationDone: () => void;
+  refreshUsage: () => void;
+  selectedModel: string;
+  selectedRuleSetId: number | null;
+}
+
+// ── CurriculumActionBar: estimate / preview / generate for a curriculum node ──
+
+interface CurriculumActionBarProps {
+  sections: CurriculumSection[];
+  loading: boolean;
+  expandedPath: string;
+  onPreview: () => void;
+  onViewSection: (id: number) => void;
+  onGenerationDone: () => void;
+  refreshUsage: () => void;
+  selectedModel: string;
+  selectedRuleSetId: number | null;
+}
+
+function CurriculumActionBar({
+  sections, loading, expandedPath, onPreview, onViewSection, onGenerationDone, refreshUsage, selectedModel, selectedRuleSetId,
+}: CurriculumActionBarProps) {
+  const [estimate, setEstimate] = useState<CostEstimate | null>(null);
+  const [estimating, setEstimating] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [jobProgress, setJobProgress] = useState<{ processed: number; total: number } | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+
+  // Reset estimate when expanded path changes
+  useEffect(() => { setEstimate(null); setJobProgress(null); }, [expandedPath]);
+
+  const sectionIds = sections.map(s => s.id);
+
+  const handleEstimate = async () => {
+    if (!selectedRuleSetId || !selectedModel || sectionIds.length === 0) return;
+    setEstimating(true);
+    setEstimate(null);
+    try {
+      const result = await estimateCost({ section_ids: sectionIds, rule_set_id: selectedRuleSetId, model: selectedModel });
+      setEstimate(result);
+    } catch { /* ignore */ } finally { setEstimating(false); }
+  };
+
+  const handleGenerate = async () => {
+    if (!selectedRuleSetId || !selectedModel || sectionIds.length === 0 || generating) return;
+    setGenerating(true);
+    setJobProgress(null);
+    try {
+      const { job_id } = await startGeneration({ section_ids: sectionIds, rule_set_id: selectedRuleSetId, model: selectedModel });
+      pollRef.current = setInterval(async () => {
+        try {
+          const job = await getGenerationJob(job_id);
+          setJobProgress({ processed: job.processed_sections, total: job.total_sections });
+          if (job.status === 'done' || job.status === 'failed') {
+            clearInterval(pollRef.current!); pollRef.current = null;
+            setGenerating(false);
+            onGenerationDone();
+            refreshUsage();
+          }
+        } catch { clearInterval(pollRef.current!); pollRef.current = null; setGenerating(false); }
+      }, 1500);
+    } catch { setGenerating(false); }
+  };
+
+  if (loading) {
+    return <div className="px-3 py-2 text-xs text-gray-400 italic">Loading sections…</div>;
+  }
+  if (sections.length === 0) {
+    return <div className="px-3 py-2 text-xs text-gray-400 italic">No sections mapped to this topic</div>;
+  }
+
+  // Sort: leaf-matched sections first, orphans (path === expandedPath) at bottom
+  const sortedSections = [...sections].sort((a, b) => {
+    const aOrphan = a.curriculum_topic_path === expandedPath;
+    const bOrphan = b.curriculum_topic_path === expandedPath;
+    if (aOrphan !== bOrphan) return aOrphan ? 1 : -1;
+    return (a.curriculum_topic_path ?? '').localeCompare(b.curriculum_topic_path ?? '');
+  });
+  const hasDeepSections = sections.some(s => (s.curriculum_topic_path ?? '').startsWith(expandedPath + ' > '));
+
+  return (
+    <>
+      {/* Action bar */}
+      <div className="px-2 py-1.5 bg-slate-50 border-b border-slate-100 flex items-center gap-1 flex-wrap">
+        <span className="text-[10px] text-gray-400">{sections.length} section{sections.length !== 1 ? 's' : ''}</span>
+        <button onClick={onPreview} className="px-1.5 py-0.5 text-[10px] font-medium text-gray-600 bg-white border border-gray-200 rounded hover:bg-gray-50">
+          Preview
+        </button>
+        <button
+          onClick={handleEstimate}
+          disabled={estimating || !selectedRuleSetId}
+          className="px-1.5 py-0.5 text-[10px] font-medium text-gray-600 bg-white border border-gray-200 rounded hover:bg-gray-50 disabled:opacity-50"
+        >
+          {estimating ? '…' : 'Estimate'}
+        </button>
+        {estimate && (
+          <span className="text-[10px] text-blue-700 font-medium">~${estimate.estimated_cost_usd.toFixed(3)}</span>
+        )}
+        <button
+          onClick={handleGenerate}
+          disabled={generating || !selectedRuleSetId}
+          className="ml-auto px-1.5 py-0.5 text-[10px] font-medium text-white bg-blue-700 rounded hover:bg-blue-800 disabled:opacity-50"
+        >
+          {generating
+            ? (jobProgress ? `${jobProgress.processed}/${jobProgress.total}` : 'Starting…')
+            : 'Generate'}
+        </button>
+      </div>
+
+      {/* Section list */}
+      {sortedSections.map(section => {
+        const isOrphan = hasDeepSections && section.curriculum_topic_path === expandedPath;
+        const subPath = section.curriculum_topic_path
+          ? section.curriculum_topic_path.slice(expandedPath.length).replace(/^ > /, '')
+          : '';
+        return (
+          <div key={section.id} className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-gray-50 group/row">
+            {isOrphan ? (
+              <svg className="h-3 w-3 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+              </svg>
+            ) : (
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${section.is_verified ? 'bg-green-400' : (section.flags?.length ?? 0) > 0 ? 'bg-amber-400' : 'bg-gray-300'}`} />
+            )}
+            <div className="flex-1 min-w-0">
+              <span className="text-xs truncate block text-gray-800">{section.heading}</span>
+              <span className="text-[9px] truncate block leading-tight text-gray-400">
+                {isOrphan && <span className="text-amber-600 font-medium">No leaf · </span>}
+                {subPath ? `${subPath} · ` : ''}
+                {section.topic_tree_name}
+              </span>
+            </div>
+            {section.card_count > 0 && (
+              <span className="text-[10px] text-gray-400 tabular-nums shrink-0">{section.card_count}</span>
+            )}
+            <button
+              onClick={(e) => { e.stopPropagation(); onViewSection(section.id); }}
+              className="opacity-0 group-hover/row:opacity-100 p-0.5 text-gray-300 hover:text-blue-500 transition-all duration-150 shrink-0"
+              title="View section content"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+            </button>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+// ── TopicNodeProps / TopicNode ─────────────────────────────────────────────────
 
 interface TopicNodeProps {
   node: CurriculumNode;
@@ -35,9 +204,10 @@ interface TopicNodeProps {
   selectedId: number | null;
   selectedAncestorIds: Set<number>;
   cardCounts: Record<string, TopicCoverageStats>;
+  expansion: CurriculumExpansionConfig;
 }
 
-function TopicNode({ node, depth, onSelect, selectedId, selectedAncestorIds, cardCounts }: TopicNodeProps) {
+function TopicNode({ node, depth, onSelect, selectedId, selectedAncestorIds, cardCounts, expansion }: TopicNodeProps) {
   const [expanded, setExpanded] = useState(false);
   const stats = cardCounts[String(node.id)];
   const active = stats?.active ?? 0;
@@ -46,6 +216,7 @@ function TopicNode({ node, depth, onSelect, selectedId, selectedAncestorIds, car
   const isSelected = node.id === selectedId;
   const isAncestor = selectedAncestorIds.has(node.id);
   const levelBadge = TOPIC_LEVEL_BADGE[Math.min(node.level, 3)];
+  const isCurriculumExpanded = expansion.expandedPath === node.path;
 
   return (
     <div>
@@ -76,7 +247,29 @@ function TopicNode({ node, depth, onSelect, selectedId, selectedAncestorIds, car
             {reviewed}/{active}
           </span>
         )}
+        {/* Curriculum sections toggle indicator */}
+        {isCurriculumExpanded && (
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0 ml-0.5" />
+        )}
       </div>
+
+      {/* Curriculum sections panel — expands when this node is selected */}
+      {isCurriculumExpanded && (
+        <div className="ml-3 mr-1 mb-1 border border-blue-100 rounded-lg overflow-hidden bg-white">
+          <CurriculumActionBar
+            sections={expansion.sections}
+            loading={expansion.loading}
+            expandedPath={node.path}
+            onPreview={() => expansion.onPreview(node.path)}
+            onViewSection={expansion.onViewSection}
+            onGenerationDone={expansion.onGenerationDone}
+            refreshUsage={expansion.refreshUsage}
+            selectedModel={expansion.selectedModel}
+            selectedRuleSetId={expansion.selectedRuleSetId}
+          />
+        </div>
+      )}
+
       {expanded && node.children.length > 0 && (
         <div>
           {node.children.map((child) => (
@@ -88,6 +281,7 @@ function TopicNode({ node, depth, onSelect, selectedId, selectedAncestorIds, car
               selectedId={selectedId}
               selectedAncestorIds={selectedAncestorIds}
               cardCounts={cardCounts}
+              expansion={expansion}
             />
           ))}
         </div>
@@ -150,7 +344,7 @@ interface WorkspacePageProps {
 }
 
 export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
-  const { curriculumVersion } = useSettings();
+  const { curriculumVersion, selectedModel, selectedRuleSetId } = useSettings();
 
   // Sidebar tab
   const [sidebarTab, setSidebarTab] = useState<'documents' | 'topics'>('documents');
@@ -194,6 +388,12 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
 
   // Delete confirm
   const [confirmDelete, setConfirmDelete] = useState<{ id: number; name: string } | null>(null);
+
+  // Curriculum sections expansion (Topics tab)
+  const [expandedCurriculumPath, setExpandedCurriculumPath] = useState<string | null>(null);
+  const [curriculumSections, setCurriculumSections] = useState<CurriculumSection[]>([]);
+  const [curriculumSectionsLoading, setCurriculumSectionsLoading] = useState(false);
+  const [previewCurriculumPath, setPreviewCurriculumPath] = useState<string | null>(null);
 
   // Refresh key for cards panel
   const [refreshKey, setRefreshKey] = useState(0);
@@ -268,27 +468,51 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
     } catch { /* ignore */ }
   }, [expandedTreeId]);
 
-  // Select section
+  // Select section — clears topic selection + curriculum expansion
   const selectSection = useCallback((section: Section) => {
     setSelectedSectionId(section.id);
     setSelectedSection(section);
     setSelectedTopicId(null);
     setSelectedTopicPath(null);
+    setExpandedCurriculumPath(null);
+    setCurriculumSections([]);
     setSidebarTab('documents');
   }, []);
 
-  // Select topic
-  const selectTopic = useCallback((id: number) => {
-    const flat = flattenCurriculum(curriculum);
-    const node = flat.find((n) => n.id === id);
+  // Flat curriculum — must be declared before selectTopic which references it
+  const flatCurriculum = useMemo(() => flattenCurriculum(curriculum), [curriculum]);
+
+  // Select topic — loads curriculum sections, toggles expansion on re-click
+  const selectTopic = useCallback(async (id: number) => {
+    const node = flatCurriculum.find((n) => n.id === id);
+    const path = node?.path ?? null;
     setSelectedTopicId(id);
-    setSelectedTopicPath(node?.path ?? null);
+    setSelectedTopicPath(path);
     setSelectedSectionId(null);
     setSelectedSection(null);
-  }, [curriculum]);
+    setTopicSearch('');
 
-  // Flat curriculum for pickers
-  const flatCurriculum = useMemo(() => flattenCurriculum(curriculum), [curriculum]);
+    if (!path) return;
+
+    // Toggle off if same node clicked again
+    if (expandedCurriculumPath === path) {
+      setExpandedCurriculumPath(null);
+      setCurriculumSections([]);
+      return;
+    }
+
+    setExpandedCurriculumPath(path);
+    setCurriculumSectionsLoading(true);
+    setCurriculumSections([]);
+    try {
+      const secs = await getSectionsByCurriculum(path);
+      setCurriculumSections(secs);
+    } catch { /* ignore */ } finally {
+      setCurriculumSectionsLoading(false);
+    }
+  }, [flatCurriculum, expandedCurriculumPath]);
+
+  // (flatCurriculum is declared above selectTopic to avoid temporal dead zone)
 
   // Upload handler
   const handleUploadConfirm = useCallback(async () => {
@@ -674,17 +898,31 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                     ))
                   )
                 ) : (
-                  sortedCurriculum.map((node) => (
-                    <TopicNode
-                      key={node.id}
-                      node={node}
-                      depth={0}
-                      onSelect={selectTopic}
-                      selectedId={selectedTopicId}
-                      selectedAncestorIds={selectedAncestorIds}
-                      cardCounts={cardCounts}
-                    />
-                  ))
+                  (() => {
+                    const expansion: CurriculumExpansionConfig = {
+                      expandedPath: expandedCurriculumPath,
+                      sections: curriculumSections,
+                      loading: curriculumSectionsLoading,
+                      onPreview: setPreviewCurriculumPath,
+                      onViewSection: setViewingSectionId,
+                      onGenerationDone: () => { loadCurriculum(); setRefreshKey(k => k + 1); },
+                      refreshUsage,
+                      selectedModel,
+                      selectedRuleSetId,
+                    };
+                    return sortedCurriculum.map((node) => (
+                      <TopicNode
+                        key={node.id}
+                        node={node}
+                        depth={0}
+                        onSelect={selectTopic}
+                        selectedId={selectedTopicId}
+                        selectedAncestorIds={selectedAncestorIds}
+                        cardCounts={cardCounts}
+                        expansion={expansion}
+                      />
+                    ));
+                  })()
                 )}
               </div>
             </div>
@@ -707,6 +945,15 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
           }}
         />
       </div>
+
+      {/* Curriculum sections preview modal */}
+      {previewCurriculumPath != null && (
+        <CurriculumSectionPreview
+          expandedPath={previewCurriculumPath}
+          sections={curriculumSections}
+          onClose={() => setPreviewCurriculumPath(null)}
+        />
+      )}
 
       {/* Section viewer modal */}
       {viewingSectionId != null && (

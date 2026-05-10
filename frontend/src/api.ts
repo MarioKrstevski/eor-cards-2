@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type {
   CurriculumNode,
+  CurriculumSection,
   TopicCoverageStats,
   RuleSet,
   TopicTree,
@@ -129,6 +130,11 @@ export async function updateSection(
   params: { heading?: string; curriculum_topic_id?: number | null; curriculum_topic_path?: string | null; is_verified?: boolean }
 ): Promise<Section> {
   const res = await http.patch<Section>(`/sections/${id}`, params);
+  return res.data;
+}
+
+export async function getSectionsByCurriculum(path: string): Promise<CurriculumSection[]> {
+  const res = await http.get<CurriculumSection[]>('/sections/by-curriculum', { params: { path } });
   return res.data;
 }
 
