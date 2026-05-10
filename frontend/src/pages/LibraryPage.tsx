@@ -21,8 +21,12 @@ import {
   getProcessingJob,
   exportCardsUrl,
   aiDetectHeadings,
+  getReviewMarkTypes,
+  createReviewMarkType,
+  updateReviewMarkType,
+  deleteReviewMarkType,
 } from '../api';
-import type { CurriculumNode, RuleSet, TopicCoverageStats, TopicTree } from '../types';
+import type { CurriculumNode, ReviewMarkType, RuleSet, TopicCoverageStats, TopicTree } from '../types';
 import { useSettings } from '../context/SettingsContext';
 
 // ─── Search result tree node (ancestors as context, matches bold) ─────────────
@@ -203,7 +207,7 @@ function TopicNode({ node, depth, cardCounts, editMode, onRefresh, onDeleteReque
 
 export default function LibraryPage() {
   const { curriculumVersion } = useSettings();
-  const [activeTab, setActiveTab] = useState<'topics' | 'documents' | 'rules'>('topics');
+  const [activeTab, setActiveTab] = useState<'topics' | 'documents' | 'rules' | 'marks'>('topics');
 
   // Curriculum
   const [curriculum, setCurriculum] = useState<CurriculumNode[]>([]);
@@ -241,6 +245,13 @@ export default function LibraryPage() {
   const [editingSectionId, setEditingSectionId] = useState<number | null>(null);
   const [editingTopicId, setEditingTopicId] = useState<number | null>(null);
 
+  // Review marks
+  const [markTypes, setMarkTypes] = useState<ReviewMarkType[]>([]);
+  const [addingMark, setAddingMark] = useState(false);
+  const [newMarkName, setNewMarkName] = useState('');
+  const [newMarkColor, setNewMarkColor] = useState('#6b7280');
+  const [editingMark, setEditingMark] = useState<ReviewMarkType | null>(null);
+
   // Rules
   const [ruleSets, setRuleSets] = useState<RuleSet[]>([]);
   const [editingRule, setEditingRule] = useState<RuleSet | null>(null);
@@ -272,11 +283,20 @@ export default function LibraryPage() {
     } catch { /* ignore */ }
   }, []);
 
+  const loadMarkTypes = useCallback(async () => {
+    try {
+      const marks = await getReviewMarkTypes();
+      setMarkTypes(marks);
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
     loadCurriculum();
     loadTopicTrees();
     loadRuleSets();
   }, [loadCurriculum, loadTopicTrees, loadRuleSets]);
+
+  useEffect(() => { loadMarkTypes(); }, [loadMarkTypes]);
 
   const flatCurriculum = useMemo(() => flattenTree(sortTree(curriculum, 'curriculum')), [curriculum]);
   const flatCurriculumForSearch = useMemo(() => flattenTree(curriculum), [curriculum]);
@@ -463,6 +483,33 @@ export default function LibraryPage() {
     } catch { /* ignore */ }
   }, [loadRuleSets]);
 
+  const handleCreateMark = async () => {
+    if (!newMarkName.trim()) return;
+    try {
+      await createReviewMarkType({ name: newMarkName.trim(), color: newMarkColor });
+      setNewMarkName('');
+      setNewMarkColor('#6b7280');
+      setAddingMark(false);
+      loadMarkTypes();
+    } catch { /* ignore */ }
+  };
+
+  const handleUpdateMark = async () => {
+    if (!editingMark) return;
+    try {
+      await updateReviewMarkType(editingMark.id, { name: editingMark.name, color: editingMark.color });
+      setEditingMark(null);
+      loadMarkTypes();
+    } catch { /* ignore */ }
+  };
+
+  const handleDeleteMark = async (id: number) => {
+    try {
+      await deleteReviewMarkType(id);
+      loadMarkTypes();
+    } catch { /* ignore */ }
+  };
+
   const sortedCurriculum = useMemo(() => sortTree(curriculum, topicSort), [curriculum, topicSort]);
 
   return (
@@ -470,7 +517,7 @@ export default function LibraryPage() {
       <div className="max-w-6xl mx-auto px-6 py-6">
         {/* Tab bar */}
         <div className="flex items-center gap-1 mb-6 bg-white rounded-xl p-1 shadow-sm border border-gray-200 w-fit">
-          {(['topics', 'documents', 'rules'] as const).map((tab) => (
+          {(['topics', 'documents', 'rules', 'marks'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -480,7 +527,7 @@ export default function LibraryPage() {
                   : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
               }`}
             >
-              {tab === 'topics' ? 'Topics' : tab === 'documents' ? 'Documents' : 'Rules'}
+              {tab === 'topics' ? 'Topics' : tab === 'documents' ? 'Documents' : tab === 'rules' ? 'Rules' : 'Marks'}
             </button>
           ))}
         </div>
@@ -862,6 +909,85 @@ export default function LibraryPage() {
                           Delete
                         </button>
                       </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Marks tab */}
+        {activeTab === 'marks' && (
+          <div>
+            <div className="flex items-center gap-3 mb-4">
+              <h3 className="text-sm font-semibold text-gray-700">Review Mark Types</h3>
+              <p className="text-xs text-gray-400">Categories for flagging cards that need fixing</p>
+              <button
+                onClick={() => setAddingMark(true)}
+                className="ml-auto px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors duration-150"
+              >
+                + New Mark
+              </button>
+            </div>
+
+            {/* New mark form */}
+            {addingMark && (
+              <div className="mb-4 bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                <div className="flex items-center gap-3">
+                  <input
+                    type="color"
+                    value={newMarkColor}
+                    onChange={(e) => setNewMarkColor(e.target.value)}
+                    className="h-8 w-8 rounded cursor-pointer border border-gray-200"
+                  />
+                  <input
+                    className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    placeholder="Mark name (e.g. Too many clozes)"
+                    value={newMarkName}
+                    onChange={(e) => setNewMarkName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleCreateMark(); if (e.key === 'Escape') { setAddingMark(false); setNewMarkName(''); } }}
+                    autoFocus
+                  />
+                  <button onClick={handleCreateMark} disabled={!newMarkName.trim()} className="px-3 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 disabled:opacity-50 transition-colors duration-150">Create</button>
+                  <button onClick={() => { setAddingMark(false); setNewMarkName(''); }} className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800">Cancel</button>
+                </div>
+              </div>
+            )}
+
+            {/* Mark list */}
+            <div className="space-y-2">
+              {markTypes.length === 0 && !addingMark && (
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 px-6 py-8 text-center text-sm text-gray-400">
+                  No mark types yet. Create one to start categorizing cards.
+                </div>
+              )}
+              {markTypes.map((mark) => (
+                <div key={mark.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                  {editingMark?.id === mark.id ? (
+                    <div className="px-4 py-3 flex items-center gap-3">
+                      <input
+                        type="color"
+                        value={editingMark.color}
+                        onChange={(e) => setEditingMark({ ...editingMark, color: e.target.value })}
+                        className="h-8 w-8 rounded cursor-pointer border border-gray-200"
+                      />
+                      <input
+                        className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                        value={editingMark.name}
+                        onChange={(e) => setEditingMark({ ...editingMark, name: e.target.value })}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleUpdateMark(); if (e.key === 'Escape') setEditingMark(null); }}
+                        autoFocus
+                      />
+                      <button onClick={handleUpdateMark} className="px-3 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 transition-colors duration-150">Save</button>
+                      <button onClick={() => setEditingMark(null)} className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800">Cancel</button>
+                    </div>
+                  ) : (
+                    <div className="px-4 py-3 flex items-center gap-3">
+                      <span className="w-4 h-4 rounded-full shrink-0" style={{ backgroundColor: mark.color }} />
+                      <span className="flex-1 text-sm font-medium text-gray-800">{mark.name}</span>
+                      <button onClick={() => setEditingMark(mark)} className="text-xs text-gray-400 hover:text-blue-600 transition-colors px-2 py-1">Edit</button>
+                      <button onClick={() => handleDeleteMark(mark.id)} className="text-xs text-gray-400 hover:text-red-600 transition-colors px-2 py-1">Delete</button>
                     </div>
                   )}
                 </div>

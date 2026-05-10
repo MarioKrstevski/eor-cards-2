@@ -55,6 +55,9 @@ def card_to_dict(card: Card, db: Session | None = None) -> dict:
         "note_id": card.note_id,
         "status": card.status,
         "is_reviewed": card.is_reviewed,
+        "review_mark_id": card.review_mark_id if hasattr(card, 'review_mark_id') else None,
+        "in_fix_batch": card.in_fix_batch if hasattr(card, 'in_fix_batch') else False,
+        "needs_review": card.needs_review if hasattr(card, 'needs_review') else False,
         "created_at": card.created_at.isoformat() if card.created_at else None,
         "updated_at": card.updated_at.isoformat() if card.updated_at else None,
         "section_heading": card.section.heading if card.section else None,
@@ -68,6 +71,7 @@ def list_cards(
     topic_tree_id: Optional[int] = None,
     status: Optional[CardStatus] = None,
     is_reviewed: Optional[bool] = None,
+    mark_type_id: Optional[int] = None,
     tag: Optional[str] = None,
     search_q: Optional[str] = None,
     limit: int = 100,
@@ -85,6 +89,8 @@ def list_cards(
         q = q.filter(Card.status == status)
     if is_reviewed is not None:
         q = q.filter(Card.is_reviewed == is_reviewed)
+    if mark_type_id is not None:
+        q = q.filter(Card.review_mark_id == mark_type_id)
     if tag:
         q = q.filter(cast(Card.tags, String).contains(json.dumps(tag)))
     if search_q:

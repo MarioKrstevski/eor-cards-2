@@ -21,8 +21,11 @@ import {
   getGenerationJob,
   getActiveJobs,
   startSupplemental,
+  getReviewMarkTypes,
+  bulkMarkCards,
+  createFixBatch,
 } from '../api';
-import type { Card, CardStatus, CostEstimate } from '../types';
+import type { Card, CardStatus, CostEstimate, ReviewMarkType } from '../types';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
 import AnkifyModal from '../components/AnkifyModal';
@@ -448,6 +451,15 @@ export default function CardsPanel({
   // ── View mode ────────────────────────────────────────────────────────────
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
 
+  // ── Review marks ─────────────────────────────────────────────────────────
+  const [markTypes, setMarkTypes] = useState<ReviewMarkType[]>([]);
+  const [markFilterId, setMarkFilterId] = useState<number | null>(null);
+  const [showMarkMenu, setShowMarkMenu] = useState(false);
+  const [showFixBatchModal, setShowFixBatchModal] = useState(false);
+  const [fixBatchPrompt, setFixBatchPrompt] = useState('');
+  const [fixBatchMarkId, setFixBatchMarkId] = useState<number | null>(null);
+  const [fixBatchLoading, setFixBatchLoading] = useState(false);
+
   // ── Ankify modal ─────────────────────────────────────────────────────────
   const [ankifyOpen, setAnkifyOpen] = useState(false);
 
@@ -477,6 +489,11 @@ export default function CardsPanel({
   // ── Cell selection (DOM refs — no React re-render on select) ─────────────
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const selectedTdRef = useRef<HTMLElement | null>(null);
+
+  // Load mark types on mount
+  useEffect(() => {
+    getReviewMarkTypes().then(setMarkTypes).catch(() => {});
+  }, []);
 
   // ── Filtered cards ───────────────────────────────────────────────────────
   const filteredCards = useMemo(() => {
@@ -554,6 +571,7 @@ export default function CardsPanel({
             limit: pageSize,
             offset,
             ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
+            ...(markFilterId != null ? { mark_type_id: markFilterId } : {}),
           });
         } else if (topic) {
           resp = await getCards({
@@ -561,6 +579,7 @@ export default function CardsPanel({
             limit: pageSize,
             offset,
             ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
+            ...(markFilterId != null ? { mark_type_id: markFilterId } : {}),
           });
         } else {
           setCards([]);
@@ -576,7 +595,7 @@ export default function CardsPanel({
         if (!silent) setCardsLoading(false);
       }
     },
-    [pagination.pageSize, pagination.pageIndex, statusFilter]
+    [pagination.pageSize, pagination.pageIndex, statusFilter, markFilterId]
   );
 
   // Refetch on dependencies change
@@ -585,7 +604,7 @@ export default function CardsPanel({
     fetchCards(sectionId, topicPath);
     setSearchQ('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sectionId, topicPath, refreshKey, statusFilter]);
+  }, [sectionId, topicPath, refreshKey, statusFilter, markFilterId]);
 
   // Refetch on page change
   useEffect(() => {
@@ -642,25 +661,44 @@ export default function CardsPanel({
       }),
       columnHelper.accessor('card_number', {
         header: '#',
-        size: 50,
+        size: 80,
         enableResizing: false,
-        cell: (info) => (
-          <div className="flex items-center gap-1">
-            <span
-              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                info.row.original.status === 'rejected' ? 'bg-red-400' :
-                info.row.original.is_reviewed ? 'bg-gray-300' : 'bg-amber-400'
-              }`}
-              title={
-                info.row.original.status === 'rejected' ? 'Rejected' :
-                info.row.original.is_reviewed ? 'Reviewed' : 'Pending'
-              }
-            />
-            <span className={`text-xs tabular-nums ${!info.row.original.is_reviewed ? 'font-bold' : 'text-gray-400'}`}>
-              {info.getValue()}
-            </span>
-          </div>
-        ),
+        cell: (info) => {
+          const card = info.row.original;
+          const mark = card.review_mark_id != null ? markTypes.find(m => m.id === card.review_mark_id) : undefined;
+          return (
+            <div className="flex flex-col gap-0.5">
+              <div className="flex items-center gap-1">
+                <span
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                    card.status === 'rejected' ? 'bg-red-400' :
+                    card.is_reviewed ? 'bg-gray-300' : 'bg-amber-400'
+                  }`}
+                  title={
+                    card.status === 'rejected' ? 'Rejected' :
+                    card.is_reviewed ? 'Reviewed' : 'Pending'
+                  }
+                />
+                <span className={`text-xs tabular-nums ${!card.is_reviewed ? 'font-bold' : 'text-gray-400'}`}>
+                  {info.getValue()}
+                </span>
+              </div>
+              {mark && (
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
+                  style={{ backgroundColor: mark.color + '22', color: mark.color, border: `1px solid ${mark.color}44` }}
+                >
+                  {mark.name}
+                </span>
+              )}
+              {card.in_fix_batch && (
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                  In batch
+                </span>
+              )}
+            </div>
+          );
+        },
       }),
       columnHelper.accessor('front_html', {
         header: 'Card',
@@ -849,7 +887,7 @@ export default function CardsPanel({
       }),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filteredCards.length, selectedIds, handleCellSelect, handleCellNavigate, handleCellSave, showAnkiFormat, sectionId, topicPath, onReviewChange, fetchCards]
+    [filteredCards.length, selectedIds, handleCellSelect, handleCellNavigate, handleCellSave, showAnkiFormat, sectionId, topicPath, onReviewChange, fetchCards, markTypes]
   );
 
   const pageCount = Math.ceil(totalCards / pagination.pageSize);
@@ -1060,6 +1098,40 @@ export default function CardsPanel({
     }
   }, [selectedIds, fetchCards, sectionId, topicPath, onReviewChange]);
 
+  const handleBulkMark = useCallback(async (markTypeId: number | null) => {
+    if (selectedIds.size === 0) return;
+    try {
+      await bulkMarkCards({ card_ids: [...selectedIds], mark_type_id: markTypeId });
+      setSelectedIds(new Set());
+      setShowMarkMenu(false);
+      fetchCards(sectionId, topicPath, true);
+      onReviewChange?.();
+    } catch {
+      setActionError('Mark failed');
+    }
+  }, [selectedIds, fetchCards, sectionId, topicPath, onReviewChange]);
+
+  const handleCreateFixBatch = useCallback(async () => {
+    if (selectedIds.size === 0 || !fixBatchMarkId || !fixBatchPrompt.trim()) return;
+    setFixBatchLoading(true);
+    try {
+      await createFixBatch({
+        mark_type_id: fixBatchMarkId,
+        card_ids: [...selectedIds],
+        prompt: fixBatchPrompt.trim(),
+        model: selectedModel,
+      });
+      setShowFixBatchModal(false);
+      setFixBatchPrompt('');
+      setSelectedIds(new Set());
+      fetchCards(sectionId, topicPath, true);
+    } catch {
+      setActionError('Failed to create fix batch');
+    } finally {
+      setFixBatchLoading(false);
+    }
+  }, [selectedIds, fixBatchMarkId, fixBatchPrompt, selectedModel, fetchCards, sectionId, topicPath]);
+
   const handleGenSupplemental = useCallback(async () => {
     if (selectedIds.size === 0 || !selectedRuleSetId || !selectedModel) return;
     try {
@@ -1140,6 +1212,26 @@ export default function CardsPanel({
           <option value="active">Active</option>
           <option value="rejected">Rejected</option>
         </select>
+
+        {/* Mark type filter */}
+        {markTypes.length > 0 && (
+          <div className="relative">
+            <select
+              value={markFilterId ?? ''}
+              onChange={(e) => {
+                const v = e.target.value;
+                setMarkFilterId(v === '' ? null : Number(v));
+                setPagination(p => ({ ...p, pageIndex: 0 }));
+              }}
+              className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 pr-6"
+            >
+              <option value="">All marks</option>
+              {markTypes.map(m => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Global search */}
         <div className="relative">
@@ -1239,6 +1331,49 @@ export default function CardsPanel({
           >
             Ankify
           </button>
+          {/* Mark as... dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setShowMarkMenu(v => !v)}
+              className="px-2.5 py-1 text-xs font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 transition-colors duration-150"
+            >
+              Mark as ▾
+            </button>
+            {showMarkMenu && (
+              <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 min-w-[160px] py-1">
+                {markTypes.map(m => (
+                  <button
+                    key={m.id}
+                    onClick={() => handleBulkMark(m.id)}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 text-left"
+                  >
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
+                    {m.name}
+                  </button>
+                ))}
+                {markTypes.length > 0 && <div className="border-t border-gray-100 my-1" />}
+                <button
+                  onClick={() => handleBulkMark(null)}
+                  className="w-full px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50 text-left"
+                >
+                  Clear mark
+                </button>
+              </div>
+            )}
+          </div>
+          {/* Create Fix Batch button — only show when marks available */}
+          {markTypes.length > 0 && (
+            <button
+              onClick={() => {
+                setFixBatchMarkId(markFilterId ?? (markTypes[0]?.id ?? null));
+                setFixBatchPrompt('');
+                setShowFixBatchModal(true);
+              }}
+              className="px-2.5 py-1 text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors duration-150"
+            >
+              AI Fix Batch
+            </button>
+          )}
           <button
             onClick={handleBulkReview}
             className="px-2.5 py-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors duration-150"
@@ -1464,6 +1599,52 @@ export default function CardsPanel({
           cards={selectedIds.size > 0 ? cards.filter(c => selectedIds.has(c.id)) : filteredCards}
           onClose={() => setAnkifyOpen(false)}
         />
+      )}
+
+      {/* Create Fix Batch modal */}
+      {showFixBatchModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowFixBatchModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[520px] overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-sm font-bold text-gray-900">Create AI Fix Batch</h2>
+              <p className="text-xs text-gray-500 mt-0.5">{selectedIds.size} card{selectedIds.size !== 1 ? 's' : ''} selected · AI will fix each card based on your instructions</p>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Issue type</label>
+                <select
+                  value={fixBatchMarkId ?? ''}
+                  onChange={e => setFixBatchMarkId(e.target.value ? Number(e.target.value) : null)}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">— select a mark type —</option>
+                  {markTypes.map(m => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Fix instructions</label>
+                <textarea
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 min-h-[120px] resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Describe the fix. E.g. 'Reduce to at most 2 cloze deletions per card. Keep the most important concept as the cloze.'"
+                  value={fixBatchPrompt}
+                  onChange={e => setFixBatchPrompt(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
+              <button onClick={() => setShowFixBatchModal(false)} className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
+              <button
+                onClick={handleCreateFixBatch}
+                disabled={!fixBatchMarkId || !fixBatchPrompt.trim() || fixBatchLoading}
+                className="px-4 py-1.5 text-xs font-medium text-white bg-purple-700 rounded-lg hover:bg-purple-800 disabled:opacity-50"
+              >
+                {fixBatchLoading ? 'Creating...' : 'Start AI Fix'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

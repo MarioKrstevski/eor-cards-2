@@ -254,6 +254,7 @@ export async function getCards(params?: {
   topic?: string;
   status?: CardStatus;
   is_reviewed?: boolean;
+  mark_type_id?: number | null;
   search_q?: string;
   limit?: number;
   offset?: number;
