@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from backend.db import engine, Base
-from backend.routers import documents, sections, cards, generate, curriculum, rules, export, usage
+from backend.routers import documents, sections, cards, generate, curriculum, rules, export, usage, review_marks, fix_batches
 from backend import models  # noqa — ensure all models registered
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -74,6 +74,16 @@ def _migrate_db():
         except Exception:
             pass  # column already exists
 
+        for col_sql in [
+            "ALTER TABLE cards ADD COLUMN review_mark_id INTEGER REFERENCES review_mark_types(id)",
+            "ALTER TABLE cards ADD COLUMN in_fix_batch BOOLEAN NOT NULL DEFAULT 0",
+        ]:
+            try:
+                conn.execute(text(col_sql))
+                conn.commit()
+            except Exception:
+                pass
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -94,6 +104,8 @@ app.include_router(curriculum.router, prefix="/api/curriculum", tags=["curriculu
 app.include_router(rules.router, prefix="/api/rules", tags=["rules"])
 app.include_router(export.router, prefix="/api/export", tags=["export"])
 app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
+app.include_router(review_marks.router, prefix="/api/review-marks", tags=["review_marks"])
+app.include_router(fix_batches.router, prefix="/api/fix-batches", tags=["fix_batches"])
 
 
 @app.post("/api/admin/clear-storage")

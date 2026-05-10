@@ -162,9 +162,55 @@ class Card(Base):
     status: Mapped[CardStatus] = mapped_column(Enum(CardStatus), default=CardStatus.active)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
     is_reviewed: Mapped[bool] = mapped_column(Boolean, default=False)
+    review_mark_id: Mapped[Optional[int]] = mapped_column(ForeignKey("review_mark_types.id"), nullable=True)
+    in_fix_batch: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
     section: Mapped["Section"] = relationship("Section", back_populates="cards")
+
+
+# ── Review Mark Types ──
+class ReviewMarkType(Base):
+    __tablename__ = "review_mark_types"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    color: Mapped[str] = mapped_column(String(7), default='#6b7280')
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+# ── Fix Batch ──
+class FixBatch(Base):
+    __tablename__ = "fix_batches"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    mark_type_id: Mapped[Optional[int]] = mapped_column(ForeignKey("review_mark_types.id"), nullable=True)
+    prompt: Mapped[str] = mapped_column(Text)
+    model: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), default='pending')  # pending/running/done/confirmed/cancelled
+    total_cards: Mapped[int] = mapped_column(Integer, default=0)
+    processed_cards: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    mark_type: Mapped[Optional["ReviewMarkType"]] = relationship("ReviewMarkType")
+    proposals: Mapped[list["FixProposal"]] = relationship("FixProposal", back_populates="batch", cascade="all, delete-orphan")
+
+
+# ── Fix Proposal ──
+class FixProposal(Base):
+    __tablename__ = "fix_proposals"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("fix_batches.id"))
+    original_card_id: Mapped[int] = mapped_column(ForeignKey("cards.id"))
+    ai_action: Mapped[str] = mapped_column(String(10))  # edit/keep/delete/split
+    proposed_front_html: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    proposed_extra: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    new_cards_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    reviewer_action: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    is_resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    batch: Mapped["FixBatch"] = relationship("FixBatch", back_populates="proposals")
+    original_card: Mapped["Card"] = relationship("Card", foreign_keys=[original_card_id])
 
 
 # ── Generation Job ──

@@ -92,6 +92,8 @@ export interface Card {
   status: CardStatus;
   needs_review: boolean;
   is_reviewed: boolean;
+  review_mark_id: number | null;
+  in_fix_batch: boolean;
   created_at: string;
   updated_at: string;
   // for display
@@ -180,4 +182,45 @@ export interface SectionDetail extends Section {
   content_blocks: ContentBlock[];
   images: SectionImage[];
   uploads: Upload[];
+}
+
+export interface ReviewMarkType {
+  id: number;
+  name: string;
+  color: string;
+  sort_order: number;
+  created_at?: string;
+}
+
+export interface FixBatch {
+  id: number;
+  mark_type_id: number | null;
+  mark_type_name: string | null;
+  mark_type_color: string | null;
+  prompt: string;
+  model: string;
+  status: 'pending' | 'running' | 'done' | 'confirmed' | 'cancelled';
+  total_cards: number;
+  processed_cards: number;
+  error_message: string | null;
+  created_at: string;
+  finished_at: string | null;
+  proposals?: FixProposal[];
+}
+
+export interface FixProposal {
+  id: number;
+  batch_id: number;
+  original_card_id: number;
+  original_front_html?: string;
+  original_extra?: string | null;
+  original_tags?: string[];
+  original_section_id?: number;
+  ai_action: 'edit' | 'keep' | 'delete' | 'split';
+  proposed_front_html: string | null;
+  proposed_extra: string | null;
+  new_cards_json: Array<{ front_html: string; extra: string | null; tags: string[] }> | null;
+  reviewer_action: 'edit' | 'keep' | 'delete' | 'split' | null;
+  is_resolved: boolean;
+  in_fix_batch?: boolean;
 }

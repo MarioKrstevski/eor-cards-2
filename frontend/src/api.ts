@@ -15,6 +15,9 @@ import type {
   ProcessingJob,
   PaginatedCards,
   AIUsageSummary,
+  ReviewMarkType,
+  FixBatch,
+  FixProposal,
 } from './types';
 
 const http = axios.create({ baseURL: '/api' });
@@ -140,6 +143,107 @@ export async function getSectionsByCurriculum(path: string): Promise<CurriculumS
 
 export async function verifySection(id: number): Promise<{ is_valid: boolean; flags: string[] }> {
   const res = await http.post<{ is_valid: boolean; flags: string[] }>(`/sections/${id}/verify`);
+  return res.data;
+}
+
+// ─── Review Mark Types ────────────────────────────────────────────────────────
+
+export async function getReviewMarkTypes(): Promise<ReviewMarkType[]> {
+  const res = await http.get<ReviewMarkType[]>('/review-marks');
+  return res.data;
+}
+
+export async function createReviewMarkType(params: {
+  name: string;
+  color?: string;
+  sort_order?: number;
+}): Promise<ReviewMarkType> {
+  const res = await http.post<ReviewMarkType>('/review-marks', params);
+  return res.data;
+}
+
+export async function updateReviewMarkType(
+  id: number,
+  params: { name?: string; color?: string; sort_order?: number }
+): Promise<ReviewMarkType> {
+  const res = await http.patch<ReviewMarkType>(`/review-marks/${id}`, params);
+  return res.data;
+}
+
+export async function deleteReviewMarkType(id: number): Promise<void> {
+  await http.delete(`/review-marks/${id}`);
+}
+
+// ─── Fix Batches ──────────────────────────────────────────────────────────────
+
+export async function getFixBatches(): Promise<FixBatch[]> {
+  const res = await http.get<FixBatch[]>('/fix-batches');
+  return res.data;
+}
+
+export async function getFixBatch(id: number): Promise<FixBatch> {
+  const res = await http.get<FixBatch>(`/fix-batches/${id}`);
+  return res.data;
+}
+
+export async function createFixBatch(params: {
+  mark_type_id: number;
+  card_ids: number[];
+  prompt: string;
+  model: string;
+}): Promise<{ batch_id: number }> {
+  const res = await http.post<{ batch_id: number }>('/fix-batches', params);
+  return res.data;
+}
+
+export async function rerunFixBatch(id: number, prompt: string): Promise<{ batch_id: number }> {
+  const res = await http.post<{ batch_id: number }>(`/fix-batches/${id}/rerun`, { prompt });
+  return res.data;
+}
+
+export async function updateFixProposal(
+  batchId: number,
+  proposalId: number,
+  reviewerAction: string
+): Promise<FixProposal> {
+  const res = await http.patch<FixProposal>(`/fix-batches/${batchId}/proposals/${proposalId}`, {
+    reviewer_action: reviewerAction,
+  });
+  return res.data;
+}
+
+export async function updateFixProposalContent(
+  batchId: number,
+  proposalId: number,
+  content: { proposed_front_html?: string; proposed_extra?: string | null; new_cards_json?: unknown[] }
+): Promise<FixProposal> {
+  const res = await http.patch<FixProposal>(
+    `/fix-batches/${batchId}/proposals/${proposalId}/content`,
+    content
+  );
+  return res.data;
+}
+
+export async function confirmFixBatch(
+  id: number,
+  proposalIds?: number[]
+): Promise<{ confirmed: number; batch_status: string }> {
+  const res = await http.post<{ confirmed: number; batch_status: string }>(
+    `/fix-batches/${id}/confirm`,
+    { proposal_ids: proposalIds ?? null }
+  );
+  return res.data;
+}
+
+export async function cancelFixBatch(id: number): Promise<void> {
+  await http.post(`/fix-batches/${id}/cancel`);
+}
+
+export async function bulkMarkCards(params: {
+  card_ids: number[];
+  mark_type_id: number | null;
+}): Promise<{ updated: number }> {
+  const res = await http.post<{ updated: number }>('/fix-batches/bulk-mark', params);
   return res.data;
 }
 

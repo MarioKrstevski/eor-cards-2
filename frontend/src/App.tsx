@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
 import { SettingsProvider, useSettings } from './context/SettingsContext';
 import WorkspacePage from './pages/WorkspacePage';
 import LibraryPage from './pages/LibraryPage';
+import ProposalsPage from './pages/ProposalsPage';
 import SettingsPopover from './components/SettingsPopover';
 import UsageModal from './components/UsageModal';
 import CostFlash from './components/CostFlash';
@@ -106,6 +107,9 @@ function AppInner() {
         <NavLink to="/library" className={navLinkClass}>
           Library
         </NavLink>
+        <NavLink to="/proposals" className={navLinkClass}>
+          Proposals
+        </NavLink>
         <div className="flex-1" />
 
         {/* Curriculum version toggle */}
@@ -114,13 +118,13 @@ function AppInner() {
             onClick={() => setCurriculumVersion('v1')}
             className={`px-2 py-1 text-[11px] font-medium transition-colors duration-150 ${curriculumVersion === 'v1' ? 'bg-blue-50 text-blue-700' : 'text-gray-400 hover:bg-gray-50'}`}
           >
-            Old
+            New
           </button>
           <button
             onClick={() => setCurriculumVersion('v2')}
             className={`px-2 py-1 text-[11px] font-medium transition-colors duration-150 ${curriculumVersion === 'v2' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-400 hover:bg-gray-50'}`}
           >
-            New
+            Old
           </button>
         </div>
 
@@ -174,6 +178,7 @@ function AppInner() {
       <Routes>
         <Route path="/" element={<WorkspacePage refreshUsage={refreshUsage} />} />
         <Route path="/library" element={<LibraryPage />} />
+        <Route path="/proposals" element={<ProposalsPage />} />
       </Routes>
 
       {showSettings && <SettingsPopover onClose={() => setShowSettings(false)} />}
