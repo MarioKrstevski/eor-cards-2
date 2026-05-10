@@ -68,11 +68,12 @@ function CurriculumActionBar({
   const [estimating, setEstimating] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [jobProgress, setJobProgress] = useState<{ processed: number; total: number } | null>(null);
+  const [showSections, setShowSections] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
-  // Reset estimate when expanded path changes
-  useEffect(() => { setEstimate(null); setJobProgress(null); }, [expandedPath]);
+  // Reset state when expanded path changes
+  useEffect(() => { setEstimate(null); setJobProgress(null); setShowSections(false); }, [expandedPath]);
 
   const sectionIds = sections.map(s => s.id);
 
@@ -141,19 +142,30 @@ function CurriculumActionBar({
         {estimate && (
           <span className="text-[10px] text-blue-700 font-medium">~${estimate.estimated_cost_usd.toFixed(3)}</span>
         )}
-        <button
-          onClick={handleGenerate}
-          disabled={generating || !selectedRuleSetId}
-          className="ml-auto px-1.5 py-0.5 text-[10px] font-medium text-white bg-blue-700 rounded hover:bg-blue-800 disabled:opacity-50"
-        >
-          {generating
-            ? (jobProgress ? `${jobProgress.processed}/${jobProgress.total}` : 'Starting…')
-            : 'Generate'}
-        </button>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            onClick={handleGenerate}
+            disabled={generating || !selectedRuleSetId}
+            className="px-1.5 py-0.5 text-[10px] font-medium text-white bg-blue-700 rounded hover:bg-blue-800 disabled:opacity-50"
+          >
+            {generating
+              ? (jobProgress ? `${jobProgress.processed}/${jobProgress.total}` : 'Starting…')
+              : 'Generate'}
+          </button>
+          <button
+            onClick={() => setShowSections(v => !v)}
+            className="p-0.5 text-gray-400 hover:text-gray-600 border border-gray-200 rounded bg-white"
+            title={showSections ? 'Hide sections' : 'Show sections'}
+          >
+            <svg className={`h-3 w-3 transition-transform duration-150 ${showSections ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        </div>
       </div>
 
-      {/* Section list */}
-      {sortedSections.map(section => {
+      {/* Section list — collapsed by default, toggled via chevron */}
+      {showSections && sortedSections.map(section => {
         const isOrphan = hasDeepSections && section.curriculum_topic_path === expandedPath;
         const subPath = section.curriculum_topic_path
           ? section.curriculum_topic_path.slice(expandedPath.length).replace(/^ > /, '')
@@ -672,7 +684,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
   return (
     <div className="flex flex-1 overflow-hidden">
       {/* Sidebar */}
-      <div className="w-72 bg-white border-r border-gray-200 flex flex-col shrink-0">
+      <div className="w-[388px] bg-white border-r border-gray-200 flex flex-col shrink-0">
         {/* Upload area */}
         <div className="p-3 border-b border-gray-100">
           <div className="flex gap-1.5">
