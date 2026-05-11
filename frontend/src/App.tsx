@@ -136,16 +136,16 @@ function AppInner() {
           <span className="text-[10px] text-gray-400 font-medium">Curr</span>
           <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden" title="Active curriculum version for sidebar navigation">
             <button
-              onClick={() => setCurriculumVersion('v1')}
-              className={`px-2 py-1 text-[11px] font-medium transition-colors duration-150 ${curriculumVersion === 'v1' ? 'bg-blue-50 text-blue-700' : 'text-gray-400 hover:bg-gray-50'}`}
-            >
-              New
-            </button>
-            <button
               onClick={() => setCurriculumVersion('v2')}
               className={`px-2 py-1 text-[11px] font-medium transition-colors duration-150 ${curriculumVersion === 'v2' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-400 hover:bg-gray-50'}`}
             >
               PAEA
+            </button>
+            <button
+              onClick={() => setCurriculumVersion('v1')}
+              className={`px-2 py-1 text-[11px] font-medium transition-colors duration-150 ${curriculumVersion === 'v1' ? 'bg-blue-50 text-blue-700' : 'text-gray-400 hover:bg-gray-50'}`}
+            >
+              New
             </button>
           </div>
         </div>
