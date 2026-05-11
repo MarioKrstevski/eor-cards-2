@@ -145,7 +145,7 @@ function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, 
   );
 }
 
-// ── TagsCell ───────────────────────────────────────────────────────────────────
+// ── TagsCell — pill-based editor ──────────────────────────────────────────────
 interface TagsCellProps {
   tags: string[];
   cellId: string;
@@ -156,56 +156,156 @@ interface TagsCellProps {
 
 function TagsCell({ tags, cellId, onSave, onSelect, onNavigate }: TagsCellProps) {
   const [isEditing, setIsEditing] = useState(false);
-  const [localVal, setLocalVal] = useState(tags.join(', '));
+  const [localTags, setLocalTags] = useState<string[]>(tags);
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editingVal, setEditingVal] = useState('');
+  const [addingNew, setAddingNew] = useState(false);
+  const [newTagVal, setNewTagVal] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { setLocalVal(tags.join(', ')); }, [tags]);
+  useEffect(() => { if (!isEditing) setLocalTags(tags); }, [tags, isEditing]);
 
-  function startEdit() { setLocalVal(tags.join(', ')); setIsEditing(true); }
-  function save() {
-    setIsEditing(false);
-    const newTags = localVal.split(',').map(t => t.trim()).filter(Boolean);
-    if (JSON.stringify(newTags) !== JSON.stringify(tags)) onSave(newTags);
+  function startEditing() {
+    setLocalTags([...tags]);
+    setIsEditing(true);
+    requestAnimationFrame(() => containerRef.current?.focus());
   }
-  function cancel() { setIsEditing(false); setLocalVal(tags.join(', ')); }
 
-  if (isEditing) {
+  function doSave(final: string[]) {
+    setIsEditing(false); setEditingIdx(null); setAddingNew(false);
+    setEditingVal(''); setNewTagVal('');
+    if (JSON.stringify(final) !== JSON.stringify(tags)) onSave(final);
+  }
+
+  function handleContainerBlur(e: React.FocusEvent<HTMLDivElement>) {
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    let final = [...localTags];
+    if (editingIdx !== null) {
+      const t = editingVal.trim();
+      final = t ? final.map((v, i) => i === editingIdx ? t : v) : final.filter((_, i) => i !== editingIdx);
+    }
+    if (addingNew && newTagVal.trim()) final = [...final, newTagVal.trim()];
+    doSave(final);
+  }
+
+  function commitTagEdit(idx: number, val: string) {
+    const t = val.trim();
+    setLocalTags(t ? localTags.map((v, i) => i === idx ? t : v) : localTags.filter((_, i) => i !== idx));
+    setEditingIdx(null); setEditingVal('');
+  }
+
+  function commitNewTag(val: string) {
+    if (val.trim()) setLocalTags(prev => [...prev, val.trim()]);
+    setAddingNew(false); setNewTagVal('');
+  }
+
+  if (!isEditing) {
     return (
-      <input
-        type="text"
-        className="w-full text-sm bg-white border-0 outline-none p-0 leading-relaxed"
-        value={localVal}
-        onChange={(e) => setLocalVal(e.target.value)}
-        onBlur={save}
+      <div
+        data-cell-id={cellId}
+        tabIndex={0}
+        onClick={() => onSelect(cellId)}
+        onDoubleClick={startEditing}
+        onFocus={() => onSelect(cellId)}
         onKeyDown={(e) => {
-          if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-          if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); save(); }
+          if (e.key === 'Enter') { e.preventDefault(); startEditing(); }
+          if (e.key === 'ArrowUp') { e.preventDefault(); onNavigate('up'); }
+          if (e.key === 'ArrowDown') { e.preventDefault(); onNavigate('down'); }
+          if (e.key === 'ArrowLeft') { e.preventDefault(); onNavigate('left'); }
+          if (e.key === 'ArrowRight') { e.preventDefault(); onNavigate('right'); }
         }}
-        autoFocus
-      />
+        className="cursor-default outline-none w-full h-full"
+        style={{ minHeight: '2rem' }}
+      >
+        {tags.length === 0
+          ? <span className="text-gray-300 text-xs">—</span>
+          : <div className="flex flex-wrap gap-1">
+              {tags.map(tag => (
+                <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded text-[11px] bg-blue-50 text-blue-700 border border-blue-200 font-medium">{tag}</span>
+              ))}
+            </div>
+        }
+      </div>
     );
   }
 
   return (
-    <div
-      data-cell-id={cellId}
-      tabIndex={0}
-      className="cursor-default outline-none w-full h-full flex flex-wrap gap-1 min-h-[1.5em]"
-      onClick={() => onSelect(cellId)}
-      onDoubleClick={startEdit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') { e.preventDefault(); startEdit(); }
-        if (e.key === 'ArrowUp') { e.preventDefault(); onNavigate('up'); }
-        if (e.key === 'ArrowDown') { e.preventDefault(); onNavigate('down'); }
-        if (e.key === 'ArrowLeft') { e.preventDefault(); onNavigate('left'); }
-        if (e.key === 'ArrowRight') { e.preventDefault(); onNavigate('right'); }
-      }}
-    >
-      {tags.length === 0
-        ? <span className="text-gray-300 text-xs">—</span>
-        : tags.map(tag => (
-            <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded text-[11px] bg-blue-50 text-blue-700 border border-blue-200 font-medium">{tag}</span>
-          ))
-      }
+    <div ref={containerRef} tabIndex={0} className="w-full outline-none" style={{ minHeight: '2rem' }} onBlur={handleContainerBlur}>
+      <div className="flex flex-wrap gap-1 items-center">
+        {localTags.map((tag, idx) =>
+          editingIdx === idx ? (
+            <input
+              key={idx}
+              autoFocus
+              value={editingVal}
+              onChange={(e) => setEditingVal(e.target.value)}
+              onBlur={(e) => {
+                if (containerRef.current?.contains(e.relatedTarget as Node | null)) commitTagEdit(idx, editingVal);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); commitTagEdit(idx, editingVal); }
+                if (e.key === 'Escape') { setEditingIdx(null); setEditingVal(''); }
+                if (e.key === 'Tab') { e.preventDefault(); commitTagEdit(idx, editingVal); setAddingNew(true); }
+              }}
+              className="px-2 py-0.5 rounded text-[11px] bg-blue-50 text-blue-700 border border-blue-400 outline-none font-medium"
+              style={{ width: Math.max(60, editingVal.length * 7 + 20) + 'px' }}
+            />
+          ) : (
+            <span key={idx} className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-[11px] bg-blue-50 text-blue-700 border border-blue-200 font-medium group/tag">
+              <span>{tag}</span>
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); setEditingIdx(idx); setEditingVal(tag); }}
+                className="ml-0.5 text-blue-400 hover:text-blue-600 opacity-40 group-hover/tag:opacity-100 transition-opacity"
+                tabIndex={-1}
+                title="Edit tag"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-1.414.586H8v-2.414a2 2 0 01.586-1.414z" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); setLocalTags(prev => prev.filter((_, i) => i !== idx)); }}
+                className="text-blue-400 hover:text-red-500 opacity-40 group-hover/tag:opacity-100 transition-opacity"
+                tabIndex={-1}
+                title="Remove tag"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </span>
+          )
+        )}
+        {addingNew ? (
+          <input
+            autoFocus
+            value={newTagVal}
+            onChange={(e) => setNewTagVal(e.target.value)}
+            onBlur={(e) => {
+              if (containerRef.current?.contains(e.relatedTarget as Node | null)) commitNewTag(newTagVal);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); commitNewTag(newTagVal); }
+              if (e.key === 'Escape') { setAddingNew(false); setNewTagVal(''); }
+            }}
+            placeholder="new tag..."
+            className="px-2 py-0.5 rounded text-[11px] bg-white text-gray-700 border border-gray-300 outline-none"
+            style={{ width: '80px' }}
+          />
+        ) : (
+          <button
+            type="button"
+            onMouseDown={(e) => { e.preventDefault(); setAddingNew(true); }}
+            className="inline-flex items-center justify-center h-5 px-1.5 rounded text-[11px] text-gray-400 border border-dashed border-gray-300 hover:text-blue-500 hover:border-blue-400 transition-colors"
+            tabIndex={-1}
+            title="Add tag"
+          >
+            +
+          </button>
+        )}
+      </div>
     </div>
   );
 }
