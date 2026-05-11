@@ -170,6 +170,18 @@ class Card(Base):
     section: Mapped["Section"] = relationship("Section", back_populates="cards")
 
 
+# ── Curriculum Mapping ──
+
+class CurriculumMapping(Base):
+    __tablename__ = "curriculum_mappings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    from_node_id: Mapped[int] = mapped_column(ForeignKey("curriculum.id"))
+    to_node_id: Mapped[int] = mapped_column(ForeignKey("curriculum.id"))
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    from_node: Mapped["Curriculum"] = relationship("Curriculum", foreign_keys=[from_node_id])
+    to_node: Mapped["Curriculum"] = relationship("Curriculum", foreign_keys=[to_node_id])
+
+
 # ── Review Mark Types ──
 class ReviewMarkType(Base):
     __tablename__ = "review_mark_types"

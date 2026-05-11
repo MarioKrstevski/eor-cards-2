@@ -8,6 +8,15 @@ export interface CurriculumNode {
   children: CurriculumNode[];
 }
 
+export interface CurriculumMapping {
+  id: number;
+  from_node_id: number;
+  to_node_id: number;
+  from_path: string | null;
+  to_path: string | null;
+  created_at: string;
+}
+
 export interface TopicCoverageStats {
   total: number;
   active: number;

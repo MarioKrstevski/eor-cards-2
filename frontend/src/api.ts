@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type {
   CurriculumNode,
+  CurriculumMapping,
   CurriculumSection,
   TopicCoverageStats,
   RuleSet,
@@ -58,6 +59,32 @@ export async function updateCurriculumNode(
 
 export async function deleteCurriculumNode(id: number): Promise<void> {
   await http.delete(`/curriculum/${id}`);
+}
+
+// ─── Curriculum Mappings ──────────────────────────────────────────────────────
+
+export async function getCurriculumMappings(fromNodeId?: number): Promise<CurriculumMapping[]> {
+  const res = await http.get<CurriculumMapping[]>('/curriculum/mappings', {
+    params: fromNodeId != null ? { from_node_id: fromNodeId } : undefined,
+  });
+  return res.data;
+}
+
+export async function createCurriculumMapping(fromNodeId: number, toNodeId: number): Promise<CurriculumMapping> {
+  const res = await http.post<CurriculumMapping>('/curriculum/mappings', {
+    from_node_id: fromNodeId,
+    to_node_id: toNodeId,
+  });
+  return res.data;
+}
+
+export async function deleteCurriculumMapping(id: number): Promise<void> {
+  await http.delete(`/curriculum/mappings/${id}`);
+}
+
+export async function applyCurriculumMappings(): Promise<{ updated: number; total_cards: number; mappings_defined: number }> {
+  const res = await http.post<{ updated: number; total_cards: number; mappings_defined: number }>('/curriculum/mappings/apply');
+  return res.data;
 }
 
 // ─── Topic Trees (Documents) ─────────────────────────────────────────────────

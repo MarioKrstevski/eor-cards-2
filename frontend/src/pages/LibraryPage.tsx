@@ -25,8 +25,12 @@ import {
   createReviewMarkType,
   updateReviewMarkType,
   deleteReviewMarkType,
+  getCurriculumMappings,
+  createCurriculumMapping,
+  deleteCurriculumMapping,
+  applyCurriculumMappings,
 } from '../api';
-import type { CurriculumNode, ReviewMarkType, RuleSet, TopicCoverageStats, TopicTree } from '../types';
+import type { CurriculumMapping, CurriculumNode, ReviewMarkType, RuleSet, TopicCoverageStats, TopicTree } from '../types';
 import { useSettings } from '../context/SettingsContext';
 
 // ─── Search result tree node (ancestors as context, matches bold) ─────────────
@@ -207,7 +211,7 @@ function TopicNode({ node, depth, cardCounts, editMode, onRefresh, onDeleteReque
 
 export default function LibraryPage() {
   const { curriculumVersion } = useSettings();
-  const [activeTab, setActiveTab] = useState<'topics' | 'documents' | 'rules' | 'marks'>('topics');
+  const [activeTab, setActiveTab] = useState<'topics' | 'documents' | 'rules' | 'marks' | 'mapping'>('topics');
 
   // Curriculum
   const [curriculum, setCurriculum] = useState<CurriculumNode[]>([]);
@@ -251,6 +255,16 @@ export default function LibraryPage() {
   const [newMarkName, setNewMarkName] = useState('');
   const [newMarkColor, setNewMarkColor] = useState('#6b7280');
   const [editingMark, setEditingMark] = useState<ReviewMarkType | null>(null);
+
+  // Mapping tab
+  const [fromTree, setFromTree] = useState<CurriculumNode[]>([]); // v2 / Current
+  const [toTree, setToTree] = useState<CurriculumNode[]>([]);     // v1 / New
+  const [mappings, setMappings] = useState<CurriculumMapping[]>([]);
+  const [selectedFromId, setSelectedFromId] = useState<number | null>(null);
+  const [fromExpanded, setFromExpanded] = useState<Set<number>>(new Set());
+  const [toExpanded, setToExpanded] = useState<Set<number>>(new Set());
+  const [applyingMappings, setApplyingMappings] = useState(false);
+  const [applyResult, setApplyResult] = useState<{ updated: number; total_cards: number } | null>(null);
 
   // Rules
   const [ruleSets, setRuleSets] = useState<RuleSet[]>([]);
@@ -297,6 +311,19 @@ export default function LibraryPage() {
   }, [loadCurriculum, loadTopicTrees, loadRuleSets]);
 
   useEffect(() => { loadMarkTypes(); }, [loadMarkTypes]);
+
+  const loadMappingData = useCallback(async () => {
+    try {
+      const [ft, tt, ms] = await Promise.all([getCurriculum('v2'), getCurriculum('v1'), getCurriculumMappings()]);
+      setFromTree(ft);
+      setToTree(tt);
+      setMappings(ms);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'mapping') loadMappingData();
+  }, [activeTab, loadMappingData]);
 
   const flatCurriculum = useMemo(() => flattenTree(sortTree(curriculum, 'curriculum')), [curriculum]);
   const flatCurriculumForSearch = useMemo(() => flattenTree(curriculum), [curriculum]);
@@ -517,7 +544,7 @@ export default function LibraryPage() {
       <div className="max-w-6xl mx-auto px-6 py-6">
         {/* Tab bar */}
         <div className="flex items-center gap-1 mb-6 bg-white rounded-xl p-1 shadow-sm border border-gray-200 w-fit">
-          {(['topics', 'documents', 'rules', 'marks'] as const).map((tab) => (
+          {(['topics', 'documents', 'rules', 'marks', 'mapping'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -527,7 +554,7 @@ export default function LibraryPage() {
                   : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
               }`}
             >
-              {tab === 'topics' ? 'Topics' : tab === 'documents' ? 'Documents' : tab === 'rules' ? 'Rules' : 'Marks'}
+              {tab === 'topics' ? 'Topics' : tab === 'documents' ? 'Documents' : tab === 'rules' ? 'Rules' : tab === 'marks' ? 'Marks' : 'Mapping'}
             </button>
           ))}
         </div>
@@ -994,6 +1021,124 @@ export default function LibraryPage() {
             </div>
           </div>
         )}
+
+        {/* Mapping tab */}
+        {activeTab === 'mapping' && (() => {
+          const mappedFromIds = new Set(mappings.map(m => m.from_node_id));
+          const selectedMappings = mappings.filter(m => m.from_node_id === selectedFromId);
+          const mappedToIds = new Set(selectedMappings.map(m => m.to_node_id));
+
+          const handleToggleMapping = async (toNodeId: number) => {
+            if (!selectedFromId) return;
+            const existing = selectedMappings.find(m => m.to_node_id === toNodeId);
+            if (existing) {
+              await deleteCurriculumMapping(existing.id);
+            } else {
+              await createCurriculumMapping(selectedFromId, toNodeId);
+            }
+            const updated = await getCurriculumMappings();
+            setMappings(updated);
+          };
+
+          const handleApply = async () => {
+            setApplyingMappings(true);
+            setApplyResult(null);
+            try {
+              const result = await applyCurriculumMappings();
+              setApplyResult(result);
+            } catch { /* ignore */ }
+            setApplyingMappings(false);
+          };
+
+          function MappingTreeNode({ node, side }: { node: CurriculumNode; side: 'from' | 'to' }) {
+            const expanded = side === 'from' ? fromExpanded.has(node.id) : toExpanded.has(node.id);
+            const setExpanded = side === 'from' ? setFromExpanded : setToExpanded;
+            const hasChildren = node.children.length > 0;
+            const isSelected = side === 'from' && selectedFromId === node.id;
+            const isMapped = side === 'from' && mappedFromIds.has(node.id);
+            const isChecked = side === 'to' && mappedToIds.has(node.id);
+
+            return (
+              <div>
+                <div
+                  className={`flex items-center gap-1 py-1 pr-2 rounded-lg cursor-pointer ${
+                    isSelected ? 'bg-indigo-50' : 'hover:bg-gray-50'
+                  }`}
+                  style={{ paddingLeft: `${6 + node.level * 14}px` }}
+                  onClick={() => {
+                    if (hasChildren) setExpanded(prev => { const s = new Set(prev); s.has(node.id) ? s.delete(node.id) : s.add(node.id); return s; });
+                    if (side === 'from') { setSelectedFromId(node.id); setApplyResult(null); }
+                    if (side === 'to') handleToggleMapping(node.id);
+                  }}
+                >
+                  {side === 'to' && (
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => handleToggleMapping(node.id)}
+                      onClick={e => e.stopPropagation()}
+                      className="rounded border-gray-300 text-blue-600 shrink-0"
+                    />
+                  )}
+                  {hasChildren ? (
+                    <span className="text-gray-400 text-[10px] w-3 shrink-0">{expanded ? '▾' : '▸'}</span>
+                  ) : (
+                    <span className="w-3 shrink-0" />
+                  )}
+                  <span className={`flex-1 text-xs truncate ${isSelected ? 'font-semibold text-indigo-700' : 'text-gray-700'}`}>{node.name}</span>
+                  {isMapped && <span className="text-[9px] font-bold text-indigo-500 shrink-0 ml-1">→</span>}
+                </div>
+                {expanded && hasChildren && node.children.map(child => (
+                  <MappingTreeNode key={child.id} node={child} side={side} />
+                ))}
+              </div>
+            );
+          }
+
+          return (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-3 bg-white rounded-xl border border-gray-200 px-4 py-3 shadow-sm">
+                <div className="flex-1">
+                  <p className="text-xs font-semibold text-gray-700">Apply Mappings to Cards</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">Populates the "New" tags on all cards based on defined mappings.</p>
+                </div>
+                {applyResult && (
+                  <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-lg font-medium">
+                    Updated {applyResult.updated} / {applyResult.total_cards} cards
+                  </span>
+                )}
+                <button
+                  onClick={handleApply}
+                  disabled={applyingMappings || mappings.length === 0}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 disabled:opacity-50 transition-colors duration-150 shrink-0"
+                >
+                  {applyingMappings ? 'Applying…' : `Apply (${mappings.length} mappings)`}
+                </button>
+              </div>
+
+              <div className="flex gap-3" style={{ height: '62vh' }}>
+                <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-gray-100 shrink-0">
+                    <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Current — select a topic</p>
+                  </div>
+                  <div className="overflow-y-auto flex-1 p-2">
+                    {fromTree.map(node => <MappingTreeNode key={node.id} node={node} side="from" />)}
+                  </div>
+                </div>
+
+                <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-gray-100 shrink-0 flex items-center gap-2">
+                    <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide flex-1">New — check to map</p>
+                    {selectedFromId == null && <span className="text-[11px] text-gray-300">← select a topic first</span>}
+                  </div>
+                  <div className={`overflow-y-auto flex-1 p-2 transition-opacity ${selectedFromId == null ? 'opacity-30 pointer-events-none' : ''}`}>
+                    {toTree.map(node => <MappingTreeNode key={node.id} node={node} side="to" />)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Confirm modals */}

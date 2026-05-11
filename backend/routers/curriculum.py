@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 from backend.db import get_db
-from backend.models import Curriculum, Section, Card, CardStatus
+from backend.models import Curriculum, CurriculumMapping, Section, Card, CardStatus
 
 router = APIRouter()
 
@@ -181,3 +181,91 @@ def delete_node(node_id: int, db: Session = Depends(get_db)):
     )
     db.delete(node)
     db.commit()
+
+
+# ── Curriculum Mappings ───────────────────────────────────────────────────────
+
+class MappingCreate(BaseModel):
+    from_node_id: int
+    to_node_id: int
+
+
+def mapping_to_dict(m: CurriculumMapping) -> dict:
+    return {
+        "id": m.id,
+        "from_node_id": m.from_node_id,
+        "to_node_id": m.to_node_id,
+        "from_path": m.from_node.path if m.from_node else None,
+        "to_path": m.to_node.path if m.to_node else None,
+        "created_at": m.created_at.isoformat() if m.created_at else None,
+    }
+
+
+@router.get("/mappings")
+def list_mappings(from_node_id: Optional[int] = None, db: Session = Depends(get_db)):
+    q = db.query(CurriculumMapping)
+    if from_node_id is not None:
+        q = q.filter(CurriculumMapping.from_node_id == from_node_id)
+    return [mapping_to_dict(m) for m in q.all()]
+
+
+@router.post("/mappings", status_code=201)
+def create_mapping(body: MappingCreate, db: Session = Depends(get_db)):
+    # Prevent duplicates
+    existing = db.query(CurriculumMapping).filter_by(
+        from_node_id=body.from_node_id, to_node_id=body.to_node_id
+    ).first()
+    if existing:
+        return mapping_to_dict(existing)
+    m = CurriculumMapping(from_node_id=body.from_node_id, to_node_id=body.to_node_id)
+    db.add(m)
+    db.commit()
+    db.refresh(m)
+    return mapping_to_dict(m)
+
+
+@router.delete("/mappings/{mapping_id}", status_code=204)
+def delete_mapping(mapping_id: int, db: Session = Depends(get_db)):
+    m = db.get(CurriculumMapping, mapping_id)
+    if not m:
+        raise HTTPException(404)
+    db.delete(m)
+    db.commit()
+
+
+@router.post("/mappings/apply")
+def apply_mappings(db: Session = Depends(get_db)):
+    """Walk all cards, find their v2 curriculum path in mappings, populate tags_mapped."""
+    mappings = db.query(CurriculumMapping).all()
+    if not mappings:
+        return {"updated": 0, "message": "No mappings defined"}
+
+    # Build: from_path -> list of to_path
+    from_to: dict[str, list[str]] = {}
+    for m in mappings:
+        from_node = db.get(Curriculum, m.from_node_id)
+        to_node = db.get(Curriculum, m.to_node_id)
+        if from_node and to_node:
+            from_to.setdefault(from_node.path, []).append(to_node.path)
+
+    updated = 0
+    cards = db.query(Card).filter(Card.tags.isnot(None)).all()
+    for card in cards:
+        if not card.tags:
+            continue
+        card_path = " > ".join(card.tags)
+        to_paths = from_to.get(card_path)
+        if to_paths:
+            # Union of all path segments across all mapped nodes (preserving order)
+            seen: set[str] = set()
+            segments: list[str] = []
+            for path in to_paths:
+                for seg in path.split(" > "):
+                    if seg not in seen:
+                        seen.add(seg)
+                        segments.append(seg)
+            card.tags_mapped = segments
+            updated += 1
+
+    db.commit()
+    return {"updated": updated, "total_cards": len(cards), "mappings_defined": len(mappings)}
