@@ -120,7 +120,7 @@ function AppInner() {
               onClick={() => setActiveTagSet('old')}
               className={`px-2 py-1 text-[11px] font-medium transition-colors duration-150 ${activeTagSet === 'old' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-400 hover:bg-gray-50'}`}
             >
-              PAEA
+              Current
             </button>
             <button
               onClick={() => setActiveTagSet('new')}
@@ -139,7 +139,7 @@ function AppInner() {
               onClick={() => setCurriculumVersion('v2')}
               className={`px-2 py-1 text-[11px] font-medium transition-colors duration-150 ${curriculumVersion === 'v2' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-400 hover:bg-gray-50'}`}
             >
-              PAEA
+              Current
             </button>
             <button
               onClick={() => setCurriculumVersion('v1')}
