@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import String, Text, Boolean, Integer, Float, JSON, ForeignKey, Enum, BigInteger, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -8,7 +8,7 @@ import re
 
 
 def utcnow():
-    return datetime.utcnow()
+    return datetime.now(timezone.utc)
 
 
 def slugify(text: str) -> str:

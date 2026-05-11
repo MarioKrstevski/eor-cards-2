@@ -919,75 +919,74 @@ export default function LibraryPage() {
 
         {/* Marks tab */}
         {activeTab === 'marks' && (
-          <div>
-            <div className="flex items-center gap-3 mb-4">
-              <h3 className="text-sm font-semibold text-gray-700">Review Mark Types</h3>
-              <p className="text-xs text-gray-400">Categories for flagging cards that need fixing</p>
+          <div className="max-w-md">
+            <div className="flex items-center gap-2 mb-3">
+              <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Review Mark Types</h3>
               <button
                 onClick={() => setAddingMark(true)}
-                className="ml-auto px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors duration-150"
+                className="ml-auto px-2.5 py-1 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors duration-150"
               >
-                + New Mark
+                + New
               </button>
             </div>
 
             {/* New mark form */}
             {addingMark && (
-              <div className="mb-4 bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-                <div className="flex items-center gap-3">
+              <div className="mb-3 bg-white rounded-lg border border-gray-200 p-3">
+                <div className="flex items-center gap-2">
                   <input
                     type="color"
                     value={newMarkColor}
                     onChange={(e) => setNewMarkColor(e.target.value)}
-                    className="h-8 w-8 rounded cursor-pointer border border-gray-200"
+                    className="h-7 w-7 rounded cursor-pointer border border-gray-200 shrink-0"
                   />
                   <input
-                    className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                    placeholder="Mark name (e.g. Too many clozes)"
+                    className="flex-1 text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    placeholder="e.g. Too many clozes"
                     value={newMarkName}
                     onChange={(e) => setNewMarkName(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') handleCreateMark(); if (e.key === 'Escape') { setAddingMark(false); setNewMarkName(''); } }}
                     autoFocus
                   />
-                  <button onClick={handleCreateMark} disabled={!newMarkName.trim()} className="px-3 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 disabled:opacity-50 transition-colors duration-150">Create</button>
-                  <button onClick={() => { setAddingMark(false); setNewMarkName(''); }} className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800">Cancel</button>
+                  <button onClick={handleCreateMark} disabled={!newMarkName.trim()} className="px-2.5 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 disabled:opacity-50 transition-colors duration-150">Create</button>
+                  <button onClick={() => { setAddingMark(false); setNewMarkName(''); }} className="text-xs text-gray-400 hover:text-gray-600 px-1">✕</button>
                 </div>
               </div>
             )}
 
             {/* Mark list */}
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               {markTypes.length === 0 && !addingMark && (
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 px-6 py-8 text-center text-sm text-gray-400">
-                  No mark types yet. Create one to start categorizing cards.
+                <div className="bg-white rounded-lg border border-gray-200 px-4 py-5 text-center text-xs text-gray-400">
+                  No mark types yet. Create one to start flagging cards.
                 </div>
               )}
               {markTypes.map((mark) => (
-                <div key={mark.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div key={mark.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
                   {editingMark?.id === mark.id ? (
-                    <div className="px-4 py-3 flex items-center gap-3">
+                    <div className="px-3 py-2 flex items-center gap-2">
                       <input
                         type="color"
                         value={editingMark.color}
                         onChange={(e) => setEditingMark({ ...editingMark, color: e.target.value })}
-                        className="h-8 w-8 rounded cursor-pointer border border-gray-200"
+                        className="h-7 w-7 rounded cursor-pointer border border-gray-200 shrink-0"
                       />
                       <input
-                        className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                        className="flex-1 text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-600"
                         value={editingMark.name}
                         onChange={(e) => setEditingMark({ ...editingMark, name: e.target.value })}
                         onKeyDown={(e) => { if (e.key === 'Enter') handleUpdateMark(); if (e.key === 'Escape') setEditingMark(null); }}
                         autoFocus
                       />
-                      <button onClick={handleUpdateMark} className="px-3 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 transition-colors duration-150">Save</button>
-                      <button onClick={() => setEditingMark(null)} className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800">Cancel</button>
+                      <button onClick={handleUpdateMark} className="px-2.5 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 transition-colors duration-150">Save</button>
+                      <button onClick={() => setEditingMark(null)} className="text-xs text-gray-400 hover:text-gray-600 px-1">✕</button>
                     </div>
                   ) : (
-                    <div className="px-4 py-3 flex items-center gap-3">
-                      <span className="w-4 h-4 rounded-full shrink-0" style={{ backgroundColor: mark.color }} />
-                      <span className="flex-1 text-sm font-medium text-gray-800">{mark.name}</span>
-                      <button onClick={() => setEditingMark(mark)} className="text-xs text-gray-400 hover:text-blue-600 transition-colors px-2 py-1">Edit</button>
-                      <button onClick={() => handleDeleteMark(mark.id)} className="text-xs text-gray-400 hover:text-red-600 transition-colors px-2 py-1">Delete</button>
+                    <div className="px-3 py-2 flex items-center gap-2.5">
+                      <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: mark.color }} />
+                      <span className="flex-1 text-xs font-medium text-gray-800">{mark.name}</span>
+                      <button onClick={() => setEditingMark(mark)} className="text-[10px] text-gray-400 hover:text-blue-600 transition-colors px-1.5 py-0.5">Edit</button>
+                      <button onClick={() => handleDeleteMark(mark.id)} className="text-[10px] text-gray-400 hover:text-red-600 transition-colors px-1.5 py-0.5">Delete</button>
                     </div>
                   )}
                 </div>

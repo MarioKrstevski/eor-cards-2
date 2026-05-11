@@ -301,8 +301,8 @@ export async function regenerateCard(
   return res.data;
 }
 
-export async function bulkMarkReviewed(cardIds: number[]): Promise<{ updated: number }> {
-  const res = await http.post<{ updated: number }>('/cards/bulk-review', { card_ids: cardIds });
+export async function bulkMarkReviewed(cardIds: number[], isReviewed = true): Promise<{ updated: number }> {
+  const res = await http.post<{ updated: number }>('/cards/bulk-review', { card_ids: cardIds, is_reviewed: isReviewed });
   return res.data;
 }
 

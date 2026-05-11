@@ -196,13 +196,14 @@ def reject_card(card_id: int, db: Session = Depends(get_db)):
 
 class BulkReviewRequest(BaseModel):
     card_ids: list[int]
+    is_reviewed: bool = True
 
 
 @router.post("/bulk-review")
 def bulk_mark_reviewed(body: BulkReviewRequest, db: Session = Depends(get_db)):
     if body.card_ids:
         db.query(Card).filter(Card.id.in_(body.card_ids)).update(
-            {"is_reviewed": True}, synchronize_session=False
+            {"is_reviewed": body.is_reviewed}, synchronize_session=False
         )
         db.commit()
     return {"updated": len(body.card_ids)}

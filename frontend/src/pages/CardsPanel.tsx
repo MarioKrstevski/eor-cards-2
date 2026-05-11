@@ -29,6 +29,7 @@ import type { Card, CardStatus, CostEstimate, ReviewMarkType } from '../types';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
 import AnkifyModal from '../components/AnkifyModal';
+import SectionViewer from './SectionViewer';
 import { useSettings } from '../context/SettingsContext';
 
 interface CardsPanelProps {
@@ -228,6 +229,7 @@ interface CardTileProps {
   onRegen: (id: number, prompt: string) => void;
   selected: boolean;
   onToggleSelect: (id: number) => void;
+  onViewSection: (sectionId: number) => void;
 }
 
 function CardTile({
@@ -248,6 +250,7 @@ function CardTile({
   onRegen,
   selected,
   onToggleSelect,
+  onViewSection,
 }: CardTileProps) {
   const isEditing = editingId === card.id;
   const isRejected = card.status === 'rejected';
@@ -345,6 +348,8 @@ function CardTile({
           )}
           {popover.kind === 'actions' && (
             <div className="fixed z-50 bg-white border border-gray-200 rounded-xl shadow-xl py-1 min-w-[160px]" style={{ top: popover.y, left: Math.max(8, popover.x - 120) }}>
+              <button onClick={() => { closePopover(); onViewSection(card.section_id); }} className="flex items-center gap-2 w-full px-3 py-2 text-xs text-blue-600 hover:bg-blue-50 transition-colors duration-150">View Source Section</button>
+              <div className="my-1 border-t border-gray-100" />
               <button onClick={() => { closePopover(); onEdit(card); }} className="flex items-center gap-2 w-full px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors duration-150">Edit</button>
               <button onClick={(e) => openPopover('regen', e)} className="flex items-center gap-2 w-full px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors duration-150">Regenerate</button>
               {isRejected ? (
@@ -458,7 +463,12 @@ export default function CardsPanel({
   const [showFixBatchModal, setShowFixBatchModal] = useState(false);
   const [fixBatchPrompt, setFixBatchPrompt] = useState('');
   const [fixBatchMarkId, setFixBatchMarkId] = useState<number | null>(null);
+  const [fixBatchCardIds, setFixBatchCardIds] = useState<number[]>([]);
   const [fixBatchLoading, setFixBatchLoading] = useState(false);
+  const [fixBatchStarted, setFixBatchStarted] = useState(false);
+
+  // ── Section viewer ───────────────────────────────────────────────────────
+  const [viewSectionId, setViewSectionId] = useState<number | null>(null);
 
   // ── Ankify modal ─────────────────────────────────────────────────────────
   const [ankifyOpen, setAnkifyOpen] = useState(false);
@@ -827,7 +837,7 @@ export default function CardsPanel({
       }),
       columnHelper.display({
         id: 'row_actions',
-        size: 88,
+        size: 112,
         enableResizing: false,
         header: () => null,
         cell: ({ row }) => {
@@ -879,6 +889,15 @@ export default function CardsPanel({
               >
                 <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+              <button
+                onClick={() => setViewSectionId(card.section_id)}
+                className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50"
+                title="View source section"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
               </button>
             </div>
@@ -967,18 +986,18 @@ export default function CardsPanel({
     }
   }, [selectedRuleSetId, selectedModel, sectionId, topicTreeId, topicPath, fetchCards, onReviewChange, refreshUsage]);
 
-  // Resume polling for active jobs on mount (after page refresh)
+  // Resume polling for active jobs on mount and when topic/section context changes (handles page refresh)
   useEffect(() => {
     if (jobRunning) return;
     getActiveJobs().then((jobs) => {
       const relevant = jobs.find(j =>
         (sectionId && j.section_id === sectionId) ||
-        (topicTreeId && j.topic_tree_id === topicTreeId) ||
-        (!sectionId && !topicTreeId)
+        (topicTreeId && j.topic_tree_id === topicTreeId)
       );
       if (!relevant) return;
       setJobRunning(true);
       setJobProgress({ processed: relevant.processed_sections, total: relevant.total_sections });
+      if (intervalRef.current) clearInterval(intervalRef.current);
       intervalRef.current = setInterval(async () => {
         try {
           const job = await getGenerationJob(relevant.id);
@@ -999,7 +1018,7 @@ export default function CardsPanel({
         }
       }, 1500);
     }).catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sectionId, topicTreeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cleanup interval on unmount
   useEffect(() => {
@@ -1074,10 +1093,10 @@ export default function CardsPanel({
 
   // ── Bulk actions ─────────────────────────────────────────────────────────
 
-  const handleBulkReview = useCallback(async () => {
+  const handleBulkReview = useCallback(async (markAs: boolean) => {
     if (selectedIds.size === 0) return;
     try {
-      await bulkMarkReviewed([...selectedIds]);
+      await bulkMarkReviewed([...selectedIds], markAs);
       setSelectedIds(new Set());
       fetchCards(sectionId, topicPath, true);
       onReviewChange?.();
@@ -1100,37 +1119,44 @@ export default function CardsPanel({
 
   const handleBulkMark = useCallback(async (markTypeId: number | null) => {
     if (selectedIds.size === 0) return;
+    const cardIds = [...selectedIds];
     try {
-      await bulkMarkCards({ card_ids: [...selectedIds], mark_type_id: markTypeId });
-      setSelectedIds(new Set());
+      await bulkMarkCards({ card_ids: cardIds, mark_type_id: markTypeId });
       setShowMarkMenu(false);
       fetchCards(sectionId, topicPath, true);
       onReviewChange?.();
+      // If marking with a real type, immediately open the fix batch modal
+      if (markTypeId !== null) {
+        setFixBatchCardIds(cardIds);
+        setFixBatchMarkId(markTypeId);
+        setFixBatchPrompt('');
+        setFixBatchStarted(false);
+        setShowFixBatchModal(true);
+      }
+      setSelectedIds(new Set());
     } catch {
       setActionError('Mark failed');
     }
   }, [selectedIds, fetchCards, sectionId, topicPath, onReviewChange]);
 
   const handleCreateFixBatch = useCallback(async () => {
-    if (selectedIds.size === 0 || !fixBatchMarkId || !fixBatchPrompt.trim()) return;
+    if (fixBatchCardIds.length === 0 || !fixBatchMarkId || !fixBatchPrompt.trim()) return;
     setFixBatchLoading(true);
     try {
       await createFixBatch({
         mark_type_id: fixBatchMarkId,
-        card_ids: [...selectedIds],
+        card_ids: fixBatchCardIds,
         prompt: fixBatchPrompt.trim(),
         model: selectedModel,
       });
-      setShowFixBatchModal(false);
-      setFixBatchPrompt('');
-      setSelectedIds(new Set());
+      setFixBatchStarted(true);
       fetchCards(sectionId, topicPath, true);
     } catch {
       setActionError('Failed to create fix batch');
     } finally {
       setFixBatchLoading(false);
     }
-  }, [selectedIds, fixBatchMarkId, fixBatchPrompt, selectedModel, fetchCards, sectionId, topicPath]);
+  }, [fixBatchCardIds, fixBatchMarkId, fixBatchPrompt, selectedModel, fetchCards, sectionId, topicPath]);
 
   const handleGenSupplemental = useCallback(async () => {
     if (selectedIds.size === 0 || !selectedRuleSetId || !selectedModel) return;
@@ -1374,12 +1400,26 @@ export default function CardsPanel({
               AI Fix Batch
             </button>
           )}
-          <button
-            onClick={handleBulkReview}
-            className="px-2.5 py-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors duration-150"
-          >
-            Mark Reviewed
-          </button>
+          {(() => {
+            const selectedCards = cards.filter(c => selectedIds.has(c.id));
+            const allReviewed = selectedCards.length > 0 && selectedCards.every(c => c.is_reviewed);
+            return allReviewed ? (
+              <button
+                onClick={() => handleBulkReview(false)}
+                className="px-2.5 py-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
+                title="Set selected cards back to unreviewed"
+              >
+                Unmark Reviewed
+              </button>
+            ) : (
+              <button
+                onClick={() => handleBulkReview(true)}
+                className="px-2.5 py-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors duration-150"
+              >
+                Mark Reviewed
+              </button>
+            );
+          })()}
           <button
             onClick={handleGenSupplemental}
             disabled={jobRunning || !selectedRuleSetId}
@@ -1474,6 +1514,7 @@ export default function CardsPanel({
                     return next;
                   });
                 }}
+                onViewSection={setViewSectionId}
               />
             ))}
           </div>
@@ -1603,48 +1644,78 @@ export default function CardsPanel({
 
       {/* Create Fix Batch modal */}
       {showFixBatchModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowFixBatchModal(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => !fixBatchStarted && setShowFixBatchModal(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-[520px] overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h2 className="text-sm font-bold text-gray-900">Create AI Fix Batch</h2>
-              <p className="text-xs text-gray-500 mt-0.5">{selectedIds.size} card{selectedIds.size !== 1 ? 's' : ''} selected · AI will fix each card based on your instructions</p>
-            </div>
-            <div className="px-6 py-4 space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Issue type</label>
-                <select
-                  value={fixBatchMarkId ?? ''}
-                  onChange={e => setFixBatchMarkId(e.target.value ? Number(e.target.value) : null)}
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">— select a mark type —</option>
-                  {markTypes.map(m => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Fix instructions</label>
-                <textarea
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 min-h-[120px] resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Describe the fix. E.g. 'Reduce to at most 2 cloze deletions per card. Keep the most important concept as the cloze.'"
-                  value={fixBatchPrompt}
-                  onChange={e => setFixBatchPrompt(e.target.value)}
-                />
-              </div>
-            </div>
-            <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
-              <button onClick={() => setShowFixBatchModal(false)} className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
-              <button
-                onClick={handleCreateFixBatch}
-                disabled={!fixBatchMarkId || !fixBatchPrompt.trim() || fixBatchLoading}
-                className="px-4 py-1.5 text-xs font-medium text-white bg-purple-700 rounded-lg hover:bg-purple-800 disabled:opacity-50"
-              >
-                {fixBatchLoading ? 'Creating...' : 'Start AI Fix'}
-              </button>
-            </div>
+            {fixBatchStarted ? (
+              <>
+                <div className="px-6 py-8 text-center">
+                  <div className="w-10 h-10 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-3">
+                    <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                  <h2 className="text-sm font-bold text-gray-900 mb-1">AI Fix Running</h2>
+                  <p className="text-xs text-gray-500">
+                    {fixBatchCardIds.length} card{fixBatchCardIds.length !== 1 ? 's' : ''} are being reviewed by AI.
+                    Go to Proposals to review results when done.
+                  </p>
+                </div>
+                <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
+                  <button onClick={() => setShowFixBatchModal(false)} className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">Close</button>
+                  <a href="/proposals" className="px-4 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 inline-flex items-center" onClick={() => setShowFixBatchModal(false)}>
+                    View Proposals →
+                  </a>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="px-6 py-4 border-b border-gray-200">
+                  <h2 className="text-sm font-bold text-gray-900">Start AI Fix Batch</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">{fixBatchCardIds.length} card{fixBatchCardIds.length !== 1 ? 's' : ''} · AI will review and fix each card based on your instructions</p>
+                </div>
+                <div className="px-6 py-4 space-y-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Issue type</label>
+                    <select
+                      value={fixBatchMarkId ?? ''}
+                      onChange={e => setFixBatchMarkId(e.target.value ? Number(e.target.value) : null)}
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">— select a mark type —</option>
+                      {markTypes.map(m => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Fix instructions</label>
+                    <textarea
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 min-h-[120px] resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Describe the fix. E.g. 'Reduce to at most 2 cloze deletions per card. Keep the most important concept as the cloze.'"
+                      value={fixBatchPrompt}
+                      onChange={e => setFixBatchPrompt(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                </div>
+                <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
+                  <button onClick={() => setShowFixBatchModal(false)} className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
+                  <button
+                    onClick={handleCreateFixBatch}
+                    disabled={!fixBatchMarkId || !fixBatchPrompt.trim() || fixBatchLoading}
+                    className="px-4 py-1.5 text-xs font-medium text-white bg-purple-700 rounded-lg hover:bg-purple-800 disabled:opacity-50"
+                  >
+                    {fixBatchLoading ? 'Starting...' : 'Start AI Fix'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
+      )}
+
+      {viewSectionId != null && (
+        <SectionViewer sectionId={viewSectionId} onClose={() => setViewSectionId(null)} />
       )}
     </div>
   );
