@@ -15,6 +15,8 @@ interface Settings {
   setTeachingCaseRuleSetId: (id: number | null) => void;
   curriculumVersion: string;
   setCurriculumVersion: (v: string) => void;
+  activeTagSet: 'old' | 'new';
+  setActiveTagSet: (v: 'old' | 'new') => void;
 }
 
 const defaults: Settings = {
@@ -30,8 +32,10 @@ const defaults: Settings = {
   setVignetteRuleSetId: () => {},
   teachingCaseRuleSetId: null,
   setTeachingCaseRuleSetId: () => {},
-  curriculumVersion: 'v1',
+  curriculumVersion: 'v2',
   setCurriculumVersion: () => {},
+  activeTagSet: 'old',
+  setActiveTagSet: () => {},
 };
 
 export const SettingsContext = createContext<Settings>(defaults);
@@ -59,7 +63,10 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     return v ? Number(v) : null;
   });
   const [curriculumVersion, setCurriculumVersionState] = useState<string>(
-    () => localStorage.getItem('settings_curriculum_version') || 'v1'
+    () => localStorage.getItem('settings_curriculum_version') || 'v2'
+  );
+  const [activeTagSet, setActiveTagSetState] = useState<'old' | 'new'>(
+    () => (localStorage.getItem('settings_active_tag_set') as 'old' | 'new') || 'old'
   );
 
   function setSelectedModel(m: string) {
@@ -100,6 +107,11 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('settings_curriculum_version', v);
   }
 
+  function setActiveTagSet(v: 'old' | 'new') {
+    setActiveTagSetState(v);
+    localStorage.setItem('settings_active_tag_set', v);
+  }
+
   return (
     <SettingsContext.Provider
       value={{
@@ -110,6 +122,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
         vignetteRuleSetId, setVignetteRuleSetId,
         teachingCaseRuleSetId, setTeachingCaseRuleSetId,
         curriculumVersion, setCurriculumVersion,
+        activeTagSet, setActiveTagSet,
       }}
     >
       {children}

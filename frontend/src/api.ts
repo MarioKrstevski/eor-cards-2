@@ -270,6 +270,7 @@ export async function updateCard(
   params: {
     front_html?: string;
     tags?: string[];
+    tags_mapped?: string[];
     extra?: string | null;
     vignette?: string | null;
     teaching_case?: string | null;

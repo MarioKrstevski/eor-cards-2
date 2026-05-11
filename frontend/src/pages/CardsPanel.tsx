@@ -352,6 +352,8 @@ function CardTile({
   onToggleSelect,
   onViewSection,
 }: CardTileProps) {
+  const { activeTagSet } = useSettings();
+  const activeTags = activeTagSet === 'old' ? card.tags : (card.tags_mapped ?? []);
   const isEditing = editingId === card.id;
   const isRejected = card.status === 'rejected';
   type PopoverKind = 'tags' | 'actions' | 'regen';
@@ -406,15 +408,15 @@ function CardTile({
       <div className="border-t border-gray-100 px-3 py-2 bg-gray-50/30 rounded-b-xl flex items-center gap-1.5">
         <span className={`text-xs tabular-nums ${!card.is_reviewed ? 'font-bold text-gray-900' : 'font-normal text-gray-400'}`}>#{cardIndex}</span>
         <div className="flex-1 overflow-hidden">
-          {card.tags.length === 0 ? (
+          {activeTags.length === 0 ? (
             <span className="text-gray-300 text-xs">--</span>
           ) : (
             <button
               onClick={(e) => openPopover('tags', e)}
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100 transition-colors duration-150"
             >
-              <span className="truncate max-w-[80px]">{card.tags[0]}</span>
-              {card.tags.length > 1 && <span className="bg-blue-200 text-blue-700 rounded px-1 text-[10px] font-semibold">+{card.tags.length - 1}</span>}
+              <span className="truncate max-w-[80px]">{activeTags[0]}</span>
+              {activeTags.length > 1 && <span className="bg-blue-200 text-blue-700 rounded px-1 text-[10px] font-semibold">+{activeTags.length - 1}</span>}
             </button>
           )}
         </div>
@@ -440,7 +442,7 @@ function CardTile({
             <div className="fixed z-50 bg-white border border-gray-200 rounded-xl shadow-xl p-2.5 min-w-[160px] max-w-[240px]" style={{ top: popover.y, left: popover.x }}>
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5 px-1">Tags</p>
               <div className="flex flex-wrap gap-1">
-                {card.tags.map((tag) => (
+                {activeTags.map((tag) => (
                   <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded text-[11px] bg-blue-50 text-blue-700 border border-blue-200 font-medium">{tag}</span>
                 ))}
               </div>
@@ -516,7 +518,7 @@ export default function CardsPanel({
   refreshUsage,
   onReviewChange,
 }: CardsPanelProps) {
-  const { selectedModel, selectedRuleSetId } = useSettings();
+  const { selectedModel, selectedRuleSetId, activeTagSet } = useSettings();
 
   // ── Generation controls ──────────────────────────────────────────────────
   const [estimate, setEstimate] = useState<CostEstimate | null>(null);
@@ -611,7 +613,8 @@ export default function CardsPanel({
     const q = searchQ.toLowerCase();
     return cards.filter(c =>
       (c.front_text ?? stripHtml(c.front_html)).toLowerCase().includes(q) ||
-      c.tags.some(t => t.toLowerCase().includes(q))
+      c.tags.some(t => t.toLowerCase().includes(q)) ||
+      (c.tags_mapped ?? []).some(t => t.toLowerCase().includes(q))
     );
   }, [cards, searchQ]);
 
@@ -843,11 +846,12 @@ export default function CardsPanel({
         cell: (info) => {
           const row = info.row;
           const cellId = `${row.index}:tags`;
+          const activeTags = activeTagSet === 'old' ? row.original.tags : (row.original.tags_mapped ?? []);
           return (
             <TagsCell
-              tags={info.getValue()}
+              tags={activeTags}
               cellId={cellId}
-              onSave={(newTags) => handleCellSave(row.original.id, { tags: newTags })}
+              onSave={(newTags) => handleCellSave(row.original.id, activeTagSet === 'old' ? { tags: newTags } : { tags_mapped: newTags })}
               onSelect={handleCellSelect}
               onNavigate={(dir) => handleCellNavigate(row.index, 'tags', dir)}
             />
@@ -1006,7 +1010,7 @@ export default function CardsPanel({
       }),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filteredCards.length, selectedIds, handleCellSelect, handleCellNavigate, handleCellSave, showAnkiFormat, sectionId, topicPath, onReviewChange, fetchCards, markTypes]
+    [filteredCards.length, selectedIds, handleCellSelect, handleCellNavigate, handleCellSave, showAnkiFormat, sectionId, topicPath, onReviewChange, fetchCards, markTypes, activeTagSet]
   );
 
   const pageCount = Math.ceil(totalCards / pagination.pageSize);
@@ -1132,19 +1136,21 @@ export default function CardsPanel({
   const handleEdit = useCallback((card: Card) => {
     setEditingId(card.id);
     setEditFrontHtml(card.front_html);
-    setEditTags(card.tags.join(', '));
-  }, []);
+    const tagsForEdit = activeTagSet === 'old' ? card.tags : (card.tags_mapped ?? []);
+    setEditTags(tagsForEdit.join(', '));
+  }, [activeTagSet]);
 
   const handleSaveEdit = useCallback(async (id: number) => {
     try {
       const tags = editTags.split(',').map((t) => t.trim()).filter(Boolean);
-      await updateCard(id, { front_html: editFrontHtml, tags });
+      const tagUpdate = activeTagSet === 'old' ? { tags } : { tags_mapped: tags };
+      await updateCard(id, { front_html: editFrontHtml, ...tagUpdate });
       setEditingId(null);
       fetchCards(sectionId, topicPath, true);
     } catch {
       setActionError('Save failed');
     }
-  }, [editFrontHtml, editTags, fetchCards, sectionId, topicPath]);
+  }, [activeTagSet, editFrontHtml, editTags, fetchCards, sectionId, topicPath]);
 
   const handleReject = useCallback(async (id: number) => {
     try {

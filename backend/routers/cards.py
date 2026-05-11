@@ -22,6 +22,7 @@ class RegenerateCardRequest(BaseModel):
 class CardPatch(BaseModel):
     front_html: Optional[str] = None
     tags: Optional[list[str]] = None
+    tags_mapped: Optional[list[str]] = None
     extra: Optional[str] = None
     vignette: Optional[str] = None
     teaching_case: Optional[str] = None
@@ -45,6 +46,7 @@ def card_to_dict(card: Card, db: Session | None = None) -> dict:
         "front_html": card.front_html,
         "front_text": card.front_text,
         "tags": card.tags,
+        "tags_mapped": card.tags_mapped,
         "extra": card.extra,
         "vignette": card.vignette,
         "teaching_case": card.teaching_case,
@@ -117,6 +119,8 @@ def patch_card(card_id: int, body: CardPatch, db: Session = Depends(get_db)):
         card.front_text = strip_card_html(body.front_html)
     if body.tags is not None:
         card.tags = body.tags
+    if body.tags_mapped is not None:
+        card.tags_mapped = body.tags_mapped
     if body.extra is not None:
         card.extra = body.extra
     if body.vignette is not None:

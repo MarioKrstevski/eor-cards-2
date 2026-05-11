@@ -81,6 +81,7 @@ export interface Card {
   front_html: string;
   front_text: string;
   tags: string[];
+  tags_mapped: string[] | null;
   extra: string | null;
   vignette: string | null;
   teaching_case: string | null;

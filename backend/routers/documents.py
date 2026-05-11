@@ -338,7 +338,7 @@ def delete_topic_tree(topic_tree_id: int, db: Session = Depends(get_db)):
 def ai_detect_headings(
     topic_tree_id: int,
     background_tasks: BackgroundTasks,
-    curriculum_version: str = "v1",
+    curriculum_version: str = "v2",
     db: Session = Depends(get_db),
 ):
     """Re-process the latest upload using AI-detected headings.

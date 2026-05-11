@@ -152,6 +152,7 @@ class Card(Base):
     front_html: Mapped[str] = mapped_column(Text)
     front_text: Mapped[str] = mapped_column(Text)
     tags: Mapped[list] = mapped_column(JSON, default=list)
+    tags_mapped: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # new curriculum tags after mapping
     extra: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     vignette: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     teaching_case: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
