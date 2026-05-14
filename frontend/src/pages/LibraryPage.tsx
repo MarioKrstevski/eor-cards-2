@@ -29,6 +29,8 @@ import {
   createCurriculumMapping,
   deleteCurriculumMapping,
   applyCurriculumMappings,
+  getPresentations,
+  deletePresentation,
 } from '../api';
 import type { CurriculumMapping, CurriculumNode, ReviewMarkType, RuleSet, TopicCoverageStats, TopicTree } from '../types';
 import { useSettings } from '../context/SettingsContext';
@@ -211,7 +213,7 @@ function TopicNode({ node, depth, cardCounts, editMode, onRefresh, onDeleteReque
 
 export default function LibraryPage() {
   const { curriculumVersion } = useSettings();
-  const [activeTab, setActiveTab] = useState<'topics' | 'documents' | 'rules' | 'marks' | 'mapping'>('topics');
+  const [activeTab, setActiveTab] = useState<'topics' | 'documents' | 'rules' | 'marks' | 'mapping' | 'presentations'>('topics');
 
   // Curriculum
   const [curriculum, setCurriculum] = useState<CurriculumNode[]>([]);
@@ -272,7 +274,13 @@ export default function LibraryPage() {
   const [newRuleName, setNewRuleName] = useState('');
   const [newRuleContent, setNewRuleContent] = useState('');
   const [newRuleType, setNewRuleType] = useState<'generation' | 'vignette'>('generation');
+  const [newRuleCardVersion, setNewRuleCardVersion] = useState<'base' | 'v1' | 'v2' | 'v3'>('base');
   const [showNewRuleForm, setShowNewRuleForm] = useState(false);
+
+  // Presentations
+  const [presentations, setPresentations] = useState<import('../types').Presentation[]>([]);
+  const [presentationsLoading, setPresentationsLoading] = useState(false);
+  const [confirmDeletePresentation, setConfirmDeletePresentation] = useState<{ id: number; name: string } | null>(null);
 
   // Load data
   const loadCurriculum = useCallback(async () => {
@@ -304,11 +312,24 @@ export default function LibraryPage() {
     } catch { /* ignore */ }
   }, []);
 
+  const loadPresentations = useCallback(async () => {
+    setPresentationsLoading(true);
+    try {
+      const list = await getPresentations();
+      setPresentations(list);
+    } catch { /* ignore */ }
+    finally { setPresentationsLoading(false); }
+  }, []);
+
   useEffect(() => {
     loadCurriculum();
     loadTopicTrees();
     loadRuleSets();
   }, [loadCurriculum, loadTopicTrees, loadRuleSets]);
+
+  useEffect(() => {
+    if (activeTab === 'presentations') loadPresentations();
+  }, [activeTab, loadPresentations]);
 
   useEffect(() => { loadMarkTypes(); }, [loadMarkTypes]);
 
@@ -479,22 +500,30 @@ export default function LibraryPage() {
   const handleCreateRule = useCallback(async () => {
     if (!newRuleName.trim() || !newRuleContent.trim()) return;
     try {
-      await createRuleSet({ name: newRuleName.trim(), content: newRuleContent.trim(), rule_type: newRuleType });
+      await createRuleSet({ name: newRuleName.trim(), content: newRuleContent.trim(), rule_type: newRuleType, card_version: newRuleCardVersion });
       setNewRuleName('');
       setNewRuleContent('');
       setShowNewRuleForm(false);
       loadRuleSets();
     } catch { /* ignore */ }
-  }, [newRuleName, newRuleContent, newRuleType, loadRuleSets]);
+  }, [newRuleName, newRuleContent, newRuleType, newRuleCardVersion, loadRuleSets]);
 
   const handleUpdateRule = useCallback(async () => {
     if (!editingRule) return;
     try {
-      await updateRuleSet(editingRule.id, { name: editingRule.name, content: editingRule.content });
+      await updateRuleSet(editingRule.id, { name: editingRule.name, content: editingRule.content, card_version: editingRule.card_version });
       setEditingRule(null);
       loadRuleSets();
     } catch { /* ignore */ }
   }, [editingRule, loadRuleSets]);
+
+  const handleDeletePresentation = useCallback(async (id: number) => {
+    try {
+      await deletePresentation(id);
+      loadPresentations();
+    } catch { /* ignore */ }
+    setConfirmDeletePresentation(null);
+  }, [loadPresentations]);
 
   const handleDeleteRule = useCallback(async (id: number) => {
     try {
@@ -544,7 +573,7 @@ export default function LibraryPage() {
       <div className="max-w-6xl mx-auto px-6 py-6">
         {/* Tab bar */}
         <div className="flex items-center gap-1 mb-6 bg-white rounded-xl p-1 shadow-sm border border-gray-200 w-fit">
-          {(['topics', 'documents', 'rules', 'marks', 'mapping'] as const).map((tab) => (
+          {(['topics', 'documents', 'rules', 'marks', 'mapping', 'presentations'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -554,7 +583,7 @@ export default function LibraryPage() {
                   : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
               }`}
             >
-              {tab === 'topics' ? 'Topics' : tab === 'documents' ? 'Documents' : tab === 'rules' ? 'Rules' : tab === 'marks' ? 'Marks' : 'Mapping'}
+              {tab === 'topics' ? 'Topics' : tab === 'documents' ? 'Documents' : tab === 'rules' ? 'Rules' : tab === 'marks' ? 'Marks' : tab === 'mapping' ? 'Mapping' : 'Presentations'}
             </button>
           ))}
         </div>
@@ -876,6 +905,19 @@ export default function LibraryPage() {
                     <option value="generation">Generation</option>
                     <option value="vignette">Vignette + Teaching Case</option>
                   </select>
+                  {newRuleType === 'generation' && (
+                    <select
+                      value={newRuleCardVersion}
+                      onChange={(e) => setNewRuleCardVersion(e.target.value as 'base' | 'v1' | 'v2' | 'v3')}
+                      className="text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      title="Which card version slot this rule set generates into"
+                    >
+                      <option value="base">Base</option>
+                      <option value="v1">V1</option>
+                      <option value="v2">V2</option>
+                      <option value="v3">V3</option>
+                    </select>
+                  )}
                 </div>
                 <textarea
                   className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 min-h-[120px] resize-y focus:outline-none focus:ring-2 focus:ring-blue-600 transition-colors duration-150"
@@ -896,11 +938,26 @@ export default function LibraryPage() {
                 <div key={rule.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                   {editingRule?.id === rule.id ? (
                     <div className="p-4">
-                      <input
-                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 mb-3 focus:outline-none focus:ring-2 focus:ring-blue-600 transition-colors duration-150"
-                        value={editingRule.name}
-                        onChange={(e) => setEditingRule({ ...editingRule, name: e.target.value })}
-                      />
+                      <div className="flex items-center gap-3 mb-3">
+                        <input
+                          className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600 transition-colors duration-150"
+                          value={editingRule.name}
+                          onChange={(e) => setEditingRule({ ...editingRule, name: e.target.value })}
+                        />
+                        {editingRule.rule_type === 'generation' && (
+                          <select
+                            value={editingRule.card_version}
+                            onChange={(e) => setEditingRule({ ...editingRule, card_version: e.target.value as 'base' | 'v1' | 'v2' | 'v3' })}
+                            className="text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                            title="Which card version slot this rule set generates into"
+                          >
+                            <option value="base">Base</option>
+                            <option value="v1">V1</option>
+                            <option value="v2">V2</option>
+                            <option value="v3">V3</option>
+                          </select>
+                        )}
+                      </div>
                       <textarea
                         className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 min-h-[200px] resize-y focus:outline-none focus:ring-2 focus:ring-blue-600 transition-colors duration-150"
                         value={editingRule.content}
@@ -917,6 +974,11 @@ export default function LibraryPage() {
                         <div className="flex items-center gap-2">
                           <h4 className="text-sm font-medium text-gray-900">{rule.name}</h4>
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 font-medium">{rule.rule_type}</span>
+                          {rule.rule_type === 'generation' && (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${rule.card_version === 'base' ? 'bg-gray-50 text-gray-400' : 'bg-violet-50 text-violet-600'}`}>
+                              {rule.card_version === 'base' ? 'base' : rule.card_version.toUpperCase()}
+                            </span>
+                          )}
                           {rule.is_default && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-600 font-medium">Default</span>
                           )}
@@ -1139,9 +1201,84 @@ export default function LibraryPage() {
             </div>
           );
         })()}
+
+        {/* Presentations tab */}
+        {activeTab === 'presentations' && (
+          <div>
+            <div className="flex items-center gap-3 mb-4">
+              <h3 className="text-sm font-semibold text-gray-700">Ankify Presentations</h3>
+              <button
+                onClick={loadPresentations}
+                className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+              >
+                Refresh
+              </button>
+            </div>
+            {presentationsLoading ? (
+              <p className="text-xs text-gray-400">Loading...</p>
+            ) : presentations.length === 0 ? (
+              <div className="text-center py-12 text-gray-400">
+                <p className="text-sm">No presentations yet.</p>
+                <p className="text-xs mt-1">Create one from the Workspace by selecting cards and clicking "Save Presentation".</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {presentations.map((p) => (
+                  <div key={p.id} className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-gray-900 truncate">{p.name}</span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${p.card_version === 'base' ? 'bg-gray-50 text-gray-400' : 'bg-violet-50 text-violet-600'}`}>
+                          {p.card_version === 'base' ? 'base' : p.card_version.toUpperCase()}
+                        </span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 font-medium">
+                          {p.source_type === 'topic' ? 'full topic' : `${(p.card_ids ?? []).length} cards`}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-400 mt-0.5 font-mono">/anki/{p.slug}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        onClick={() => window.open(`/anki/${p.slug}`, '_blank')}
+                        className="px-2.5 py-1 text-xs font-medium text-violet-700 bg-violet-50 border border-violet-200 rounded-lg hover:bg-violet-100 transition-colors duration-150"
+                      >
+                        Open
+                      </button>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(`${window.location.origin}/anki/${p.slug}`);
+                        }}
+                        className="px-2.5 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+                        title="Copy link"
+                      >
+                        Copy Link
+                      </button>
+                      <button
+                        onClick={() => setConfirmDeletePresentation({ id: p.id, name: p.name })}
+                        className="px-2.5 py-1 text-xs font-medium text-red-500 hover:bg-red-50 rounded-lg transition-colors duration-150"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Confirm modals */}
+      {confirmDeletePresentation && (
+        <ConfirmModal
+          title="Delete Presentation"
+          message={`Delete "${confirmDeletePresentation.name}"? The link will stop working.`}
+          confirmLabel="Delete"
+          variant="danger"
+          onConfirm={() => handleDeletePresentation(confirmDeletePresentation.id)}
+          onCancel={() => setConfirmDeletePresentation(null)}
+        />
+      )}
       {confirmDeleteNode && (
         <ConfirmModal
           title="Delete Topic"

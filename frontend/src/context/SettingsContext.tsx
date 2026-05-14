@@ -17,6 +17,8 @@ interface Settings {
   setCurriculumVersion: (v: string) => void;
   activeTagSet: 'old' | 'new';
   setActiveTagSet: (v: 'old' | 'new') => void;
+  activeCardVersion: 'base' | 'v1' | 'v2' | 'v3';
+  setActiveCardVersion: (v: 'base' | 'v1' | 'v2' | 'v3') => void;
 }
 
 const defaults: Settings = {
@@ -36,6 +38,8 @@ const defaults: Settings = {
   setCurriculumVersion: () => {},
   activeTagSet: 'old',
   setActiveTagSet: () => {},
+  activeCardVersion: 'base',
+  setActiveCardVersion: () => {},
 };
 
 export const SettingsContext = createContext<Settings>(defaults);
@@ -67,6 +71,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   );
   const [activeTagSet, setActiveTagSetState] = useState<'old' | 'new'>(
     () => (localStorage.getItem('settings_active_tag_set') as 'old' | 'new') || 'old'
+  );
+  const [activeCardVersion, setActiveCardVersionState] = useState<'base' | 'v1' | 'v2' | 'v3'>(
+    () => (localStorage.getItem('settings_active_card_version') as 'base' | 'v1' | 'v2' | 'v3') || 'base'
   );
 
   function setSelectedModel(m: string) {
@@ -112,6 +119,11 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('settings_active_tag_set', v);
   }
 
+  function setActiveCardVersion(v: 'base' | 'v1' | 'v2' | 'v3') {
+    setActiveCardVersionState(v);
+    localStorage.setItem('settings_active_card_version', v);
+  }
+
   return (
     <SettingsContext.Provider
       value={{
@@ -123,6 +135,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
         teachingCaseRuleSetId, setTeachingCaseRuleSetId,
         curriculumVersion, setCurriculumVersion,
         activeTagSet, setActiveTagSet,
+        activeCardVersion, setActiveCardVersion,
       }}
     >
       {children}

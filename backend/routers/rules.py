@@ -13,11 +13,13 @@ class RuleSetCreate(BaseModel):
     content: str
     is_default: bool = False
     rule_type: str = "generation"
+    card_version: str = "base"
 
 
 class RuleSetUpdate(BaseModel):
     name: Optional[str] = None
     content: Optional[str] = None
+    card_version: Optional[str] = None
 
 
 def ruleset_to_dict(rs: RuleSet) -> dict:
@@ -27,6 +29,7 @@ def ruleset_to_dict(rs: RuleSet) -> dict:
         "content": rs.content,
         "is_default": rs.is_default,
         "rule_type": rs.rule_type,
+        "card_version": rs.card_version,
         "created_at": rs.created_at.isoformat() if rs.created_at else None,
     }
 
@@ -41,7 +44,7 @@ def list_rules(rule_type: str = None, db: Session = Depends(get_db)):
 
 @router.post("", status_code=201)
 def create_rule_set(body: RuleSetCreate, db: Session = Depends(get_db)):
-    rs = RuleSet(name=body.name, content=body.content, is_default=False, rule_type=body.rule_type)
+    rs = RuleSet(name=body.name, content=body.content, is_default=False, rule_type=body.rule_type, card_version=body.card_version)
     db.add(rs)
     db.commit()
     db.refresh(rs)
@@ -57,6 +60,8 @@ def update_rule_set(rs_id: int, body: RuleSetUpdate, db: Session = Depends(get_d
         rs.name = body.name
     if body.content is not None:
         rs.content = body.content
+    if body.card_version is not None:
+        rs.card_version = body.card_version
     db.commit()
     db.refresh(rs)
     return ruleset_to_dict(rs)

@@ -88,6 +88,9 @@ export interface Card {
   section_id: number;
   card_number: number;
   front_html: string;
+  front_html_v1: string | null;
+  front_html_v2: string | null;
+  front_html_v3: string | null;
   front_text: string;
   tags: string[];
   tags_mapped: string[] | null;
@@ -117,9 +120,21 @@ export interface RuleSet {
   id: number;
   name: string;
   rule_type: 'generation' | 'vignette';
+  card_version: 'base' | 'v1' | 'v2' | 'v3';
   content: string;
   is_default: boolean;
   created_at?: string;
+}
+
+export interface Presentation {
+  id: number;
+  name: string;
+  slug: string;
+  card_version: 'base' | 'v1' | 'v2' | 'v3';
+  source_type: 'cards' | 'topic';
+  card_ids: number[] | null;
+  topic_tree_id: number | null;
+  created_at: string;
 }
 
 export interface Model {

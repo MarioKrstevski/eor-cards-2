@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from backend.db import engine, Base
-from backend.routers import documents, sections, cards, generate, curriculum, rules, export, usage, review_marks, fix_batches
+from backend.routers import documents, sections, cards, generate, curriculum, rules, export, usage, review_marks, fix_batches, presentations
 from backend import models  # noqa — ensure all models registered
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -77,6 +77,10 @@ def _migrate_db():
         for col_sql in [
             "ALTER TABLE cards ADD COLUMN review_mark_id INTEGER REFERENCES review_mark_types(id)",
             "ALTER TABLE cards ADD COLUMN in_fix_batch BOOLEAN NOT NULL DEFAULT 0",
+            "ALTER TABLE cards ADD COLUMN front_html_v1 TEXT",
+            "ALTER TABLE cards ADD COLUMN front_html_v2 TEXT",
+            "ALTER TABLE cards ADD COLUMN front_html_v3 TEXT",
+            "ALTER TABLE rule_sets ADD COLUMN card_version VARCHAR(10) NOT NULL DEFAULT 'base'",
         ]:
             try:
                 conn.execute(text(col_sql))
@@ -106,6 +110,7 @@ app.include_router(export.router, prefix="/api/export", tags=["export"])
 app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
 app.include_router(review_marks.router, prefix="/api/review-marks", tags=["review_marks"])
 app.include_router(fix_batches.router, prefix="/api/fix-batches", tags=["fix_batches"])
+app.include_router(presentations.router, prefix="/api/presentations", tags=["presentations"])
 
 
 @app.post("/api/admin/clear-storage")

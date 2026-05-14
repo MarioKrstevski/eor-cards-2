@@ -119,6 +119,7 @@ def start_generation(
         rs.content,
         body.model,
         body.replace_existing,
+        rs.card_version,
     )
     return {
         "job_id": job.id,
@@ -262,6 +263,7 @@ def _run_generation(
     rules_text: str,
     model: str,
     replace_existing: bool = True,
+    card_version: str = "base",
 ):
     """Background task: generate cards for each section, update job progress."""
     db = SessionLocal()
@@ -300,10 +302,26 @@ def _run_generation(
                 note_id_counter["value"] += 1
                 return nid
 
-        if replace_existing:
+        # For base version: optionally delete and recreate cards
+        # For v1/v2/v3: never delete cards — only update the version column on existing ones
+        if card_version == "base" and replace_existing:
             for section_id in sections_by_id:
                 db.query(Card).filter(Card.section_id == section_id).delete()
             db.commit()
+
+        # Pre-load existing cards by section for version matching (v1/v2/v3)
+        existing_cards_by_section: dict[int, dict[int, Card]] = {}
+        if card_version != "base":
+            for section_id in sections_by_id:
+                cards_in_section = db.query(Card).filter(Card.section_id == section_id).order_by(Card.card_number).all()
+                existing_cards_by_section[section_id] = {c.card_number: c for c in cards_in_section}
+
+        # Map version string to column name
+        version_field = {
+            "v1": "front_html_v1",
+            "v2": "front_html_v2",
+            "v3": "front_html_v3",
+        }.get(card_version)
 
         def process_section(section_data):
             for attempt in range(4):
@@ -327,20 +345,34 @@ def _run_generation(
             for future in as_completed(futures):
                 section_data, cards_data, needs_review, usage = future.result()
                 tags = section_data["curriculum_topic_path"].split(" > ") if section_data.get("curriculum_topic_path") else []
-                for card_data in cards_data:
-                    card = Card(
-                        section_id=section_data["id"],
-                        card_number=card_data["card_number"],
-                        front_html=card_data["front_html"],
-                        front_text=card_data["front_text"],
-                        extra=card_data.get("extra"),
-                        source_ref=card_data.get("source_ref"),
-                        tags=tags,
-                        needs_review=needs_review,
-                        note_id=next_note_id(),
-                    )
-                    db.add(card)
-                total_cards += len(cards_data)
+
+                if card_version == "base":
+                    # Create new card rows
+                    for card_data in cards_data:
+                        card = Card(
+                            section_id=section_data["id"],
+                            card_number=card_data["card_number"],
+                            front_html=card_data["front_html"],
+                            front_text=card_data["front_text"],
+                            extra=card_data.get("extra"),
+                            source_ref=card_data.get("source_ref"),
+                            tags=tags,
+                            needs_review=needs_review,
+                            note_id=next_note_id(),
+                        )
+                        db.add(card)
+                    total_cards += len(cards_data)
+                else:
+                    # Update version column on existing cards matched by card_number
+                    existing = existing_cards_by_section.get(section_data["id"], {})
+                    updated = 0
+                    for card_data in cards_data:
+                        matched = existing.get(card_data["card_number"])
+                        if matched and version_field:
+                            setattr(matched, version_field, card_data["front_html"])
+                            updated += 1
+                    total_cards += updated
+
                 total_input_tokens += usage["input_tokens"]
                 total_output_tokens += usage["output_tokens"]
                 job.processed_sections += 1

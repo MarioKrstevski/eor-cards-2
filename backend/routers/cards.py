@@ -21,6 +21,9 @@ class RegenerateCardRequest(BaseModel):
 
 class CardPatch(BaseModel):
     front_html: Optional[str] = None
+    front_html_v1: Optional[str] = None
+    front_html_v2: Optional[str] = None
+    front_html_v3: Optional[str] = None
     tags: Optional[list[str]] = None
     tags_mapped: Optional[list[str]] = None
     extra: Optional[str] = None
@@ -44,6 +47,9 @@ def card_to_dict(card: Card, db: Session | None = None) -> dict:
         "section_id": card.section_id,
         "card_number": card.card_number,
         "front_html": card.front_html,
+        "front_html_v1": card.front_html_v1,
+        "front_html_v2": card.front_html_v2,
+        "front_html_v3": card.front_html_v3,
         "front_text": card.front_text,
         "tags": card.tags,
         "tags_mapped": card.tags_mapped,
@@ -117,6 +123,12 @@ def patch_card(card_id: int, body: CardPatch, db: Session = Depends(get_db)):
     if body.front_html is not None:
         card.front_html = body.front_html
         card.front_text = strip_card_html(body.front_html)
+    if body.front_html_v1 is not None:
+        card.front_html_v1 = body.front_html_v1
+    if body.front_html_v2 is not None:
+        card.front_html_v2 = body.front_html_v2
+    if body.front_html_v3 is not None:
+        card.front_html_v3 = body.front_html_v3
     if body.tags is not None:
         card.tags = body.tags
     if body.tags_mapped is not None:

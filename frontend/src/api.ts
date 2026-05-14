@@ -19,6 +19,7 @@ import type {
   ReviewMarkType,
   FixBatch,
   FixProposal,
+  Presentation,
 } from './types';
 
 const http = axios.create({ baseURL: '/api' });
@@ -400,6 +401,7 @@ export async function createRuleSet(params: {
   content: string;
   is_default?: boolean;
   rule_type?: string;
+  card_version?: string;
 }): Promise<RuleSet> {
   const res = await http.post<RuleSet>('/rules', params);
   return res.data;
@@ -407,7 +409,7 @@ export async function createRuleSet(params: {
 
 export async function updateRuleSet(
   id: number,
-  params: { name?: string; content?: string; is_default?: boolean }
+  params: { name?: string; content?: string; is_default?: boolean; card_version?: string }
 ): Promise<RuleSet> {
   const res = await http.patch<RuleSet>(`/rules/${id}`, params);
   return res.data;
@@ -478,6 +480,35 @@ export async function getChatSession(id: number): Promise<ChatSessionDetail> {
 export async function deleteChatSession(id: number): Promise<void> {
   await http.delete(`/chat/sessions/${id}`);
 }
+
+// ─── Presentations ────────────────────────────────────────────────────────────
+
+export async function getPresentations(): Promise<Presentation[]> {
+  const res = await http.get<Presentation[]>('/presentations');
+  return res.data;
+}
+
+export async function createPresentation(params: {
+  name: string;
+  card_version: string;
+  source_type: string;
+  card_ids?: number[] | null;
+  topic_tree_id?: number | null;
+}): Promise<Presentation> {
+  const res = await http.post<Presentation>('/presentations', params);
+  return res.data;
+}
+
+export async function deletePresentation(id: number): Promise<void> {
+  await http.delete(`/presentations/${id}`);
+}
+
+export async function getPresentationCards(slug: string): Promise<{ presentation: Presentation; cards: Card[] }> {
+  const res = await http.get<{ presentation: Presentation; cards: Card[] }>(`/presentations/${slug}/cards`);
+  return res.data;
+}
+
+// ─── Chat ────────────────────────────────────────────────────────────────────
 
 export async function sendChatMessage(
   message: string,

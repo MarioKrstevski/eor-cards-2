@@ -69,10 +69,12 @@ export default function SettingsPopover({ onClose }: { onClose: () => void }) {
     value,
     onChange,
     options,
+    showVersion,
   }: {
     value: number | null;
     onChange: (id: number | null) => void;
     options: RuleSet[];
+    showVersion?: boolean;
   }) {
     return (
       <select
@@ -83,7 +85,7 @@ export default function SettingsPopover({ onClose }: { onClose: () => void }) {
         <option value="">-- none -- (use default)</option>
         {options.map((rs) => (
           <option key={rs.id} value={rs.id}>
-            {rs.name}{rs.is_default ? ' (default)' : ''}
+            {rs.name}{rs.is_default ? ' (default)' : ''}{showVersion && rs.card_version !== 'base' ? ` [${rs.card_version.toUpperCase()}]` : ''}
           </option>
         ))}
       </select>
@@ -124,7 +126,7 @@ export default function SettingsPopover({ onClose }: { onClose: () => void }) {
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <label className={labelClass}>Rules</label>
-                    <RulesSelect value={selectedRuleSetId} onChange={setSelectedRuleSetId} options={generationRules} />
+                    <RulesSelect value={selectedRuleSetId} onChange={setSelectedRuleSetId} options={generationRules} showVersion />
                   </div>
                 </div>
               </div>

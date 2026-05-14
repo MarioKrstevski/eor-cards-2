@@ -44,6 +44,7 @@ class RuleSet(Base):
     name: Mapped[str] = mapped_column(String(200))
     content: Mapped[str] = mapped_column(Text)
     rule_type: Mapped[str] = mapped_column(String(20), default="generation")
+    card_version: Mapped[str] = mapped_column(String(10), default="base")  # base/v1/v2/v3
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
@@ -150,6 +151,9 @@ class Card(Base):
     section_id: Mapped[int] = mapped_column(ForeignKey("sections.id"))
     card_number: Mapped[int] = mapped_column(Integer)
     front_html: Mapped[str] = mapped_column(Text)
+    front_html_v1: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    front_html_v2: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    front_html_v3: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     front_text: Mapped[str] = mapped_column(Text)
     tags: Mapped[list] = mapped_column(JSON, default=list)
     tags_mapped: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # new curriculum tags after mapping
@@ -269,6 +273,20 @@ class ProcessingJob(Base):
     started_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     upload: Mapped["Upload"] = relationship("Upload")
+
+
+# ── Presentation (Ankify shareable deck) ──
+
+class Presentation(Base):
+    __tablename__ = "presentations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(300))
+    slug: Mapped[str] = mapped_column(String(300), unique=True)
+    card_version: Mapped[str] = mapped_column(String(10), default="base")  # base/v1/v2/v3
+    source_type: Mapped[str] = mapped_column(String(20), default="cards")  # cards | topic
+    card_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)   # used when source_type='cards'
+    topic_tree_id: Mapped[Optional[int]] = mapped_column(ForeignKey("topic_trees.id"), nullable=True)  # used when source_type='topic'
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
 # ── AI Usage Log ──

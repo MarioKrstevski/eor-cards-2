@@ -1,9 +1,10 @@
 import { useEffect, useState, useRef } from 'react';
-import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import { SettingsProvider, useSettings } from './context/SettingsContext';
 import WorkspacePage from './pages/WorkspacePage';
 import LibraryPage from './pages/LibraryPage';
 import ProposalsPage from './pages/ProposalsPage';
+import AnkiPlayerPage from './pages/AnkiPlayerPage';
 import SettingsPopover from './components/SettingsPopover';
 import UsageModal from './components/UsageModal';
 import CostFlash from './components/CostFlash';
@@ -16,7 +17,7 @@ function AppInner() {
   const [showUsage, setShowUsage] = useState(false);
   const [displayedCost, setDisplayedCost] = useState<number | null>(null);
   const prevCostRef = useRef(0);
-  const { selectedRuleSetId, setSelectedRuleSetId, curriculumVersion, setCurriculumVersion, activeTagSet, setActiveTagSet } = useSettings();
+  const { selectedRuleSetId, setSelectedRuleSetId, curriculumVersion, setCurriculumVersion, activeTagSet, setActiveTagSet, activeCardVersion, setActiveCardVersion } = useSettings();
 
   function refreshUsage() {
     const prev = prevCostRef.current;
@@ -111,6 +112,22 @@ function AppInner() {
           Proposals
         </NavLink>
         <div className="flex-1" />
+
+        {/* Card version toggle */}
+        <div className="flex items-center gap-1 mr-2">
+          <span className="text-[10px] text-gray-400 font-medium">Card</span>
+          <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden" title="Which card version to display">
+            {(['base', 'v1', 'v2', 'v3'] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setActiveCardVersion(v)}
+                className={`px-2 py-1 text-[11px] font-medium transition-colors duration-150 ${activeCardVersion === v ? 'bg-violet-50 text-violet-700' : 'text-gray-400 hover:bg-gray-50'}`}
+              >
+                {v === 'base' ? 'Base' : v.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {/* Tags active set toggle */}
         <div className="flex items-center gap-1 mr-2">
@@ -210,12 +227,25 @@ function AppInner() {
   );
 }
 
+function AppRouter() {
+  const location = useLocation();
+  const isAnkiRoute = location.pathname.startsWith('/anki/');
+  if (isAnkiRoute) {
+    return <Routes><Route path="/anki/:slug" element={<AnkiPlayerPage />} /></Routes>;
+  }
+  return (
+    <>
+      <AppInner />
+      <HelpChat />
+    </>
+  );
+}
+
 export default function App() {
   return (
     <SettingsProvider>
       <BrowserRouter>
-        <AppInner />
-        <HelpChat />
+        <AppRouter />
       </BrowserRouter>
     </SettingsProvider>
   );

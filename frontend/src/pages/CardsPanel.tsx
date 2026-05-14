@@ -29,6 +29,7 @@ import type { Card, CardStatus, CostEstimate, ReviewMarkType } from '../types';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
 import AnkifyModal from '../components/AnkifyModal';
+import CreatePresentationModal from '../components/CreatePresentationModal';
 import SectionViewer from './SectionViewer';
 import { useSettings } from '../context/SettingsContext';
 
@@ -518,7 +519,7 @@ export default function CardsPanel({
   refreshUsage,
   onReviewChange,
 }: CardsPanelProps) {
-  const { selectedModel, selectedRuleSetId, activeTagSet } = useSettings();
+  const { selectedModel, selectedRuleSetId, activeTagSet, activeCardVersion } = useSettings();
 
   // ── Generation controls ──────────────────────────────────────────────────
   const [estimate, setEstimate] = useState<CostEstimate | null>(null);
@@ -574,6 +575,9 @@ export default function CardsPanel({
 
   // ── Ankify modal ─────────────────────────────────────────────────────────
   const [ankifyOpen, setAnkifyOpen] = useState(false);
+
+  // ── Create presentation modal ─────────────────────────────────────────────
+  const [showCreatePresentation, setShowCreatePresentation] = useState(false);
 
   // ── Generate confirm ─────────────────────────────────────────────────────
   const [showGenerateConfirm, setShowGenerateConfirm] = useState(false);
@@ -814,27 +818,52 @@ export default function CardsPanel({
         },
       }),
       columnHelper.accessor('front_html', {
-        header: 'Card',
+        header: () => (
+          <span>
+            Card
+            {activeCardVersion !== 'base' && (
+              <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-violet-50 text-violet-600 font-semibold uppercase">{activeCardVersion}</span>
+            )}
+          </span>
+        ),
         size: 400,
         cell: (info) => {
           const row = info.row;
-          const val = info.getValue();
+          const card = row.original;
+          // Pick the right version to display; fall back to base if version not generated
+          const versionedHtml =
+            activeCardVersion === 'v1' ? card.front_html_v1 :
+            activeCardVersion === 'v2' ? card.front_html_v2 :
+            activeCardVersion === 'v3' ? card.front_html_v3 :
+            card.front_html;
+          const displayHtml = versionedHtml || card.front_html;
+          const isVersionMissing = activeCardVersion !== 'base' && !versionedHtml;
           const cellId = `${row.index}:front_html`;
           return (
             <EditableCell
-              value={val}
+              value={displayHtml}
               cellId={cellId}
-              onSave={(newVal) => handleCellSave(row.original.id, { front_html: newVal })}
+              onSave={(newVal) => {
+                const field = activeCardVersion === 'v1' ? 'front_html_v1' :
+                               activeCardVersion === 'v2' ? 'front_html_v2' :
+                               activeCardVersion === 'v3' ? 'front_html_v3' : 'front_html';
+                handleCellSave(card.id, { [field]: newVal });
+              }}
               onSelect={handleCellSelect}
               onNavigate={(dir) => handleCellNavigate(row.index, 'front_html', dir)}
               multiline
               renderDisplay={(v) => (
-                <div
-                  className="text-sm leading-relaxed text-gray-800"
-                  dangerouslySetInnerHTML={{
-                    __html: showAnkiFormat ? renderClozeHtml(v) : v,
-                  }}
-                />
+                <div className="relative">
+                  {isVersionMissing && (
+                    <span className="absolute top-0 right-0 text-[9px] px-1 py-0.5 rounded bg-gray-100 text-gray-400">base</span>
+                  )}
+                  <div
+                    className="text-sm leading-relaxed text-gray-800"
+                    dangerouslySetInnerHTML={{
+                      __html: showAnkiFormat ? renderClozeHtml(v) : v,
+                    }}
+                  />
+                </div>
               )}
             />
           );
@@ -1010,7 +1039,7 @@ export default function CardsPanel({
       }),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filteredCards.length, selectedIds, handleCellSelect, handleCellNavigate, handleCellSave, showAnkiFormat, sectionId, topicPath, onReviewChange, fetchCards, markTypes, activeTagSet]
+    [filteredCards.length, selectedIds, handleCellSelect, handleCellNavigate, handleCellSave, showAnkiFormat, sectionId, topicPath, onReviewChange, fetchCards, markTypes, activeTagSet, activeCardVersion]
   );
 
   const pageCount = Math.ceil(totalCards / pagination.pageSize);
@@ -1463,6 +1492,13 @@ export default function CardsPanel({
           >
             Ankify
           </button>
+          <button
+            onClick={() => setShowCreatePresentation(true)}
+            className="px-2.5 py-1 text-xs font-medium text-teal-700 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 transition-colors duration-150"
+            title="Save as a shareable Ankify presentation"
+          >
+            Save Presentation
+          </button>
           {/* Mark as... dropdown */}
           <div className="relative">
             <button
@@ -1548,6 +1584,20 @@ export default function CardsPanel({
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
+          </button>
+        </div>
+      )}
+
+      {/* Topic-level presentation button — shown whenever a topic is selected */}
+      {topicTreeId != null && selectedIds.size === 0 && (
+        <div className="shrink-0 bg-gray-50 border-b border-gray-200 px-4 py-1.5 flex items-center gap-2">
+          <span className="text-[10px] text-gray-400">Topic</span>
+          <button
+            onClick={() => setShowCreatePresentation(true)}
+            className="px-2.5 py-1 text-xs font-medium text-teal-700 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 transition-colors duration-150"
+            title="Create a shareable Ankify presentation for all cards in this topic"
+          >
+            Create Presentation
           </button>
         </div>
       )}
@@ -1745,6 +1795,18 @@ export default function CardsPanel({
         <AnkifyModal
           cards={selectedIds.size > 0 ? cards.filter(c => selectedIds.has(c.id)) : filteredCards}
           onClose={() => setAnkifyOpen(false)}
+        />
+      )}
+
+      {showCreatePresentation && (
+        <CreatePresentationModal
+          selectedCardIds={[...selectedIds]}
+          topicTreeId={topicTreeId ?? null}
+          onCreated={(p) => {
+            setShowCreatePresentation(false);
+            window.open(`/anki/${p.slug}`, '_blank');
+          }}
+          onClose={() => setShowCreatePresentation(false)}
         />
       )}
 
