@@ -1342,7 +1342,11 @@ export default function CardsPanel({
   }
 
   // ── Export URL ────────────────────────────────────────────────────────────
-  const exportUrl = topicTreeId ? exportCardsUrl({ topic_tree_id: topicTreeId }) : undefined;
+  const exportUrl = topicTreeId
+    ? exportCardsUrl({ topic_tree_id: topicTreeId })
+    : topicPath
+      ? exportCardsUrl({ topic_path: topicPath })
+      : undefined;
 
   return (
     <div className="flex flex-col h-full">

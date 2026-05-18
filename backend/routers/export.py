@@ -15,6 +15,7 @@ def export_cards(
     topic_tree_id: Optional[int] = None,
     section_id: Optional[int] = None,
     curriculum_id: Optional[int] = None,
+    topic_path: Optional[str] = None,  # curriculum_topic_path string
     card_ids: Optional[str] = None,  # comma-separated IDs
     db: Session = Depends(get_db),
 ):
@@ -27,6 +28,11 @@ def export_cards(
         q = q.filter(Card.section_id == section_id)
     elif topic_tree_id:
         q = q.join(Card.section).filter(Section.topic_tree_id == topic_tree_id)
+    elif topic_path:
+        q = q.join(Card.section).filter(
+            (Section.curriculum_topic_path == topic_path) |
+            Section.curriculum_topic_path.startswith(topic_path + " > ")
+        )
     elif curriculum_id:
         node = db.get(Curriculum, curriculum_id)
         if node:

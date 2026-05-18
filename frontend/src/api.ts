@@ -429,6 +429,7 @@ export async function setDefaultRuleSet(id: number): Promise<RuleSet> {
 export function exportCardsUrl(params?: {
   topic_tree_id?: number;
   curriculum_id?: number;
+  topic_path?: string;
   card_ids?: number[];
 }): string {
   const url = new URL('/api/export/cards', window.location.origin);
@@ -436,6 +437,8 @@ export function exportCardsUrl(params?: {
     url.searchParams.set('card_ids', params.card_ids.join(','));
   } else if (params?.topic_tree_id != null) {
     url.searchParams.set('topic_tree_id', String(params.topic_tree_id));
+  } else if (params?.topic_path) {
+    url.searchParams.set('topic_path', params.topic_path);
   } else if (params?.curriculum_id != null) {
     url.searchParams.set('curriculum_id', String(params.curriculum_id));
   }
