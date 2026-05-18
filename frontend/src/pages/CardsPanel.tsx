@@ -563,6 +563,7 @@ export default function CardsPanel({
   const [markTypes, setMarkTypes] = useState<ReviewMarkType[]>([]);
   const [markFilterId, setMarkFilterId] = useState<number | null>(null);
   const [showMarkMenu, setShowMarkMenu] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const [showFixBatchModal, setShowFixBatchModal] = useState(false);
   const [fixBatchPrompt, setFixBatchPrompt] = useState('');
   const [fixBatchMarkId, setFixBatchMarkId] = useState<number | null>(null);
@@ -1570,13 +1571,36 @@ export default function CardsPanel({
           >
             Gen Vignettes &amp; Cases
           </button>
-          <a
-            href={exportCardsUrl({ card_ids: [...selectedIds] })}
-            className="px-2.5 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
-            download
-          >
-            Export CSV
-          </a>
+          <div className="relative">
+            <button
+              onClick={() => setShowExportMenu(v => !v)}
+              className="px-2.5 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+            >
+              Export CSV ▾
+            </button>
+            {showExportMenu && (
+              <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 min-w-[170px] py-1">
+                <a
+                  href={exportCardsUrl({ card_ids: [...selectedIds] })}
+                  className="block px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                  download
+                  onClick={() => setShowExportMenu(false)}
+                >
+                  Selected only ({selectedIds.size})
+                </a>
+                {exportUrl && (
+                  <a
+                    href={exportUrl}
+                    className="block px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                    download
+                    onClick={() => setShowExportMenu(false)}
+                  >
+                    All cards in topic
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
           <button
             onClick={handleBulkDelete}
             className="px-2.5 py-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors duration-150"
