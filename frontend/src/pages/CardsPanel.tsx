@@ -1570,6 +1570,13 @@ export default function CardsPanel({
           >
             Gen Vignettes &amp; Cases
           </button>
+          <a
+            href={exportCardsUrl({ card_ids: [...selectedIds] })}
+            className="px-2.5 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+            download
+          >
+            Export CSV
+          </a>
           <button
             onClick={handleBulkDelete}
             className="px-2.5 py-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors duration-150"

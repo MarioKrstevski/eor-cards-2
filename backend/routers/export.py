@@ -15,11 +15,15 @@ def export_cards(
     topic_tree_id: Optional[int] = None,
     section_id: Optional[int] = None,
     curriculum_id: Optional[int] = None,
+    card_ids: Optional[str] = None,  # comma-separated IDs
     db: Session = Depends(get_db),
 ):
     q = db.query(Card).options(joinedload(Card.section))
 
-    if section_id:
+    if card_ids:
+        ids = [int(i) for i in card_ids.split(",") if i.strip().isdigit()]
+        q = q.filter(Card.id.in_(ids))
+    elif section_id:
         q = q.filter(Card.section_id == section_id)
     elif topic_tree_id:
         q = q.join(Card.section).filter(Section.topic_tree_id == topic_tree_id)
