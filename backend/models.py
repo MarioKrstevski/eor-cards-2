@@ -133,6 +133,7 @@ class SectionImage(Base):
     category: Mapped[str] = mapped_column(String(50), default="unclear")  # decorative/diagram/chart/table_image/unclear
     extracted_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     alt_text_hint: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    intended_position: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # front/back/None
     position: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     section: Mapped["Section"] = relationship("Section", back_populates="images")

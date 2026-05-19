@@ -264,6 +264,7 @@ def get_section_detail(topic_tree_id: int, section_id: int, db: Session = Depend
             "category": img.category,
             "extracted_text": img.extracted_text,
             "alt_text_hint": img.alt_text_hint,
+            "intended_position": img.intended_position,
             "position": img.position,
         }
         for img in sorted(section.images, key=lambda i: i.position)
@@ -381,6 +382,48 @@ def ai_detect_headings(
     }
 
 
+def _parse_alt_text_hint(hint: str | None) -> dict:
+    """Parse an image alt text marking into structured intent.
+
+    Base commands:
+      EXTRACT   — AI extracts text from image; image is replaced by that text in section content
+      REF       — keep image as a reference (no extraction); shown on card front or back
+
+    Optional suffix guidance:
+      EXTRACT:CHART  — hint to AI that it's a chart/graph
+      EXTRACT:TABLE  — hint to AI that it's a table
+      EXTRACT:TEXT   — hint to AI that it's a text screenshot
+      REF:FRONT      — reference image placed on card front
+      REF:BACK       — reference image placed on card back (default)
+
+    No alt text → full AI classification, kept as SectionImage (decorative)
+
+    Returns:
+      {
+        "command": "extract" | "ref" | None,  # None = no alt text
+        "intended_position": str | None,       # "front" | "back" | None (REF only)
+        "category_hint": str | None,           # hint passed to AI (EXTRACT only)
+      }
+    """
+    if not hint or not hint.strip():
+        return {"command": None, "intended_position": None, "category_hint": None}
+
+    upper = hint.strip().upper()
+    suffix = upper.split(":", 1)[1].strip() if ":" in upper else ""
+
+    if upper.startswith("REF"):
+        position = "front" if suffix == "FRONT" else "back"
+        return {"command": "ref", "intended_position": position, "category_hint": None}
+
+    if upper.startswith("EXTRACT"):
+        hint_map = {"CHART": "chart", "TABLE": "table_image", "TEXT": "text screenshot"}
+        category_hint = hint_map.get(suffix)
+        return {"command": "extract", "intended_position": None, "category_hint": category_hint}
+
+    # Unknown marking — treat as no alt text
+    return {"command": None, "intended_position": None, "category_hint": None}
+
+
 def _run_processing(job_id: int):
     """Background task: process an upload into sections and content blocks."""
     from backend.services.doc_processor import parse_docx, parse_html, split_by_h2, build_heading_tree, build_content_html
@@ -488,6 +531,88 @@ def _run_processing(job_id: int):
                     )
                     db.add(cb)
                 position += 1
+
+        # Step 5: Classify and process images
+        images_to_process = (
+            db.query(SectionImage)
+            .join(Section, SectionImage.section_id == Section.id)
+            .filter(Section.topic_tree_id == tt.id, SectionImage.upload_id == upload.id)
+            .all()
+        )
+
+        if images_to_process:
+            job.pipeline_step = "images"
+            db.commit()
+
+            from backend.services.image_classifier import classify_image
+            from backend.config import ANTHROPIC_API_KEY
+            import anthropic
+            from collections import defaultdict
+
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+            # Group by section, sorted by position — order determines [Image N] index
+            images_by_section = defaultdict(list)
+            for img in images_to_process:
+                images_by_section[img.section_id].append(img)
+            for sid in images_by_section:
+                images_by_section[sid].sort(key=lambda i: i.position)
+
+            for section_id, section_images in images_by_section.items():
+                section = db.get(Section, section_id)
+                content_html = section.content_html
+                content_text = section.content_text
+
+                for img_num, img in enumerate(section_images, start=1):
+                    intent = _parse_alt_text_hint(img.alt_text_hint)
+
+                    if intent["command"] == "ref":
+                        # REF — keep as SectionImage, set position, no AI
+                        img.category = "decorative"
+                        img.intended_position = intent["intended_position"]
+
+                    elif intent["command"] == "extract":
+                        # EXTRACT — call AI, replace image placeholder with extracted text
+                        hint_for_ai = (
+                            f"This is a {intent['category_hint']} image."
+                            if intent["category_hint"] else img.alt_text_hint
+                        )
+                        result = classify_image(client, img.data_uri, alt_text_hint=hint_for_ai)
+                        extracted = (result.get("extracted_text") or "").strip()
+
+                        # Replace [Image N] placeholder in section HTML
+                        placeholder = (
+                            f'<div class="image-placeholder" data-img-index="{img_num}">'
+                            f'[Image {img_num}]</div>'
+                        )
+                        if extracted:
+                            replacement = f'<div class="extracted-image-text">{extracted}</div>'
+                            content_html = content_html.replace(placeholder, replacement)
+                            content_text = (content_text + "\n" + extracted).strip()
+                            db.add(ContentBlock(
+                                section_id=section_id,
+                                upload_id=upload.id,
+                                text=extracted,
+                                html=replacement,
+                                block_type="image_text",
+                                position=img.position,
+                            ))
+                        else:
+                            # AI returned nothing — remove placeholder entirely
+                            content_html = content_html.replace(placeholder, "")
+
+                        db.delete(img)
+
+                    else:
+                        # No alt text — full AI classification, keep as SectionImage
+                        result = classify_image(client, img.data_uri, alt_text_hint=None)
+                        img.category = result["category"]
+                        img.extracted_text = result.get("extracted_text")
+
+                section.content_html = content_html
+                section.content_text = content_text
+
+            db.commit()
 
         upload.status = "ready"
         job.pipeline_step = "done"

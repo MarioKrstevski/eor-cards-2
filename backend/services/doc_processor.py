@@ -32,10 +32,19 @@ def parse_docx(filepath: str) -> list[dict]:
             continue
 
         # Check for images in paragraph runs
+        _WP_NS = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'
         for run in para.runs:
             if run._element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing'):
                 # Extract inline images
                 for drawing in run._element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing'):
+                    # Read alt text from wp:docPr descr attribute
+                    doc_pr = drawing.find(f'.//{{{_WP_NS}}}docPr')
+                    alt_text = None
+                    if doc_pr is not None:
+                        raw_descr = doc_pr.get('descr', '').strip()
+                        if raw_descr:
+                            alt_text = raw_descr
+
                     for blip in drawing.findall('.//{http://schemas.openxmlformats.org/drawingml/2006/main}blip'):
                         embed = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
                         if embed:
@@ -50,7 +59,7 @@ def parse_docx(filepath: str) -> list[dict]:
                                     "text": "",
                                     "html": "",
                                     "data_uri": data_uri,
-                                    "alt_text": None,
+                                    "alt_text": alt_text,
                                     "heading_context": _build_heading_context(current_headings),
                                 })
                             except (KeyError, AttributeError):
