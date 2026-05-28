@@ -42,25 +42,29 @@ STYLE: Second person present tense. Bold key clinical terms using <b> tags. Use 
             ))
             db.commit()
 
-        # Seed curriculum from data/curriculum.json
+        # Seed curriculum from seed files (v1 + v2)
         if db.query(Curriculum).count() == 0:
-            curr_path = os.path.join(DATA_DIR, "curriculum.json")
-            if os.path.exists(curr_path):
-                with open(curr_path) as f:
-                    tree = json.load(f)
-                _seed_curriculum(db, tree, parent_id=None, level=0, parent_path="")
-                db.commit()
+            for version, filename in [("v1", "curriculum.json"), ("v2", "curriculum_v2.json")]:
+                # Try seed/ first, fall back to data/
+                seed_path = os.path.join(SEED_DIR, filename)
+                data_path = os.path.join(DATA_DIR, filename)
+                curr_path = seed_path if os.path.exists(seed_path) else data_path
+                if os.path.exists(curr_path):
+                    with open(curr_path) as f:
+                        tree = json.load(f)
+                    _seed_curriculum(db, tree, parent_id=None, level=0, parent_path="", version=version)
+            db.commit()
 
 
-def _seed_curriculum(db, nodes, parent_id, level, parent_path):
+def _seed_curriculum(db, nodes, parent_id, level, parent_path, version="v1"):
     from backend.models import Curriculum
     for idx, node in enumerate(nodes):
         path = f"{parent_path} > {node['name']}" if parent_path else node["name"]
-        c = Curriculum(parent_id=parent_id, name=node["name"], level=level, path=path, sort_order=idx)
+        c = Curriculum(parent_id=parent_id, name=node["name"], level=level, path=path, sort_order=idx, version=version)
         db.add(c)
         db.flush()
         if node.get("children"):
-            _seed_curriculum(db, node["children"], c.id, level + 1, path)
+            _seed_curriculum(db, node["children"], c.id, level + 1, path, version=version)
 
 
 def _migrate_db():
