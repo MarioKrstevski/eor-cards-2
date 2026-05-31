@@ -102,7 +102,7 @@ function SectionTreeGroup({
           >
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
-          <span className="text-[10px] font-semibold text-gray-500 truncate flex-1">{node.label}</span>
+          <span className="text-xs font-medium text-gray-600 truncate flex-1">{node.label}</span>
           {totalCards > 0 && <span className="text-[9px] text-gray-400 tabular-nums shrink-0">{totalCards}</span>}
         </div>
       )}
