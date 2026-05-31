@@ -35,23 +35,37 @@ const TOPIC_LEVEL_BADGE = ['bg-purple-50 text-purple-700', 'bg-blue-50 text-blue
 
 // ── SectionTree: group sections by curriculum path levels, Reddit-style nesting ─
 
-interface SectionTreeNode {
-  label: string;
-  sections: Section[];
-  children: Map<string, SectionTreeNode>;
+interface SectionLike {
+  id: number;
+  heading: string;
+  curriculum_topic_path: string | null;
+  card_count: number;
+  section_status: 'normal' | 'green' | 'orange';
+  is_verified: boolean;
+  flags: string[] | null;
 }
 
-function buildSectionTree(sections: Section[], treeName: string): SectionTreeNode {
-  const root: SectionTreeNode = { label: treeName, sections: [], children: new Map() };
+interface SectionTreeNode<T extends SectionLike> {
+  label: string;
+  sections: T[];
+  children: Map<string, SectionTreeNode<T>>;
+}
+
+function buildSectionTree<T extends SectionLike>(sections: T[], treeName: string, basePath?: string): SectionTreeNode<T> {
+  const root: SectionTreeNode<T> = { label: treeName, sections: [], children: new Map() };
   for (const section of sections) {
     const path = section.curriculum_topic_path;
     if (!path) {
       root.sections.push(section);
       continue;
     }
-    const parts = path.split(' > ');
-    // Skip the first part (it's the tree name / top-level topic) and the last (leaf = section heading)
-    const groupParts = parts.slice(1, -1);
+    // Strip the basePath prefix if provided (for curriculum action bar)
+    const relativePath = basePath && path.startsWith(basePath)
+      ? path.slice(basePath.length).replace(/^ > /, '')
+      : path;
+    const parts = relativePath.split(' > ');
+    // Last part is the leaf (section heading), everything before is grouping
+    const groupParts = parts.length > 1 ? parts.slice(0, -1) : [];
     let node = root;
     for (const part of groupParts) {
       if (!node.children.has(part)) {
@@ -64,26 +78,28 @@ function buildSectionTree(sections: Section[], treeName: string): SectionTreeNod
   return root;
 }
 
-function SectionTreeGroup({
+function SectionTreeGroup<T extends SectionLike>({
   node,
   depth,
   treeName,
   selectedSectionId,
   onSelectSection,
   onViewSection,
+  renderSubtitle,
 }: {
-  node: SectionTreeNode;
+  node: SectionTreeNode<T>;
   depth: number;
   treeName: string;
   selectedSectionId: number | null;
-  onSelectSection: (s: Section) => void;
+  onSelectSection: (s: T) => void;
   onViewSection: (id: number) => void;
+  renderSubtitle?: (s: T) => React.ReactNode;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(depth > 0);
   const borderOpacity = Math.min(20 + depth * 10, 60);
   const totalCards = node.sections.reduce((sum, s) => sum + (s.card_count || 0), 0)
     + Array.from(node.children.values()).reduce((sum, child) => {
-      const countAll = (n: SectionTreeNode): number =>
+      const countAll = (n: SectionTreeNode<T>): number =>
         n.sections.reduce((s, sec) => s + (sec.card_count || 0), 0) + Array.from(n.children.values()).reduce((s, c) => s + countAll(c), 0);
       return sum + countAll(child);
     }, 0);
@@ -108,6 +124,20 @@ function SectionTreeGroup({
       )}
       {!collapsed && (
         <>
+          {/* Render child groups first */}
+          {Array.from(node.children.entries()).map(([key, child]) => (
+            <SectionTreeGroup
+              key={key}
+              node={child}
+              depth={depth + 1}
+              treeName={treeName}
+              selectedSectionId={selectedSectionId}
+              onSelectSection={onSelectSection}
+              onViewSection={onViewSection}
+              renderSubtitle={renderSubtitle}
+            />
+          ))}
+          {/* Then orphan sections (no deeper group) at the end */}
           {node.sections.map((section) => (
             <div
               key={section.id}
@@ -138,7 +168,7 @@ function SectionTreeGroup({
                   ''
                 }`}>{section.heading}</span>
                 <span className="text-[9px] text-gray-400 truncate block leading-tight">
-                  {section.curriculum_topic_path ?? `${treeName} › ${section.heading}`}
+                  {renderSubtitle ? renderSubtitle(section) : (section.curriculum_topic_path ?? `${treeName} › ${section.heading}`)}
                 </span>
               </div>
               {section.card_count > 0 && (
@@ -148,17 +178,6 @@ function SectionTreeGroup({
               )}
               <ViewSectionButton onView={() => onViewSection(section.id)} />
             </div>
-          ))}
-          {Array.from(node.children.entries()).map(([key, child]) => (
-            <SectionTreeGroup
-              key={key}
-              node={child}
-              depth={depth + 1}
-              treeName={treeName}
-              selectedSectionId={selectedSectionId}
-              onSelectSection={onSelectSection}
-              onViewSection={onViewSection}
-            />
           ))}
         </>
       )}
@@ -316,46 +335,26 @@ function CurriculumActionBar({
         </div>
       </div>
 
-      {/* Section list — collapsed by default, toggled via chevron */}
-      {showSections && sortedSections.map(section => {
-        const isOrphan = hasDeepSections && section.curriculum_topic_path === expandedPath;
-        const subPath = section.curriculum_topic_path
-          ? section.curriculum_topic_path.slice(expandedPath.length).replace(/^ > /, '')
-          : '';
-        return (
-          <div key={section.id} className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-gray-50 group/row">
-            {isOrphan ? (
-              <svg className="h-3 w-3 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-              </svg>
-            ) : (
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                section.section_status === 'green' ? 'bg-green-400' :
-                section.section_status === 'orange' ? 'bg-orange-400' :
-                section.is_verified ? 'bg-green-400' :
-                (section.flags?.length ?? 0) > 0 ? 'bg-amber-400' :
-                'bg-gray-300'
-              }`} />
-            )}
-            <div className="flex-1 min-w-0">
-              <span className={`text-xs truncate block ${
-                section.section_status === 'green' ? 'text-green-600' :
-                section.section_status === 'orange' ? 'text-orange-500' :
-                'text-gray-800'
-              }`}>{section.heading}</span>
-              <span className="text-[9px] truncate block leading-tight text-gray-400">
+      {/* Section list — grouped tree, collapsed by default */}
+      {showSections && (
+        <SectionTreeGroup
+          node={buildSectionTree(sortedSections, expandedPath.split(' > ').pop() || '', expandedPath)}
+          depth={0}
+          treeName={expandedPath}
+          selectedSectionId={null}
+          onSelectSection={() => {}}
+          onViewSection={onViewSection}
+          renderSubtitle={(s) => {
+            const isOrphan = hasDeepSections && s.curriculum_topic_path === expandedPath;
+            return (
+              <>
                 {isOrphan && <span className="text-amber-600 font-medium">No leaf · </span>}
-                {subPath ? `${subPath} · ` : ''}
-                {section.topic_tree_name}
-              </span>
-            </div>
-            {section.card_count > 0 && (
-              <span className="text-[10px] text-gray-400 tabular-nums shrink-0">{section.card_count}</span>
-            )}
-            <ViewSectionButton onView={() => onViewSection(section.id)} />
-          </div>
-        );
-      })}
+                {(s as CurriculumSection).topic_tree_name}
+              </>
+            );
+          }}
+        />
+      )}
     </>
   );
 }
