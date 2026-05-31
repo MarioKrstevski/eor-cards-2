@@ -114,23 +114,24 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
             </span>
           )}
 
-          {/* Status toggle */}
+          {/* Status selector */}
           {section && (
-            <button
-              onClick={async () => {
-                const next = section.section_status === 'normal' ? 'green' : section.section_status === 'green' ? 'orange' : 'normal';
-                await updateSection(sectionId, { section_status: next });
+            <select
+              value={section.section_status || 'normal'}
+              onChange={async (e) => {
+                await updateSection(sectionId, { section_status: e.target.value });
                 loadSection();
               }}
-              className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+              className={`px-2 py-0.5 rounded text-[10px] font-medium border-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-300 ${
                 section.section_status === 'green' ? 'bg-green-100 text-green-700' :
                 section.section_status === 'orange' ? 'bg-orange-100 text-orange-700' :
                 'bg-gray-100 text-gray-500'
               }`}
-              title="Click to cycle: Normal → Keep (green) → No Info (orange)"
             >
-              {section.section_status === 'green' ? 'Keep' : section.section_status === 'orange' ? 'No Info' : 'Normal'}
-            </button>
+              <option value="normal">Normal</option>
+              <option value="green">Keep</option>
+              <option value="orange">No Info</option>
+            </select>
           )}
 
           {/* Edit Section */}
