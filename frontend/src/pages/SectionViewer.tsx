@@ -3,6 +3,31 @@ import { getSection, verifySection, pasteSectionContent, updateSection, updateSe
 import type { SectionDetail, SectionImage, CurriculumNode } from '../types';
 import CurriculumPicker from '../components/CurriculumPicker';
 
+/** Convert plain extracted text to formatted HTML — bullet lines become <li>, paragraphs separated by blank lines. */
+function formatExtractedText(text: string): string {
+  const lines = text.split('\n');
+  const parts: string[] = [];
+  let inList = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (inList) { parts.push('</ul>'); inList = false; }
+      continue;
+    }
+    const bulletMatch = trimmed.match(/^[•\-\*]\s*(.*)/);
+    if (bulletMatch) {
+      if (!inList) { parts.push('<ul class="list-disc pl-4 my-1">'); inList = true; }
+      parts.push(`<li>${bulletMatch[1]}</li>`);
+    } else {
+      if (inList) { parts.push('</ul>'); inList = false; }
+      parts.push(`<p class="my-1"><strong>${trimmed}</strong></p>`);
+    }
+  }
+  if (inList) parts.push('</ul>');
+  return parts.join('');
+}
+
 interface SectionViewerProps {
   sectionId: number;
   onClose: () => void;
@@ -462,7 +487,9 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
           <div className="max-w-4xl max-h-[90vh] bg-white rounded-xl shadow-2xl p-4 overflow-auto" onClick={(e) => e.stopPropagation()}>
             <img src={selectedImage.data_uri} alt={selectedImage.alt_text_hint ?? ''} className="max-w-full rounded" />
             {selectedImage.extracted_text && (
-              <p className="mt-3 text-xs text-gray-600 bg-gray-50 p-2 rounded">{selectedImage.extracted_text}</p>
+              <div className="mt-3 text-xs text-gray-600 bg-gray-50 p-3 rounded prose prose-xs max-w-none"
+                dangerouslySetInnerHTML={{ __html: formatExtractedText(selectedImage.extracted_text) }}
+              />
             )}
             {/* Editable fields */}
             <div className="mt-4 space-y-3 border-t border-gray-200 pt-3">
