@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
-import { getSection, verifySection } from '../api';
-import type { SectionDetail, SectionImage } from '../types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { getSection, verifySection, pasteSectionContent, updateSection, createCurriculumNode, getCurriculum } from '../api';
+import type { SectionDetail, SectionImage, CurriculumNode } from '../types';
+import CurriculumPicker from '../components/CurriculumPicker';
 
 interface SectionViewerProps {
   sectionId: number;
@@ -15,12 +16,22 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
   const [selectedImage, setSelectedImage] = useState<SectionImage | null>(null);
   const [showImages, setShowImages] = useState(false);
   const [showBlocks, setShowBlocks] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [pasteHtml, setPasteHtml] = useState('');
+  const [pasting, setPasting] = useState(false);
+  const pasteAreaRef = useRef<HTMLDivElement>(null);
+  const [showCreateLeaf, setShowCreateLeaf] = useState(false);
+  const [leafName, setLeafName] = useState('');
+  const [leafParentId, setLeafParentId] = useState<number | null>(null);
+  const [curriculumNodes, setCurriculumNodes] = useState<CurriculumNode[]>([]);
+  const [creatingLeaf, setCreatingLeaf] = useState(false);
 
   const loadSection = useCallback(async () => {
     setLoading(true);
     try {
       const data = await getSection(sectionId);
       setSection(data);
+      setLeafName(data.heading);
     } catch {
       // ignore
     } finally {
@@ -31,6 +42,20 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
   useEffect(() => {
     loadSection();
   }, [loadSection]);
+
+  useEffect(() => {
+    if (showCreateLeaf && curriculumNodes.length === 0) {
+      getCurriculum('v1').then(setCurriculumNodes).catch(() => {});
+    }
+  }, [showCreateLeaf, curriculumNodes.length]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
 
   const handleVerify = useCallback(async () => {
     setVerifying(true);
@@ -89,6 +114,33 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
             </span>
           )}
 
+          {/* Status toggle */}
+          {section && (
+            <button
+              onClick={async () => {
+                const next = section.section_status === 'normal' ? 'green' : section.section_status === 'green' ? 'orange' : 'normal';
+                await updateSection(sectionId, { section_status: next });
+                loadSection();
+              }}
+              className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+                section.section_status === 'green' ? 'bg-green-100 text-green-700' :
+                section.section_status === 'orange' ? 'bg-orange-100 text-orange-700' :
+                'bg-gray-100 text-gray-500'
+              }`}
+              title="Click to cycle: Normal → Keep (green) → No Info (orange)"
+            >
+              {section.section_status === 'green' ? 'Keep' : section.section_status === 'orange' ? 'No Info' : 'Normal'}
+            </button>
+          )}
+
+          {/* Edit Section */}
+          <button
+            onClick={() => { setEditMode(!editMode); if (!editMode) setTimeout(() => pasteAreaRef.current?.focus(), 100); }}
+            className={`px-3 py-1 rounded text-xs font-medium ${editMode ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}
+          >
+            {editMode ? 'Cancel Edit' : 'Edit Section'}
+          </button>
+
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors duration-150"
@@ -98,6 +150,51 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
             </svg>
           </button>
         </div>
+
+        {/* Paste area */}
+        {editMode && (
+          <div className="border-b border-gray-200 p-4 bg-blue-50/50 shrink-0">
+            <p className="text-xs text-gray-500 mb-2">Paste content from your document below:</p>
+            <div
+              ref={pasteAreaRef}
+              contentEditable
+              tabIndex={0}
+              onPaste={(e) => {
+                e.preventDefault();
+                const html = e.clipboardData.getData('text/html') || e.clipboardData.getData('text/plain');
+                setPasteHtml(html);
+              }}
+              className="min-h-[60px] border border-dashed border-blue-300 rounded p-3 bg-white text-xs text-gray-600 focus:outline-none focus:border-blue-500"
+              suppressContentEditableWarning
+            >
+              {pasteHtml ? '\u2713 Content captured. Click "Apply" to replace section content.' : 'Click here and paste (Ctrl+V / Cmd+V)'}
+            </div>
+            {pasteHtml && (
+              <div className="mt-2 flex gap-2">
+                <button
+                  onClick={async () => {
+                    setPasting(true);
+                    try {
+                      await pasteSectionContent(sectionId, pasteHtml);
+                      setPasteHtml('');
+                      setEditMode(false);
+                      loadSection();
+                    } catch { /* ignore */ } finally {
+                      setPasting(false);
+                    }
+                  }}
+                  disabled={pasting}
+                  className="px-3 py-1 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {pasting ? 'Applying...' : 'Apply'}
+                </button>
+                <button onClick={() => setPasteHtml('')} className="px-3 py-1 rounded text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200">
+                  Clear
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {loading ? (
           <div className="flex-1 flex items-center justify-center">
@@ -139,6 +236,71 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
                 <span>{section.table_count} tables</span>
                 <span>{section.card_count} cards</span>
               </div>
+
+              {/* Create Leaf Node shortcut */}
+              {section && !section.curriculum_topic_id && (
+                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-amber-700">No curriculum leaf match for this section.</p>
+                    {!showCreateLeaf && (
+                      <button
+                        onClick={() => setShowCreateLeaf(true)}
+                        className="px-2 py-1 rounded text-[11px] font-medium bg-amber-100 text-amber-700 hover:bg-amber-200"
+                      >
+                        Create & Map Leaf
+                      </button>
+                    )}
+                  </div>
+                  {showCreateLeaf && (
+                    <div className="mt-3 space-y-2">
+                      <div>
+                        <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">Parent Node</label>
+                        <CurriculumPicker
+                          flatNodes={curriculumNodes}
+                          value={leafParentId}
+                          onChange={setLeafParentId}
+                          placeholder="Select parent..."
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">Leaf Name</label>
+                        <input
+                          type="text"
+                          value={leafName}
+                          onChange={(e) => setLeafName(e.target.value)}
+                          className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={async () => {
+                            if (!leafParentId || !leafName.trim()) return;
+                            setCreatingLeaf(true);
+                            try {
+                              const node = await createCurriculumNode({ name: leafName.trim(), parent_id: leafParentId });
+                              await updateSection(sectionId, { curriculum_topic_id: node.id, curriculum_topic_path: node.path });
+                              setShowCreateLeaf(false);
+                              loadSection();
+                            } catch { /* ignore */ } finally {
+                              setCreatingLeaf(false);
+                            }
+                          }}
+                          disabled={creatingLeaf || !leafParentId || !leafName.trim()}
+                          className="px-3 py-1 rounded text-xs font-medium bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+                        >
+                          {creatingLeaf ? 'Creating...' : 'Create'}
+                        </button>
+                        <button
+                          onClick={() => setShowCreateLeaf(false)}
+                          className="px-3 py-1 rounded text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Content HTML */}
               <div

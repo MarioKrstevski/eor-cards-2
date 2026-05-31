@@ -1,9 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+import os
+import tempfile
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func
 from pydantic import BaseModel
 from typing import Optional
 from backend.db import get_db
-from backend.models import Section, ContentBlock, SectionImage
+from backend.models import Section, ContentBlock, SectionImage, utcnow
+from backend.services.doc_processor import parse_html, build_content_html
 
 router = APIRouter()
 
@@ -16,6 +20,7 @@ class SectionUpdate(BaseModel):
     curriculum_topic_path: Optional[str] = None
     is_verified: Optional[bool] = None
     flags: Optional[list] = None
+    section_status: Optional[str] = None
 
 
 def section_to_dict(s: Section) -> dict:
@@ -34,6 +39,7 @@ def section_to_dict(s: Section) -> dict:
         "flags": s.flags,
         "is_verified": s.is_verified,
         "sort_order": s.sort_order,
+        "section_status": s.section_status,
         "card_count": len(s.cards) if s.cards else 0,
         "content_blocks": [
             {
@@ -95,6 +101,7 @@ def get_sections_by_curriculum(
             "flags": s.flags,
             "is_verified": s.is_verified,
             "sort_order": s.sort_order,
+            "section_status": s.section_status,
             "card_count": len(s.cards) if s.cards else 0,
         }
         for s in sections
@@ -128,6 +135,61 @@ def update_section(section_id: int, body: SectionUpdate, db: Session = Depends(g
         section.is_verified = body.is_verified
     if body.flags is not None:
         section.flags = body.flags
+    if body.section_status is not None:
+        section.section_status = body.section_status
+    db.commit()
+    db.refresh(section)
+    return section_to_dict(section)
+
+
+@router.post("/{section_id}/paste")
+def paste_section_content(section_id: int, body: dict, db: Session = Depends(get_db)):
+    """Replace section content with pasted HTML."""
+    section = db.get(Section, section_id)
+    if not section:
+        raise HTTPException(404)
+
+    html = body.get("html", "")
+    if not html.strip():
+        raise HTTPException(400, "No HTML content provided")
+
+    # Write to temp file for parser
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as tmp:
+        tmp.write(html)
+        tmp_path = tmp.name
+
+    try:
+        elements = parse_html(tmp_path)
+    finally:
+        os.unlink(tmp_path)
+
+    content_text = "\n".join(e["text"] for e in elements if e.get("text"))
+    content_html_str = build_content_html(elements)
+
+    section.content_text = content_text
+    section.content_html = content_html_str
+
+    # Auto-detect/clear orange status
+    if "NO INFORMATION IN ORIGINAL STUDY GUIDE" in content_text.upper():
+        section.section_status = "orange"
+    elif hasattr(section, 'section_status') and section.section_status == "orange":
+        section.section_status = "normal"
+
+    # Handle images
+    image_count = 0
+    for elem in elements:
+        if elem.get("type") == "image" and elem.get("data_uri"):
+            img = SectionImage(
+                section_id=section.id,
+                data_uri=elem["data_uri"],
+                alt_text_hint=elem.get("alt_text"),
+                position=image_count,
+            )
+            db.add(img)
+            image_count += 1
+
+    section.image_count = (section.image_count or 0) + image_count
+    section.updated_at = utcnow()
     db.commit()
     db.refresh(section)
     return section_to_dict(section)
@@ -142,3 +204,43 @@ def verify_section(section_id: int, db: Session = Depends(get_db)):
     section.is_verified = True
     db.commit()
     return {"is_valid": True, "flags": section.flags or []}
+
+
+@router.post("/{section_id}/images")
+async def upload_section_image(
+    section_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """Upload an image directly to a section's image library."""
+    section = db.get(Section, section_id)
+    if not section:
+        raise HTTPException(404)
+
+    import base64
+    content = await file.read()
+    mime = file.content_type or "image/png"
+    data_uri = f"data:{mime};base64,{base64.b64encode(content).decode()}"
+
+    max_pos = db.query(func.max(SectionImage.position)).filter_by(section_id=section_id).scalar() or 0
+    img = SectionImage(
+        section_id=section_id,
+        data_uri=data_uri,
+        alt_text_hint=file.filename,
+        position=max_pos + 1,
+        category="unclear",
+    )
+    db.add(img)
+    section.image_count = (section.image_count or 0) + 1
+    db.commit()
+    db.refresh(img)
+
+    return {
+        "id": img.id,
+        "section_id": img.section_id,
+        "data_uri": img.data_uri,
+        "category": img.category,
+        "extracted_text": img.extracted_text,
+        "alt_text_hint": img.alt_text_hint,
+        "position": img.position,
+    }

@@ -24,8 +24,10 @@ import {
   getReviewMarkTypes,
   bulkMarkCards,
   createFixBatch,
+  getSection,
+  uploadSectionImage,
 } from '../api';
-import type { Card, CardStatus, CostEstimate, ReviewMarkType } from '../types';
+import type { Card, CardStatus, CostEstimate, ReviewMarkType, SectionImage } from '../types';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
 import AnkifyModal from '../components/AnkifyModal';
@@ -494,6 +496,143 @@ function CardTile({
   );
 }
 
+// ── Image Picker Cell ────────────────────────────────────────────────────────
+function ImagePickerCell({
+  cardId,
+  sectionId,
+  currentImg,
+  currentImgId,
+  currentPosition,
+  onUpdate,
+}: {
+  cardId: number;
+  sectionId: number;
+  currentImg: string | null;
+  currentImgId: number | null;
+  currentPosition: string;
+  onUpdate: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [images, setImages] = useState<SectionImage[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [position, setPosition] = useState<'front' | 'back'>(currentPosition as 'front' | 'back' || 'front');
+  const ref = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const loadImages = async () => {
+    setLoading(true);
+    try {
+      const section = await getSection(sectionId);
+      setImages(section.images || []);
+    } catch { /* ignore */ } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpen = () => {
+    setOpen(true);
+    loadImages();
+  };
+
+  const handleAttach = async (imgId: number) => {
+    await updateCard(cardId, { ref_img_id: imgId, ref_img_position: position });
+    setOpen(false);
+    onUpdate();
+  };
+
+  const handleDetach = async () => {
+    await updateCard(cardId, { ref_img_id: 0 });
+    setOpen(false);
+    onUpdate();
+  };
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const img = await uploadSectionImage(sectionId, file);
+      await updateCard(cardId, { ref_img_id: img.id, ref_img_position: position });
+      setOpen(false);
+      onUpdate();
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div ref={ref} className="relative">
+      <button onClick={handleOpen} className="w-full flex items-center justify-center">
+        {currentImg ? (
+          <img src={currentImg} alt="ref" className="max-h-10 rounded cursor-pointer hover:opacity-80" />
+        ) : (
+          <span className="text-gray-300 hover:text-blue-400 cursor-pointer text-lg">+</span>
+        )}
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl z-50 p-3 w-64">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold text-gray-700">Section Images</span>
+            <div className="flex items-center gap-1 text-[10px]">
+              <label className={`px-1.5 py-0.5 rounded cursor-pointer ${position === 'front' ? 'bg-blue-100 text-blue-700' : 'text-gray-400'}`}>
+                <input type="radio" name={`pos-${cardId}`} value="front" checked={position === 'front'} onChange={() => setPosition('front')} className="hidden" />
+                Front
+              </label>
+              <label className={`px-1.5 py-0.5 rounded cursor-pointer ${position === 'back' ? 'bg-blue-100 text-blue-700' : 'text-gray-400'}`}>
+                <input type="radio" name={`pos-${cardId}`} value="back" checked={position === 'back'} onChange={() => setPosition('back')} className="hidden" />
+                Back
+              </label>
+            </div>
+          </div>
+          {loading ? (
+            <p className="text-xs text-gray-400 text-center py-4">Loading...</p>
+          ) : images.length === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-4">No images in this section</p>
+          ) : (
+            <div className="max-h-48 overflow-y-auto space-y-1.5">
+              {images.map((img) => (
+                <div
+                  key={img.id}
+                  className={`flex items-center gap-2 p-1.5 rounded border cursor-pointer hover:bg-gray-50 ${
+                    img.id === currentImgId ? 'border-blue-400 bg-blue-50' : 'border-gray-100'
+                  }`}
+                  onClick={() => handleAttach(img.id)}
+                >
+                  <img src={img.data_uri} alt="" className="w-10 h-10 object-cover rounded" />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[10px] text-gray-500 truncate block">{img.alt_text_hint || img.category}</span>
+                  </div>
+                  {img.id === currentImgId && (
+                    <span className="text-[9px] text-blue-600 font-medium shrink-0">Current</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mt-2 pt-2 border-t border-gray-100 flex gap-2">
+            {currentImgId && (
+              <button onClick={handleDetach} className="px-2 py-1 rounded text-[10px] font-medium bg-red-50 text-red-600 hover:bg-red-100">
+                Detach
+              </button>
+            )}
+            <button onClick={() => fileRef.current?.click()} className="px-2 py-1 rounded text-[10px] font-medium bg-gray-50 text-gray-600 hover:bg-gray-100">
+              Upload
+            </button>
+            <input ref={fileRef} type="file" accept="image/*" onChange={handleUpload} className="hidden" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Optional column definitions ───────────────────────────────────────────────
 const OPTIONAL_COLUMNS = [
   { id: 'extra', label: 'Extra / Additional Context' },
@@ -913,13 +1052,18 @@ export default function CardsPanel({
       }),
       columnHelper.accessor('ref_img', {
         header: 'Ref Image',
-        size: 80,
+        size: 100,
         cell: (info) => {
-          const val = info.getValue();
-          return val ? (
-            <img src={val} alt="ref" className="max-h-12 rounded" />
-          ) : (
-            <span className="text-gray-300 text-xs">—</span>
+          const card = info.row.original;
+          return (
+            <ImagePickerCell
+              cardId={card.id}
+              sectionId={card.section_id}
+              currentImg={card.ref_img}
+              currentImgId={card.ref_img_id}
+              currentPosition={card.ref_img_position}
+              onUpdate={() => fetchCards(sectionId, topicPath)}
+            />
           );
         },
       }),

@@ -33,6 +33,53 @@ import { useSettings } from '../context/SettingsContext';
 
 const TOPIC_LEVEL_BADGE = ['bg-purple-50 text-purple-700', 'bg-blue-50 text-blue-700', 'bg-green-50 text-green-700', 'bg-orange-50 text-orange-700'];
 
+// ── EyeDropdown: eye icon with dropdown for View Section / Load Cards ────────
+
+function EyeDropdown({ onView, onLoadCards }: { onView: () => void; onLoadCards: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        className="p-0.5 text-gray-300 hover:text-blue-500 transition-colors duration-150"
+        title="Section actions"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded shadow-lg z-50 py-1 min-w-[120px]">
+          <button
+            onClick={(e) => { e.stopPropagation(); setOpen(false); onView(); }}
+            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+          >
+            View Section
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setOpen(false); onLoadCards(); }}
+            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+          >
+            Load Cards
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Curriculum expansion config (passed through the recursive TopicNode tree) ─
 
 interface CurriculumExpansionConfig {
@@ -41,6 +88,7 @@ interface CurriculumExpansionConfig {
   loading: boolean;
   onPreview: (path: string) => void;
   onViewSection: (id: number) => void;
+  onSelectSection: (section: CurriculumSection) => void;
   onGenerationDone: () => void;
   refreshUsage: () => void;
   selectedModel: string;
@@ -55,6 +103,7 @@ interface CurriculumActionBarProps {
   expandedPath: string;
   onPreview: () => void;
   onViewSection: (id: number) => void;
+  onSelectSection: (section: CurriculumSection) => void;
   onGenerationDone: () => void;
   refreshUsage: () => void;
   selectedModel: string;
@@ -62,7 +111,7 @@ interface CurriculumActionBarProps {
 }
 
 function CurriculumActionBar({
-  sections, loading, expandedPath, onPreview, onViewSection, onGenerationDone, refreshUsage, selectedModel, selectedRuleSetId,
+  sections, loading, expandedPath, onPreview, onViewSection, onSelectSection, onGenerationDone, refreshUsage, selectedModel, selectedRuleSetId,
 }: CurriculumActionBarProps) {
   const [estimate, setEstimate] = useState<CostEstimate | null>(null);
   const [estimating, setEstimating] = useState(false);
@@ -177,10 +226,20 @@ function CurriculumActionBar({
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
               </svg>
             ) : (
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${section.is_verified ? 'bg-green-400' : (section.flags?.length ?? 0) > 0 ? 'bg-amber-400' : 'bg-gray-300'}`} />
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                section.section_status === 'green' ? 'bg-green-400' :
+                section.section_status === 'orange' ? 'bg-orange-400' :
+                section.is_verified ? 'bg-green-400' :
+                (section.flags?.length ?? 0) > 0 ? 'bg-amber-400' :
+                'bg-gray-300'
+              }`} />
             )}
             <div className="flex-1 min-w-0">
-              <span className="text-xs truncate block text-gray-800">{section.heading}</span>
+              <span className={`text-xs truncate block ${
+                section.section_status === 'green' ? 'text-green-600' :
+                section.section_status === 'orange' ? 'text-orange-500' :
+                'text-gray-800'
+              }`}>{section.heading}</span>
               <span className="text-[9px] truncate block leading-tight text-gray-400">
                 {isOrphan && <span className="text-amber-600 font-medium">No leaf · </span>}
                 {subPath ? `${subPath} · ` : ''}
@@ -190,16 +249,10 @@ function CurriculumActionBar({
             {section.card_count > 0 && (
               <span className="text-[10px] text-gray-400 tabular-nums shrink-0">{section.card_count}</span>
             )}
-            <button
-              onClick={(e) => { e.stopPropagation(); onViewSection(section.id); }}
-              className="opacity-0 group-hover/row:opacity-100 p-0.5 text-gray-300 hover:text-blue-500 transition-all duration-150 shrink-0"
-              title="View section content"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-              </svg>
-            </button>
+            <EyeDropdown
+              onView={() => onViewSection(section.id)}
+              onLoadCards={() => onSelectSection(section)}
+            />
           </div>
         );
       })}
@@ -274,6 +327,7 @@ function TopicNode({ node, depth, onSelect, selectedId, selectedAncestorIds, car
             expandedPath={node.path}
             onPreview={() => expansion.onPreview(node.path)}
             onViewSection={expansion.onViewSection}
+            onSelectSection={expansion.onSelectSection}
             onGenerationDone={expansion.onGenerationDone}
             refreshUsage={expansion.refreshUsage}
             selectedModel={expansion.selectedModel}
@@ -400,6 +454,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [pasteCurriculumId, setPasteCurriculumId] = useState<number | null>(null);
   const pasteAreaRef = useRef<HTMLDivElement>(null);
+  const [pasteTargetTreeId, setPasteTargetTreeId] = useState<number | null>(null);
 
   // Upload modal
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -571,7 +626,9 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
             setUploadError(job.error_message ?? 'Processing failed');
           } else {
             loadTopicTrees();
-            if (expandedTreeId) expandTree(expandedTreeId);
+            const treeToExpand = pasteTargetTreeId ?? expandedTreeId;
+            if (treeToExpand) expandTree(treeToExpand);
+            setPasteTargetTreeId(null);
           }
           refreshUsage();
         }
@@ -582,7 +639,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
       }
     }, 1500);
     return () => clearInterval(interval);
-  }, [processingJobId, loadTopicTrees, expandedTreeId, expandTree, refreshUsage]);
+  }, [processingJobId, loadTopicTrees, expandedTreeId, expandTree, refreshUsage, pasteTargetTreeId]);
 
   // Delete topic tree
   const handleDeleteTree = useCallback(async () => {
@@ -683,6 +740,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
         curriculumId: pasteCurriculumId ?? undefined,
       });
       setProcessingJobId(result.processing_job_id);
+      setPasteTargetTreeId(result.topic_tree_id);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Paste failed';
       setUploadError(msg);
@@ -876,7 +934,11 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                           >
                             <span
                               className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                                section.is_verified
+                                section.section_status === 'green'
+                                  ? 'bg-green-400'
+                                  : section.section_status === 'orange'
+                                  ? 'bg-orange-400'
+                                  : section.is_verified
                                   ? 'bg-green-400'
                                   : (section.flags?.length ?? 0) > 0
                                   ? 'bg-amber-400'
@@ -884,7 +946,11 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                               }`}
                             />
                             <div className="flex-1 min-w-0">
-                              <span className="text-xs truncate block">{section.heading}</span>
+                              <span className={`text-xs truncate block ${
+                                section.section_status === 'green' ? 'text-green-600' :
+                                section.section_status === 'orange' ? 'text-orange-500' :
+                                ''
+                              }`}>{section.heading}</span>
                               <span className="text-[9px] text-gray-400 truncate block leading-tight">
                                 {section.curriculum_topic_path ?? `${expandedTree.name} › ${section.heading}`}
                               </span>
@@ -894,19 +960,10 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                                 {section.card_count}
                               </span>
                             )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setViewingSectionId(section.id);
-                              }}
-                              className="p-0.5 text-gray-300 hover:text-blue-500 transition-colors duration-150"
-                              title="View section content"
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                              </svg>
-                            </button>
+                            <EyeDropdown
+                              onView={() => setViewingSectionId(section.id)}
+                              onLoadCards={() => selectSection(section)}
+                            />
                           </div>
                         ))}
                       </div>
@@ -977,6 +1034,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                       loading: curriculumSectionsLoading,
                       onPreview: setPreviewCurriculumPath,
                       onViewSection: setViewingSectionId,
+                      onSelectSection: (s) => selectSection(s as unknown as Section),
                       onGenerationDone: () => { loadCurriculum(); setRefreshKey(k => k + 1); },
                       refreshUsage,
                       selectedModel,

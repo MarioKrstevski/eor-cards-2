@@ -20,6 +20,7 @@ import type {
   FixBatch,
   FixProposal,
   Presentation,
+  SectionImage,
 } from './types';
 
 const http = axios.create({ baseURL: '/api' });
@@ -120,8 +121,8 @@ export async function pasteDocument(
   html: string,
   name: string,
   opts?: { topicTreeId?: number; curriculumId?: number }
-): Promise<{ upload_id: number; processing_job_id: number }> {
-  const res = await http.post<{ upload_id: number; processing_job_id: number }>(
+): Promise<{ upload_id: number; processing_job_id: number; topic_tree_id: number }> {
+  const res = await http.post<{ upload_id: number; processing_job_id: number; topic_tree_id: number }>(
     '/topic-trees/paste',
     {
       html,
@@ -158,7 +159,7 @@ export async function getSection(id: number): Promise<SectionDetail> {
 
 export async function updateSection(
   id: number,
-  params: { heading?: string; curriculum_topic_id?: number | null; curriculum_topic_path?: string | null; is_verified?: boolean }
+  params: { heading?: string; curriculum_topic_id?: number | null; curriculum_topic_path?: string | null; is_verified?: boolean; section_status?: string }
 ): Promise<Section> {
   const res = await http.patch<Section>(`/sections/${id}`, params);
   return res.data;
@@ -169,8 +170,23 @@ export async function getSectionsByCurriculum(path: string): Promise<CurriculumS
   return res.data;
 }
 
+export async function pasteSectionContent(
+  sectionId: number,
+  html: string
+): Promise<SectionDetail> {
+  const res = await http.post<SectionDetail>(`/sections/${sectionId}/paste`, { html });
+  return res.data;
+}
+
 export async function verifySection(id: number): Promise<{ is_valid: boolean; flags: string[] }> {
   const res = await http.post<{ is_valid: boolean; flags: string[] }>(`/sections/${id}/verify`);
+  return res.data;
+}
+
+export async function uploadSectionImage(sectionId: number, file: File): Promise<SectionImage> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await http.post<SectionImage>(`/sections/${sectionId}/images`, form);
   return res.data;
 }
 

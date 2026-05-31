@@ -86,6 +86,7 @@ def _migrate_db():
             "ALTER TABLE cards ADD COLUMN front_html_v3 TEXT",
             "ALTER TABLE rule_sets ADD COLUMN card_version VARCHAR(10) NOT NULL DEFAULT 'base'",
             "ALTER TABLE section_images ADD COLUMN intended_position VARCHAR(10)",
+            "ALTER TABLE sections ADD COLUMN section_status VARCHAR(20) DEFAULT 'normal'",
         ]:
             try:
                 conn.execute(text(col_sql))

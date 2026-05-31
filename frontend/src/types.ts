@@ -49,6 +49,7 @@ export interface Section {
   table_count: number;
   flags: string[] | null;
   is_verified: boolean;
+  section_status: 'normal' | 'green' | 'orange';
   card_count: number;
   sort_order: number;
 }
@@ -199,6 +200,7 @@ export interface CurriculumSection {
   table_count: number;
   flags: string[] | null;
   is_verified: boolean;
+  section_status: 'normal' | 'green' | 'orange';
   sort_order: number;
   card_count: number;
 }

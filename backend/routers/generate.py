@@ -9,7 +9,7 @@ from typing import Optional
 from backend.db import get_db, SessionLocal
 from backend.models import (
     Section, Card, GenerationJob, JobStatus, CardStatus,
-    RuleSet, AIUsageLog, TopicTree, utcnow,
+    RuleSet, AIUsageLog, TopicTree, Curriculum, utcnow,
 )
 from backend.services.generator import generate_cards_for_section
 from backend.services.cost_estimator import estimate_cost
@@ -292,6 +292,18 @@ def _run_generation(
                     "topic_tree_id": section.topic_tree_id,
                 }
 
+        # Look up curriculum version for each section
+        for section_id, sdata in sections_by_id.items():
+            if sdata.get("curriculum_topic_path"):
+                section_obj = db.get(Section, section_id)
+                if section_obj and section_obj.curriculum_topic_id:
+                    cur_node = db.get(Curriculum, section_obj.curriculum_topic_id)
+                    sdata["curriculum_version"] = cur_node.version if cur_node else None
+                else:
+                    sdata["curriculum_version"] = None
+            else:
+                sdata["curriculum_version"] = None
+
         note_id_base = int(time.time() * 1000)
         note_id_counter = {"value": 0}
         note_id_lock = threading.Lock()
@@ -345,21 +357,27 @@ def _run_generation(
             for future in as_completed(futures):
                 section_data, cards_data, needs_review, usage = future.result()
                 tags = section_data["curriculum_topic_path"].split(" > ") if section_data.get("curriculum_topic_path") else []
+                cv = section_data.get("curriculum_version")
 
                 if card_version == "base":
                     # Create new card rows
                     for card_data in cards_data:
-                        card = Card(
+                        card_kwargs = dict(
                             section_id=section_data["id"],
                             card_number=card_data["card_number"],
                             front_html=card_data["front_html"],
                             front_text=card_data["front_text"],
                             extra=card_data.get("extra"),
                             source_ref=card_data.get("source_ref"),
-                            tags=tags,
                             needs_review=needs_review,
                             note_id=next_note_id(),
                         )
+                        if cv == "v1":
+                            card_kwargs["tags_mapped"] = tags
+                            card_kwargs["tags"] = []
+                        else:
+                            card_kwargs["tags"] = tags
+                        card = Card(**card_kwargs)
                         db.add(card)
                     total_cards += len(cards_data)
                 else:

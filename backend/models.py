@@ -80,6 +80,7 @@ class Section(Base):
     flags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    section_status: Mapped[str] = mapped_column(String(20), default="normal")  # normal, green, orange
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
     topic_tree: Mapped["TopicTree"] = relationship("TopicTree", back_populates="sections")

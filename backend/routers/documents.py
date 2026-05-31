@@ -1,9 +1,9 @@
 import os
+import re
 import uuid
 import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from typing import Optional
 from backend.db import get_db, SessionLocal
 from backend.models import (
@@ -17,6 +17,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _normalize_for_match(s: str) -> str:
+    """Normalize string for fuzzy curriculum matching."""
+    s = s.lower().strip()
+    s = re.sub(r'\s*/\s*', '/', s)
+    s = re.sub(r'\s+', ' ', s)
+    return s
+
+
 def _match_section_to_curriculum(
     db: Session,
     heading: str,
@@ -25,8 +33,8 @@ def _match_section_to_curriculum(
     """Try to match a section heading to a specific curriculum leaf node.
 
     Searches within the subtree of parent_curriculum_id for a node whose name
-    matches the heading (case-insensitive). Falls back to the parent node if
-    no match is found.
+    matches the heading (case-insensitive, with normalized whitespace/slashes).
+    Falls back to the parent node if no match is found.
 
     Returns (curriculum_topic_id, curriculum_topic_path).
     """
@@ -37,19 +45,20 @@ def _match_section_to_curriculum(
     if not parent:
         return None, None
 
-    # Look for a node named exactly like the heading within the parent's subtree
-    match = (
+    norm_heading = _normalize_for_match(heading)
+
+    candidates = (
         db.query(Curriculum)
         .filter(
-            func.lower(Curriculum.name) == heading.lower(),
             Curriculum.version == parent.version,
             Curriculum.path.startswith(parent.path),
         )
-        .first()
+        .all()
     )
 
-    if match:
-        return match.id, match.path
+    for node in candidates:
+        if _normalize_for_match(node.name) == norm_heading:
+            return node.id, node.path
 
     # Fallback: use the parent node itself
     return parent.id, parent.path
@@ -85,6 +94,7 @@ def section_to_dict(s: Section, include_content: bool = True) -> dict:
         "flags": s.flags,
         "is_verified": s.is_verified,
         "sort_order": s.sort_order,
+        "section_status": s.section_status,
         "card_count": len(s.cards) if s.cards else 0,
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
@@ -190,9 +200,13 @@ def paste_document(
         if not tt:
             raise HTTPException(404, "Topic tree not found")
     else:
+        slug = slugify(topic_tree_name)
+        existing = db.query(TopicTree).filter_by(slug=slug).first()
+        if existing:
+            slug = f"{slug}-{uuid.uuid4().hex[:6]}"
         tt = TopicTree(
             name=topic_tree_name,
-            slug=slugify(topic_tree_name),
+            slug=slug,
             curriculum_id=curriculum_id,
         )
         db.add(tt)
@@ -382,7 +396,7 @@ def ai_detect_headings(
     }
 
 
-def _parse_alt_text_hint(hint: str | None) -> dict:
+def _parse_alt_text_hint(hint: Optional[str]) -> dict:
     """Parse an image alt text marking into structured intent.
 
     Base commands:
@@ -483,11 +497,14 @@ def _run_processing(job_id: int):
                 section.image_count += image_count
                 section.table_count += table_count
                 section.updated_at = utcnow()
+                if "NO INFORMATION IN ORIGINAL STUDY GUIDE" in content_text.upper():
+                    section.section_status = "orange"
                 # Update topic if set and not already assigned
                 if sec_topic_id and not section.curriculum_topic_id:
                     section.curriculum_topic_id = sec_topic_id
                     section.curriculum_topic_path = sec_topic_path
             else:
+                auto_status = "orange" if "NO INFORMATION IN ORIGINAL STUDY GUIDE" in content_text.upper() else "normal"
                 section = Section(
                     topic_tree_id=tt.id,
                     heading=heading,
@@ -500,6 +517,7 @@ def _run_processing(job_id: int):
                     sort_order=idx,
                     curriculum_topic_id=sec_topic_id,
                     curriculum_topic_path=sec_topic_path,
+                    section_status=auto_status,
                 )
                 db.add(section)
                 db.flush()
@@ -684,6 +702,7 @@ def _run_ai_heading_processing(job_id: int, curriculum_version: str = 'v1'):
             # Match this section's heading to the deepest curriculum node possible
             sec_topic_id, sec_topic_path = _match_section_to_curriculum(db, heading, tt.curriculum_id)
 
+            auto_status = "orange" if "NO INFORMATION IN ORIGINAL STUDY GUIDE" in content_text.upper() else "normal"
             section = Section(
                 topic_tree_id=tt.id,
                 heading=heading,
@@ -696,6 +715,7 @@ def _run_ai_heading_processing(job_id: int, curriculum_version: str = 'v1'):
                 sort_order=idx,
                 curriculum_topic_id=sec_topic_id,
                 curriculum_topic_path=sec_topic_path,
+                section_status=auto_status,
             )
             db.add(section)
             db.flush()
