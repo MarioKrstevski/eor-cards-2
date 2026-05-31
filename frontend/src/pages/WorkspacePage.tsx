@@ -258,7 +258,7 @@ function GroupViewer({ sectionIds, title, onClose }: { sectionIds: number[]; tit
                   {s.curriculum_topic_path && (
                     <p className="text-[10px] text-gray-400 mb-3">{s.curriculum_topic_path}</p>
                   )}
-                  <div dangerouslySetInnerHTML={{ __html: s.content_html || s.content_text || '' }} />
+                  <div className="section-content" dangerouslySetInnerHTML={{ __html: s.content_html || s.content_text || '' }} />
                 </div>
               ))}
             </div>
