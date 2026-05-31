@@ -89,7 +89,7 @@ function SectionTreeGroup({
     }, 0);
 
   return (
-    <div className={depth > 0 ? 'ml-2.5' : ''} style={depth > 0 ? { borderLeft: `2px solid rgba(156,163,175,${borderOpacity / 100})` } : undefined}>
+    <div className={depth > 0 ? 'ml-2.5' : ''} style={{ borderLeft: `2px solid rgba(156,163,175,${borderOpacity / 100})` }}>
       {depth > 0 && (
         <div
           onClick={() => setCollapsed(!collapsed)}
