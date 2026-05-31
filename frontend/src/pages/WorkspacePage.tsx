@@ -115,37 +115,39 @@ function SectionTreeGroup<T extends SectionLike>({
   return (
     <div className={depth > 0 ? 'ml-2.5' : ''} style={{ borderLeft: `2px solid rgba(156,163,175,${borderOpacity / 100})` }}>
       {depth > 0 && (
-        <div
-          onClick={() => setCollapsed(!collapsed)}
-          className="flex items-center gap-1.5 pl-2 pr-2 py-1 cursor-pointer hover:bg-gray-50"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className={`h-2.5 w-2.5 text-gray-400 shrink-0 transition-transform duration-150 ${collapsed ? '' : 'rotate-90'}`}
-            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+        <>
+          <div
+            onClick={() => setCollapsed(!collapsed)}
+            className="flex items-center gap-1.5 pl-2 pr-2 py-1 cursor-pointer hover:bg-gray-50"
           >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-          </svg>
-          <span className="text-xs font-medium text-gray-600 truncate flex-1">{node.label}</span>
-          {totalCards > 0 && <span className="text-[9px] text-gray-400 tabular-nums shrink-0">{totalCards}</span>}
-          <button
-            onClick={(e) => { e.stopPropagation(); setViewingGroup(true); }}
-            className="p-1 rounded text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-colors duration-150 shrink-0"
-            title="View all sections in this group"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className={`h-2.5 w-2.5 text-gray-400 shrink-0 transition-transform duration-150 ${collapsed ? '' : 'rotate-90'}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
             </svg>
-          </button>
-        </div>
-        {viewingGroup && (
-          <GroupViewer
-            sectionIds={collectIds(node)}
-            title={node.label}
-            onClose={() => setViewingGroup(false)}
-          />
-        )}
+            <span className="text-xs font-medium text-gray-600 truncate flex-1">{node.label}</span>
+            {totalCards > 0 && <span className="text-[9px] text-gray-400 tabular-nums shrink-0">{totalCards}</span>}
+            <button
+              onClick={(e) => { e.stopPropagation(); setViewingGroup(true); }}
+              className="p-1 rounded text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-colors duration-150 shrink-0"
+              title="View all sections in this group"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+            </button>
+          </div>
+          {viewingGroup && (
+            <GroupViewer
+              sectionIds={collectIds(node)}
+              title={node.label}
+              onClose={() => setViewingGroup(false)}
+            />
+          )}
+        </>
       )}
       {!collapsed && (
         <>
