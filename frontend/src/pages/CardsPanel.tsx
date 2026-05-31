@@ -14,6 +14,7 @@ import {
   deleteCard,
   regenerateCard,
   exportCardsUrl,
+  deleteSectionImage,
   bulkMarkReviewed,
   bulkDeleteCards,
   estimateCost,
@@ -605,7 +606,24 @@ function ImagePickerCell({
                   }`}
                   onClick={() => handleAttach(img.id)}
                 >
-                  <img src={img.data_uri} alt="" className="w-10 h-10 object-cover rounded" />
+                  <div className="relative shrink-0">
+                    <img src={img.data_uri} alt="" className="w-10 h-10 object-cover rounded" />
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (!confirm('Delete this image from the library?')) return;
+                        await deleteSectionImage(sectionId, img.id);
+                        loadImages();
+                        if (img.id === currentImgId) onUpdate();
+                      }}
+                      className="absolute -bottom-1 -right-1 p-0.5 rounded-full bg-red-100 text-red-500 hover:bg-red-200 hover:text-red-700"
+                      title="Delete from library"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
                   <div className="flex-1 min-w-0">
                     <span className="text-[10px] text-gray-500 truncate block">{img.alt_text_hint || img.category}</span>
                   </div>

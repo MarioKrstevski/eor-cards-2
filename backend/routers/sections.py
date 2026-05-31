@@ -244,3 +244,24 @@ async def upload_section_image(
         "alt_text_hint": img.alt_text_hint,
         "position": img.position,
     }
+
+
+@router.delete("/{section_id}/images/{image_id}")
+def delete_section_image(section_id: int, image_id: int, db: Session = Depends(get_db)):
+    """Delete an image from a section's library."""
+    img = db.get(SectionImage, image_id)
+    if not img or img.section_id != section_id:
+        raise HTTPException(404)
+
+    # Clear ref_img_id on any cards referencing this image
+    from backend.models import Card
+    db.query(Card).filter(Card.ref_img_id == image_id).update(
+        {Card.ref_img_id: None}, synchronize_session="fetch"
+    )
+
+    db.delete(img)
+    section = db.get(Section, section_id)
+    if section and section.image_count and section.image_count > 0:
+        section.image_count -= 1
+    db.commit()
+    return {"ok": True}

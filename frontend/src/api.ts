@@ -178,6 +178,10 @@ export async function pasteSectionContent(
   return res.data;
 }
 
+export async function deleteSectionImage(sectionId: number, imageId: number): Promise<void> {
+  await http.delete(`/sections/${sectionId}/images/${imageId}`);
+}
+
 export async function verifySection(id: number): Promise<{ is_valid: boolean; flags: string[] }> {
   const res = await http.post<{ is_valid: boolean; flags: string[] }>(`/sections/${id}/verify`);
   return res.data;

@@ -154,44 +154,80 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
 
         {/* Paste area */}
         {editMode && (
-          <div className="border-b border-gray-200 p-4 bg-blue-50/50 shrink-0">
-            <p className="text-xs text-gray-500 mb-2">Paste content from your document below:</p>
-            <div
-              ref={pasteAreaRef}
-              contentEditable
-              tabIndex={0}
-              onPaste={(e) => {
-                e.preventDefault();
-                const html = e.clipboardData.getData('text/html') || e.clipboardData.getData('text/plain');
-                setPasteHtml(html);
-              }}
-              className="min-h-[60px] border border-dashed border-blue-300 rounded p-3 bg-white text-xs text-gray-600 focus:outline-none focus:border-blue-500"
-              suppressContentEditableWarning
-            >
-              {pasteHtml ? '\u2713 Content captured. Click "Apply" to replace section content.' : 'Click here and paste (Ctrl+V / Cmd+V)'}
-            </div>
-            {pasteHtml && (
-              <div className="mt-2 flex gap-2">
-                <button
-                  onClick={async () => {
-                    setPasting(true);
-                    try {
-                      await pasteSectionContent(sectionId, pasteHtml);
-                      setPasteHtml('');
-                      setEditMode(false);
-                      loadSection();
-                    } catch { /* ignore */ } finally {
-                      setPasting(false);
-                    }
+          <div className="border-b border-gray-200 shrink-0">
+            {!pasteHtml ? (
+              <div className="p-4 bg-blue-50/50">
+                <div className="flex items-center gap-2 mb-2">
+                  <p className="text-xs text-gray-500">Paste content from your document:</p>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const items = await navigator.clipboard.read();
+                        for (const item of items) {
+                          if (item.types.includes('text/html')) {
+                            const blob = await item.getType('text/html');
+                            setPasteHtml(await blob.text());
+                            return;
+                          }
+                          if (item.types.includes('text/plain')) {
+                            const blob = await item.getType('text/plain');
+                            setPasteHtml(await blob.text());
+                            return;
+                          }
+                        }
+                      } catch { /* fallback to manual paste */ }
+                    }}
+                    className="px-2 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 hover:bg-blue-200"
+                  >
+                    Paste from Clipboard
+                  </button>
+                </div>
+                <div
+                  ref={pasteAreaRef}
+                  contentEditable
+                  tabIndex={0}
+                  onPaste={(e) => {
+                    e.preventDefault();
+                    const html = e.clipboardData.getData('text/html') || e.clipboardData.getData('text/plain');
+                    setPasteHtml(html);
                   }}
-                  disabled={pasting}
-                  className="px-3 py-1 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                  className="min-h-[40px] border border-dashed border-blue-300 rounded p-3 bg-white text-xs text-gray-400 focus:outline-none focus:border-blue-500"
+                  suppressContentEditableWarning
                 >
-                  {pasting ? 'Applying...' : 'Apply'}
-                </button>
-                <button onClick={() => setPasteHtml('')} className="px-3 py-1 rounded text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200">
-                  Clear
-                </button>
+                  or click here and Ctrl+V / Cmd+V
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col">
+                <div className="flex items-center justify-between px-4 py-2 bg-green-50 border-b border-green-200">
+                  <span className="text-xs font-medium text-green-700">Preview — review content below then accept</span>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={async () => {
+                        setPasting(true);
+                        try {
+                          await pasteSectionContent(sectionId, pasteHtml);
+                          setPasteHtml('');
+                          setEditMode(false);
+                          loadSection();
+                        } catch { /* ignore */ } finally {
+                          setPasting(false);
+                        }
+                      }}
+                      disabled={pasting}
+                      className="px-3 py-1 rounded text-xs font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {pasting ? 'Saving...' : 'Accept'}
+                    </button>
+                    <button onClick={() => setPasteHtml('')} className="px-3 py-1 rounded text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200">
+                      Discard
+                    </button>
+                  </div>
+                </div>
+                <div
+                  className="p-6 overflow-y-auto max-h-[60vh] prose prose-sm max-w-none bg-white"
+                  dangerouslySetInnerHTML={{ __html: pasteHtml }}
+                />
               </div>
             )}
           </div>
