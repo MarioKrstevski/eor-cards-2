@@ -14,6 +14,8 @@ import {
   startGeneration,
   getGenerationJob,
   getSection,
+  createCurriculumNode,
+  updateSection,
 } from '../api';
 import type { GenerationJob, CurriculumSection, CostEstimate, SectionDetail } from '../types';
 import type {
@@ -87,6 +89,7 @@ function SectionTreeGroup<T extends SectionLike>({
   onSelectSection,
   onViewSection,
   renderSubtitle,
+  onSectionMoved,
 }: {
   node: SectionTreeNode<T>;
   depth: number;
@@ -95,6 +98,7 @@ function SectionTreeGroup<T extends SectionLike>({
   onSelectSection: (s: T) => void;
   onViewSection: (id: number) => void;
   renderSubtitle?: (s: T) => React.ReactNode;
+  onSectionMoved?: () => void;
 }) {
   const [collapsed, setCollapsed] = useState(depth > 0);
   const [viewingGroup, setViewingGroup] = useState(false);
@@ -162,6 +166,7 @@ function SectionTreeGroup<T extends SectionLike>({
               onSelectSection={onSelectSection}
               onViewSection={onViewSection}
               renderSubtitle={renderSubtitle}
+              onSectionMoved={onSectionMoved}
             />
           ))}
           {/* Then orphan sections (no deeper group) at the end */}
@@ -203,10 +208,98 @@ function SectionTreeGroup<T extends SectionLike>({
                   {section.card_count}
                 </span>
               )}
+              {onSectionMoved && !section.curriculum_topic_path?.includes(' > ') && (
+                <RepositionButton sectionId={section.id} sectionHeading={section.heading} onDone={onSectionMoved} />
+              )}
               <ViewSectionButton onView={() => onViewSection(section.id)} />
             </div>
           ))}
         </>
+      )}
+    </div>
+  );
+}
+
+// ── RepositionButton: pick parent → create leaf + map section in one step ─────
+
+function RepositionButton({ sectionId, sectionHeading, onDone }: { sectionId: number; sectionHeading: string; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [nodes, setNodes] = useState<CurriculumNode[]>([]);
+  const [parentId, setParentId] = useState<number | null>(null);
+  const [leafName, setLeafName] = useState(sectionHeading);
+  const [saving, setSaving] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (open && nodes.length === 0) {
+      getCurriculum('v1').then(setNodes).catch(() => {});
+    }
+  }, [open, nodes.length]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const handleSubmit = async () => {
+    if (!parentId || !leafName.trim()) return;
+    setSaving(true);
+    try {
+      const node = await createCurriculumNode({ name: leafName.trim(), parent_id: parentId });
+      await updateSection(sectionId, { curriculum_topic_id: node.id, curriculum_topic_path: node.path });
+      setOpen(false);
+      onDone();
+    } catch { /* ignore */ } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        className="p-1 rounded text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 transition-colors duration-150"
+        title="Reposition section under a curriculum topic"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl z-50 p-3 w-72" onClick={(e) => e.stopPropagation()}>
+          <p className="text-[10px] font-medium text-gray-500 uppercase tracking-wide mb-2">Move to curriculum topic</p>
+          <CurriculumPicker
+            flatNodes={nodes}
+            value={parentId}
+            onChange={setParentId}
+            placeholder="Select parent topic..."
+          />
+          <div className="mt-2">
+            <label className="text-[10px] text-gray-500">Leaf name</label>
+            <input
+              type="text"
+              value={leafName}
+              onChange={(e) => setLeafName(e.target.value)}
+              className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:border-blue-500 mt-0.5"
+            />
+          </div>
+          <div className="mt-2 flex gap-2">
+            <button
+              onClick={handleSubmit}
+              disabled={saving || !parentId || !leafName.trim()}
+              className="px-3 py-1 rounded text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {saving ? 'Moving...' : 'Move'}
+            </button>
+            <button onClick={() => setOpen(false)} className="px-3 py-1 rounded text-xs font-medium bg-gray-100 text-gray-600">
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -1112,6 +1205,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                           selectedSectionId={selectedSectionId}
                           onSelectSection={selectSection}
                           onViewSection={setViewingSectionId}
+                          onSectionMoved={() => expandTree(tree.id)}
                         />
                       </div>
                     )}
