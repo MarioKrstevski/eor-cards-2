@@ -67,19 +67,20 @@ function buildSectionTree(sections: Section[], treeName: string): SectionTreeNod
 function SectionTreeGroup({
   node,
   depth,
+  treeName,
   selectedSectionId,
   onSelectSection,
   onViewSection,
 }: {
   node: SectionTreeNode;
   depth: number;
+  treeName: string;
   selectedSectionId: number | null;
   onSelectSection: (s: Section) => void;
   onViewSection: (id: number) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
-  const borderColors = ['border-gray-200', 'border-gray-300', 'border-gray-400', 'border-gray-500'];
-  const borderColor = borderColors[Math.min(depth, borderColors.length - 1)];
+  const borderOpacity = Math.min(20 + depth * 10, 60);
   const totalCards = node.sections.reduce((sum, s) => sum + (s.card_count || 0), 0)
     + Array.from(node.children.values()).reduce((sum, child) => {
       const countAll = (n: SectionTreeNode): number =>
@@ -88,21 +89,21 @@ function SectionTreeGroup({
     }, 0);
 
   return (
-    <div className={`${depth > 0 ? `ml-3 border-l ${borderColor}` : ''}`}>
+    <div className={depth > 0 ? 'ml-2.5' : ''} style={depth > 0 ? { borderLeft: `2px solid rgba(156,163,175,${borderOpacity / 100})` } : undefined}>
       {depth > 0 && (
         <div
           onClick={() => setCollapsed(!collapsed)}
-          className="flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-gray-50 group/branch"
+          className="flex items-center gap-1.5 pl-2 pr-2 py-1 cursor-pointer hover:bg-gray-50"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
-            className={`h-2.5 w-2.5 text-gray-400 transition-transform duration-150 ${collapsed ? '' : 'rotate-90'}`}
+            className={`h-2.5 w-2.5 text-gray-400 shrink-0 transition-transform duration-150 ${collapsed ? '' : 'rotate-90'}`}
             fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
           >
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
-          <span className="text-[10px] font-semibold text-gray-500 truncate">{node.label}</span>
-          <span className="text-[9px] text-gray-400 tabular-nums">{totalCards > 0 ? totalCards : ''}</span>
+          <span className="text-[10px] font-semibold text-gray-500 truncate flex-1">{node.label}</span>
+          {totalCards > 0 && <span className="text-[9px] text-gray-400 tabular-nums shrink-0">{totalCards}</span>}
         </div>
       )}
       {!collapsed && (
@@ -111,7 +112,7 @@ function SectionTreeGroup({
             <div
               key={section.id}
               onClick={() => onSelectSection(section)}
-              className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer transition-colors duration-150 ${
+              className={`flex items-center gap-2 pl-3 pr-2 py-1 cursor-pointer transition-colors duration-150 ${
                 selectedSectionId === section.id
                   ? 'bg-blue-50 text-blue-700'
                   : 'hover:bg-gray-50 text-gray-700'
@@ -136,6 +137,9 @@ function SectionTreeGroup({
                   section.section_status === 'orange' ? 'text-orange-500' :
                   ''
                 }`}>{section.heading}</span>
+                <span className="text-[9px] text-gray-400 truncate block leading-tight">
+                  {section.curriculum_topic_path ?? `${treeName} › ${section.heading}`}
+                </span>
               </div>
               {section.card_count > 0 && (
                 <span className="text-[10px] text-gray-400 tabular-nums shrink-0">
@@ -150,6 +154,7 @@ function SectionTreeGroup({
               key={key}
               node={child}
               depth={depth + 1}
+              treeName={treeName}
               selectedSectionId={selectedSectionId}
               onSelectSection={onSelectSection}
               onViewSection={onViewSection}
@@ -1020,6 +1025,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                         <SectionTreeGroup
                           node={buildSectionTree(expandedTree.sections, expandedTree.name)}
                           depth={0}
+                          treeName={expandedTree.name}
                           selectedSectionId={selectedSectionId}
                           onSelectSection={selectSection}
                           onViewSection={setViewingSectionId}
