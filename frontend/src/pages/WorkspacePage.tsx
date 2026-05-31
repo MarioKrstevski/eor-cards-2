@@ -33,6 +33,134 @@ import { useSettings } from '../context/SettingsContext';
 
 const TOPIC_LEVEL_BADGE = ['bg-purple-50 text-purple-700', 'bg-blue-50 text-blue-700', 'bg-green-50 text-green-700', 'bg-orange-50 text-orange-700'];
 
+// ── SectionTree: group sections by curriculum path levels, Reddit-style nesting ─
+
+interface SectionTreeNode {
+  label: string;
+  sections: Section[];
+  children: Map<string, SectionTreeNode>;
+}
+
+function buildSectionTree(sections: Section[], treeName: string): SectionTreeNode {
+  const root: SectionTreeNode = { label: treeName, sections: [], children: new Map() };
+  for (const section of sections) {
+    const path = section.curriculum_topic_path;
+    if (!path) {
+      root.sections.push(section);
+      continue;
+    }
+    const parts = path.split(' > ');
+    // Skip the first part (it's the tree name / top-level topic) and the last (leaf = section heading)
+    const groupParts = parts.slice(1, -1);
+    let node = root;
+    for (const part of groupParts) {
+      if (!node.children.has(part)) {
+        node.children.set(part, { label: part, sections: [], children: new Map() });
+      }
+      node = node.children.get(part)!;
+    }
+    node.sections.push(section);
+  }
+  return root;
+}
+
+function SectionTreeGroup({
+  node,
+  depth,
+  selectedSectionId,
+  onSelectSection,
+  onViewSection,
+}: {
+  node: SectionTreeNode;
+  depth: number;
+  selectedSectionId: number | null;
+  onSelectSection: (s: Section) => void;
+  onViewSection: (id: number) => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const borderColors = ['border-gray-200', 'border-gray-300', 'border-gray-400', 'border-gray-500'];
+  const borderColor = borderColors[Math.min(depth, borderColors.length - 1)];
+  const totalCards = node.sections.reduce((sum, s) => sum + (s.card_count || 0), 0)
+    + Array.from(node.children.values()).reduce((sum, child) => {
+      const countAll = (n: SectionTreeNode): number =>
+        n.sections.reduce((s, sec) => s + (sec.card_count || 0), 0) + Array.from(n.children.values()).reduce((s, c) => s + countAll(c), 0);
+      return sum + countAll(child);
+    }, 0);
+
+  return (
+    <div className={`${depth > 0 ? `ml-3 border-l ${borderColor}` : ''}`}>
+      {depth > 0 && (
+        <div
+          onClick={() => setCollapsed(!collapsed)}
+          className="flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-gray-50 group/branch"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className={`h-2.5 w-2.5 text-gray-400 transition-transform duration-150 ${collapsed ? '' : 'rotate-90'}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+          <span className="text-[10px] font-semibold text-gray-500 truncate">{node.label}</span>
+          <span className="text-[9px] text-gray-400 tabular-nums">{totalCards > 0 ? totalCards : ''}</span>
+        </div>
+      )}
+      {!collapsed && (
+        <>
+          {node.sections.map((section) => (
+            <div
+              key={section.id}
+              onClick={() => onSelectSection(section)}
+              className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer transition-colors duration-150 ${
+                selectedSectionId === section.id
+                  ? 'bg-blue-50 text-blue-700'
+                  : 'hover:bg-gray-50 text-gray-700'
+              }`}
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  section.section_status === 'green'
+                    ? 'bg-green-400'
+                    : section.section_status === 'orange'
+                    ? 'bg-orange-400'
+                    : section.is_verified
+                    ? 'bg-green-400'
+                    : (section.flags?.length ?? 0) > 0
+                    ? 'bg-amber-400'
+                    : 'bg-gray-300'
+                }`}
+              />
+              <div className="flex-1 min-w-0">
+                <span className={`text-xs truncate block ${
+                  section.section_status === 'green' ? 'text-green-600' :
+                  section.section_status === 'orange' ? 'text-orange-500' :
+                  ''
+                }`}>{section.heading}</span>
+              </div>
+              {section.card_count > 0 && (
+                <span className="text-[10px] text-gray-400 tabular-nums shrink-0">
+                  {section.card_count}
+                </span>
+              )}
+              <ViewSectionButton onView={() => onViewSection(section.id)} />
+            </div>
+          ))}
+          {Array.from(node.children.entries()).map(([key, child]) => (
+            <SectionTreeGroup
+              key={key}
+              node={child}
+              depth={depth + 1}
+              selectedSectionId={selectedSectionId}
+              onSelectSection={onSelectSection}
+              onViewSection={onViewSection}
+            />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── ViewSectionButton: padded eye icon button for viewing section content ─────
 
 function ViewSectionButton({ onView }: { onView: () => void }) {
@@ -886,50 +1014,16 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                       </button>
                     </div>
 
-                    {/* Sections */}
+                    {/* Sections — grouped by curriculum path */}
                     {expandedTreeId === tree.id && expandedTree?.sections && (
-                      <div className="ml-5 border-l border-gray-200">
-                        {expandedTree.sections.map((section) => (
-                          <div
-                            key={section.id}
-                            onClick={() => selectSection(section)}
-                            className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer transition-colors duration-150 ${
-                              selectedSectionId === section.id
-                                ? 'bg-blue-50 text-blue-700'
-                                : 'hover:bg-gray-50 text-gray-700'
-                            }`}
-                          >
-                            <span
-                              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                                section.section_status === 'green'
-                                  ? 'bg-green-400'
-                                  : section.section_status === 'orange'
-                                  ? 'bg-orange-400'
-                                  : section.is_verified
-                                  ? 'bg-green-400'
-                                  : (section.flags?.length ?? 0) > 0
-                                  ? 'bg-amber-400'
-                                  : 'bg-gray-300'
-                              }`}
-                            />
-                            <div className="flex-1 min-w-0">
-                              <span className={`text-xs truncate block ${
-                                section.section_status === 'green' ? 'text-green-600' :
-                                section.section_status === 'orange' ? 'text-orange-500' :
-                                ''
-                              }`}>{section.heading}</span>
-                              <span className="text-[9px] text-gray-400 truncate block leading-tight">
-                                {section.curriculum_topic_path ?? `${expandedTree.name} › ${section.heading}`}
-                              </span>
-                            </div>
-                            {section.card_count > 0 && (
-                              <span className="text-[10px] text-gray-400 tabular-nums shrink-0">
-                                {section.card_count}
-                              </span>
-                            )}
-                            <ViewSectionButton onView={() => setViewingSectionId(section.id)} />
-                          </div>
-                        ))}
+                      <div className="ml-5">
+                        <SectionTreeGroup
+                          node={buildSectionTree(expandedTree.sections, expandedTree.name)}
+                          depth={0}
+                          selectedSectionId={selectedSectionId}
+                          onSelectSection={selectSection}
+                          onViewSection={setViewingSectionId}
+                        />
                       </div>
                     )}
                   </div>
