@@ -167,6 +167,14 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
             {editMode ? 'Cancel Edit' : 'Edit Section'}
           </button>
 
+          {/* Move Section */}
+          <button
+            onClick={() => { setShowCreateLeaf(!showCreateLeaf); }}
+            className={`px-3 py-1 rounded text-xs font-medium ${showCreateLeaf ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`}
+          >
+            {showCreateLeaf ? 'Cancel Move' : 'Move'}
+          </button>
+
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors duration-150"
@@ -258,6 +266,61 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
           </div>
         )}
 
+        {/* Move section panel */}
+        {showCreateLeaf && (
+          <div className="border-b border-gray-200 p-4 bg-indigo-50/50 shrink-0">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs font-medium text-indigo-700">Move section to a curriculum topic</span>
+              {section?.curriculum_topic_path && (
+                <span className="text-[9px] text-gray-400">Currently: {section.curriculum_topic_path}</span>
+              )}
+            </div>
+            <div className="space-y-2">
+              <div>
+                <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">Parent Topic</label>
+                <CurriculumPicker
+                  flatNodes={curriculumNodes}
+                  value={leafParentId}
+                  onChange={setLeafParentId}
+                  placeholder="Select parent topic..."
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">Leaf Name</label>
+                <input
+                  type="text"
+                  value={leafName}
+                  onChange={(e) => setLeafName(e.target.value)}
+                  className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:border-blue-500 mt-0.5"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    if (!leafParentId || !leafName.trim()) return;
+                    setCreatingLeaf(true);
+                    try {
+                      const node = await createCurriculumNode({ name: leafName.trim(), parent_id: leafParentId });
+                      await updateSection(sectionId, { curriculum_topic_id: node.id, curriculum_topic_path: node.path });
+                      setShowCreateLeaf(false);
+                      loadSection();
+                    } catch { /* ignore */ } finally {
+                      setCreatingLeaf(false);
+                    }
+                  }}
+                  disabled={creatingLeaf || !leafParentId || !leafName.trim()}
+                  className="px-3 py-1 rounded text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {creatingLeaf ? 'Moving...' : 'Move'}
+                </button>
+                <button onClick={() => setShowCreateLeaf(false)} className="px-3 py-1 rounded text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <div className="flex-1 flex items-center justify-center">
             <span className="text-sm text-gray-400">Loading section content...</span>
@@ -298,71 +361,6 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
                 <span>{section.table_count} tables</span>
                 <span>{section.card_count} cards</span>
               </div>
-
-              {/* Create Leaf Node shortcut */}
-              {section && !section.curriculum_topic_id && (
-                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs text-amber-700">No curriculum leaf match for this section.</p>
-                    {!showCreateLeaf && (
-                      <button
-                        onClick={() => setShowCreateLeaf(true)}
-                        className="px-2 py-1 rounded text-[11px] font-medium bg-amber-100 text-amber-700 hover:bg-amber-200"
-                      >
-                        Create & Map Leaf
-                      </button>
-                    )}
-                  </div>
-                  {showCreateLeaf && (
-                    <div className="mt-3 space-y-2">
-                      <div>
-                        <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">Parent Node</label>
-                        <CurriculumPicker
-                          flatNodes={curriculumNodes}
-                          value={leafParentId}
-                          onChange={setLeafParentId}
-                          placeholder="Select parent..."
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">Leaf Name</label>
-                        <input
-                          type="text"
-                          value={leafName}
-                          onChange={(e) => setLeafName(e.target.value)}
-                          className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:border-blue-500"
-                        />
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={async () => {
-                            if (!leafParentId || !leafName.trim()) return;
-                            setCreatingLeaf(true);
-                            try {
-                              const node = await createCurriculumNode({ name: leafName.trim(), parent_id: leafParentId });
-                              await updateSection(sectionId, { curriculum_topic_id: node.id, curriculum_topic_path: node.path });
-                              setShowCreateLeaf(false);
-                              loadSection();
-                            } catch { /* ignore */ } finally {
-                              setCreatingLeaf(false);
-                            }
-                          }}
-                          disabled={creatingLeaf || !leafParentId || !leafName.trim()}
-                          className="px-3 py-1 rounded text-xs font-medium bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
-                        >
-                          {creatingLeaf ? 'Creating...' : 'Create'}
-                        </button>
-                        <button
-                          onClick={() => setShowCreateLeaf(false)}
-                          className="px-3 py-1 rounded text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
 
               {/* Content HTML */}
               <div
