@@ -178,6 +178,15 @@ export async function pasteSectionContent(
   return res.data;
 }
 
+export async function updateSectionImage(
+  sectionId: number,
+  imageId: number,
+  params: { category?: string; alt_text_hint?: string; intended_position?: string | null }
+): Promise<SectionImage> {
+  const res = await http.patch<SectionImage>(`/sections/${sectionId}/images/${imageId}`, params);
+  return res.data;
+}
+
 export async function deleteSectionImage(sectionId: number, imageId: number): Promise<void> {
   await http.delete(`/sections/${sectionId}/images/${imageId}`);
 }

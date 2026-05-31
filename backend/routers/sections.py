@@ -246,6 +246,33 @@ async def upload_section_image(
     }
 
 
+@router.patch("/{section_id}/images/{image_id}")
+def update_section_image(section_id: int, image_id: int, body: dict, db: Session = Depends(get_db)):
+    """Update an image's category or alt_text_hint."""
+    img = db.get(SectionImage, image_id)
+    if not img or img.section_id != section_id:
+        raise HTTPException(404)
+
+    if "category" in body:
+        img.category = body["category"]
+    if "alt_text_hint" in body:
+        img.alt_text_hint = body["alt_text_hint"]
+    if "intended_position" in body:
+        img.intended_position = body["intended_position"]
+    db.commit()
+    db.refresh(img)
+    return {
+        "id": img.id,
+        "section_id": img.section_id,
+        "data_uri": img.data_uri,
+        "category": img.category,
+        "extracted_text": img.extracted_text,
+        "alt_text_hint": img.alt_text_hint,
+        "intended_position": img.intended_position,
+        "position": img.position,
+    }
+
+
 @router.delete("/{section_id}/images/{image_id}")
 def delete_section_image(section_id: int, image_id: int, db: Session = Depends(get_db)):
     """Delete an image from a section's library."""

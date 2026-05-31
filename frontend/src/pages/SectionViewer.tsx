@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getSection, verifySection, pasteSectionContent, updateSection, createCurriculumNode, getCurriculum } from '../api';
+import { getSection, verifySection, pasteSectionContent, updateSection, updateSectionImage, createCurriculumNode, getCurriculum } from '../api';
 import type { SectionDetail, SectionImage, CurriculumNode } from '../types';
 import CurriculumPicker from '../components/CurriculumPicker';
 
@@ -456,14 +456,53 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
         )}
       </div>
 
-      {/* Full-size image modal */}
+      {/* Full-size image modal with editable fields */}
       {selectedImage && (
         <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60" onClick={() => setSelectedImage(null)}>
           <div className="max-w-4xl max-h-[90vh] bg-white rounded-xl shadow-2xl p-4 overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <img src={selectedImage.data_uri} alt={selectedImage.alt_text_hint ?? ''} className="max-w-full" />
+            <img src={selectedImage.data_uri} alt={selectedImage.alt_text_hint ?? ''} className="max-w-full rounded" />
             {selectedImage.extracted_text && (
-              <p className="mt-3 text-xs text-gray-600">{selectedImage.extracted_text}</p>
+              <p className="mt-3 text-xs text-gray-600 bg-gray-50 p-2 rounded">{selectedImage.extracted_text}</p>
             )}
+            {/* Editable fields */}
+            <div className="mt-4 space-y-3 border-t border-gray-200 pt-3">
+              <div>
+                <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">Category</label>
+                <select
+                  value={selectedImage.category}
+                  onChange={async (e) => {
+                    await updateSectionImage(selectedImage.section_id, selectedImage.id, { category: e.target.value });
+                    setSelectedImage({ ...selectedImage, category: e.target.value as SectionImage['category'] });
+                    loadSection();
+                  }}
+                  className="mt-0.5 w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:border-blue-500"
+                >
+                  <option value="decorative">Decorative</option>
+                  <option value="diagram">Diagram</option>
+                  <option value="chart">Chart</option>
+                  <option value="table_image">Table Image</option>
+                  <option value="unclear">Unclear</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">Alt Text / Command</label>
+                <input
+                  type="text"
+                  defaultValue={selectedImage.alt_text_hint ?? ''}
+                  onBlur={async (e) => {
+                    if (e.target.value !== (selectedImage.alt_text_hint ?? '')) {
+                      await updateSectionImage(selectedImage.section_id, selectedImage.id, { alt_text_hint: e.target.value });
+                      setSelectedImage({ ...selectedImage, alt_text_hint: e.target.value });
+                      loadSection();
+                    }
+                  }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                  placeholder="e.g. REF:FRONT | Heart anatomy diagram"
+                  className="mt-0.5 w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:border-blue-500"
+                />
+                <p className="mt-1 text-[9px] text-gray-400">Commands: REF:FRONT, REF:BACK, EXTRACT, EXTRACT:CHART, EXTRACT:TABLE, EXTRACT:TEXT — use | to separate command from description</p>
+              </div>
+            </div>
           </div>
         </div>
       )}
