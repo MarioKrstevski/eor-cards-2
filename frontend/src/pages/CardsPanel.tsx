@@ -39,6 +39,7 @@ import { useSettings } from '../context/SettingsContext';
 interface CardsPanelProps {
   sectionId: number | null;
   topicPath?: string | null;
+  sectionIds?: number[] | null;
   topicTreeId?: number | null;
   refreshKey?: number;
   refreshUsage?: () => void;
@@ -671,6 +672,7 @@ const DEFAULT_COLUMN_VISIBILITY: VisibilityState = {
 export default function CardsPanel({
   sectionId,
   topicPath,
+  sectionIds,
   topicTreeId,
   refreshKey,
   refreshUsage,
@@ -834,28 +836,24 @@ export default function CardsPanel({
 
   // ── Fetch cards (server-side pagination) ─────────────────────────────────
   const fetchCards = useCallback(
-    async (secId: number | null, topic?: string | null, silent?: boolean, page?: number) => {
+    async (secId: number | null, topic?: string | null, silent?: boolean, page?: number, secIds?: number[] | null) => {
       if (!silent) setCardsLoading(true);
       const pageSize = pagination.pageSize;
       const offset = (page ?? pagination.pageIndex) * pageSize;
+      const filters = {
+        limit: pageSize,
+        offset,
+        ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
+        ...(markFilterId != null ? { mark_type_id: markFilterId } : {}),
+      };
       try {
         let resp;
         if (secId != null) {
-          resp = await getCards({
-            section_id: secId,
-            limit: pageSize,
-            offset,
-            ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
-            ...(markFilterId != null ? { mark_type_id: markFilterId } : {}),
-          });
+          resp = await getCards({ section_id: secId, ...filters });
+        } else if (secIds && secIds.length > 0) {
+          resp = await getCards({ section_ids: secIds.join(','), ...filters });
         } else if (topic) {
-          resp = await getCards({
-            topic,
-            limit: pageSize,
-            offset,
-            ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
-            ...(markFilterId != null ? { mark_type_id: markFilterId } : {}),
-          });
+          resp = await getCards({ topic, ...filters });
         } else {
           setCards([]);
           setTotalCards(0);
@@ -876,14 +874,14 @@ export default function CardsPanel({
   // Refetch on dependencies change
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-    fetchCards(sectionId, topicPath);
+    fetchCards(sectionId, topicPath, false, undefined, sectionIds);
     setSearchQ('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sectionId, topicPath, refreshKey, statusFilter, markFilterId]);
+  }, [sectionId, topicPath, sectionIds, refreshKey, statusFilter, markFilterId]);
 
   // Refetch on page change
   useEffect(() => {
-    fetchCards(sectionId, topicPath, true, pagination.pageIndex);
+    fetchCards(sectionId, topicPath, true, pagination.pageIndex, sectionIds);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pagination.pageIndex]);
 

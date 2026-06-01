@@ -76,6 +76,7 @@ def card_to_dict(card: Card, db: Session | None = None) -> dict:
 @router.get("")
 def list_cards(
     section_id: Optional[int] = None,
+    section_ids: Optional[str] = None,  # comma-separated
     topic_tree_id: Optional[int] = None,
     status: Optional[CardStatus] = None,
     is_reviewed: Optional[bool] = None,
@@ -90,15 +91,17 @@ def list_cards(
     q = db.query(Card).options(
         joinedload(Card.section),
     )
-    # Join Section once if any filter needs it
-    needs_section_join = bool(topic_tree_id or topic)
-    if needs_section_join:
-        q = q.join(Card.section)
+    if topic_tree_id:
+        q = q.join(Card.section).filter(Section.topic_tree_id == topic_tree_id)
     if section_id:
         q = q.filter(Card.section_id == section_id)
-    if topic_tree_id:
-        q = q.filter(Section.topic_tree_id == topic_tree_id)
+    if section_ids:
+        ids = [int(x) for x in section_ids.split(',') if x.strip().isdigit()]
+        if ids:
+            q = q.filter(Card.section_id.in_(ids))
     if topic:
+        if not topic_tree_id:
+            q = q.join(Card.section)
         q = q.filter(Section.curriculum_topic_path.startswith(topic))
     if status:
         q = q.filter(Card.status == status)

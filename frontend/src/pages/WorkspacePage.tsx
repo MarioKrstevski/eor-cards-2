@@ -62,16 +62,10 @@ function buildSectionTree<T extends SectionLike>(sections: T[], treeName: string
       root.sections.push(section);
       continue;
     }
-    // Strip the basePath prefix if provided (for curriculum action bar),
-    // also strip treeName prefix if the path starts with it (data may include it)
+    // Strip the basePath prefix if provided (for curriculum action bar)
     let relativePath = path;
     if (basePath && relativePath.startsWith(basePath)) {
       relativePath = relativePath.slice(basePath.length).replace(/^ > /, '');
-    } else if (relativePath.startsWith(treeName + ' > ')) {
-      relativePath = relativePath.slice(treeName.length + 3);
-    } else if (relativePath === treeName) {
-      root.sections.push(section);
-      continue;
     }
     const parts = relativePath.split(' > ');
     // Last part is the leaf (section heading), everything before is grouping
@@ -98,7 +92,6 @@ function SectionTreeGroup<T extends SectionLike>({
   renderSubtitle,
   onSectionMoved,
   onSelectGroup,
-  parentPath,
 }: {
   node: SectionTreeNode<T>;
   depth: number;
@@ -108,8 +101,7 @@ function SectionTreeGroup<T extends SectionLike>({
   onViewSection: (id: number) => void;
   renderSubtitle?: (s: T) => React.ReactNode;
   onSectionMoved?: () => void;
-  onSelectGroup?: (path: string) => void;
-  parentPath?: string;
+  onSelectGroup?: (sectionIds: number[]) => void;
 }) {
   const [collapsed, setCollapsed] = useState(depth > 0);
   const [viewingGroup, setViewingGroup] = useState(false);
@@ -145,8 +137,7 @@ function SectionTreeGroup<T extends SectionLike>({
             <span
               className="text-xs font-medium text-gray-600 truncate flex-1 cursor-pointer hover:text-blue-600"
               onClick={() => {
-                const groupPath = parentPath ? `${parentPath} > ${node.label}` : node.label;
-                onSelectGroup?.(groupPath);
+                onSelectGroup?.(collectIds(node));
               }}
             >{node.label}</span>
             {totalCards > 0 && <span className="text-[9px] text-gray-400 tabular-nums shrink-0">{totalCards}</span>}
@@ -185,7 +176,6 @@ function SectionTreeGroup<T extends SectionLike>({
               renderSubtitle={renderSubtitle}
               onSectionMoved={onSectionMoved}
               onSelectGroup={onSelectGroup}
-              parentPath={parentPath ? `${parentPath} > ${node.label}` : node.label}
             />
           ))}
           {/* Then orphan sections (no deeper group) at the end */}
@@ -724,6 +714,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
   const [expandedTreeId, setExpandedTreeId] = useState<number | null>(null);
   const [expandedTree, setExpandedTree] = useState<TopicTree | null>(null);
   const [selectedSectionId, setSelectedSectionId] = useState<number | null>(null);
+  const [selectedSectionIds, setSelectedSectionIds] = useState<number[] | null>(null);
   const [, setSelectedSection] = useState<Section | null>(null);
 
   // Curriculum
@@ -843,6 +834,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
   const selectSection = useCallback((section: Section) => {
     setSelectedSectionId(section.id);
     setSelectedSection(section);
+    setSelectedSectionIds(null);
     setSelectedTopicId(null);
     setSelectedTopicPath(null);
     setExpandedCurriculumPath(null);
@@ -1225,12 +1217,12 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                           onSelectSection={selectSection}
                           onViewSection={setViewingSectionId}
                           onSectionMoved={() => expandTree(tree.id)}
-                          onSelectGroup={(path) => {
+                          onSelectGroup={(ids) => {
                             setSelectedSectionId(null);
                             setSelectedSection(null);
-                            setSelectedTopicPath(path);
+                            setSelectedTopicPath(null);
+                            setSelectedSectionIds(ids);
                           }}
-                          parentPath=""
                         />
                       </div>
                     )}
@@ -1337,6 +1329,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
         <CardsPanel
           sectionId={selectedSectionId}
           topicPath={selectedTopicPath}
+          sectionIds={selectedSectionIds}
           topicTreeId={expandedTreeId}
           refreshKey={refreshKey}
           refreshUsage={refreshUsage}

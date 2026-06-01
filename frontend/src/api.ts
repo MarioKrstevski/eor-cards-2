@@ -308,6 +308,7 @@ export async function bulkMarkCards(params: {
 
 export async function getCards(params?: {
   section_id?: number;
+  section_ids?: string;
   topic?: string;
   status?: CardStatus;
   is_reviewed?: boolean;
