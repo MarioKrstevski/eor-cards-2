@@ -128,11 +128,11 @@ function SectionTreeGroup<T extends SectionLike>({
           >
             <button
               onClick={() => setCollapsed(!collapsed)}
-              className="p-1 -m-1 shrink-0 cursor-pointer"
+              className="p-0.5 -m-0.5 shrink-0 cursor-pointer"
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
-                className={`h-3.5 w-3.5 text-gray-400 transition-transform duration-150 ${collapsed ? '' : 'rotate-90'}`}
+                className={`h-3 w-3 text-gray-400 transition-transform duration-150 ${collapsed ? '' : 'rotate-90'}`}
                 fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
               >
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
