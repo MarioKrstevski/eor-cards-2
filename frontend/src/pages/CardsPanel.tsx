@@ -1489,7 +1489,7 @@ export default function CardsPanel({
 
   // ── Empty state ──────────────────────────────────────────────────────────
 
-  const hasContext = sectionId != null || topicPath != null;
+  const hasContext = sectionId != null || topicPath != null || (sectionIds != null && sectionIds.length > 0);
 
   if (!hasContext) {
     return (
