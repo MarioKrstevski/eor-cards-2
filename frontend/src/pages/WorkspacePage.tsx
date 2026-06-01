@@ -62,10 +62,17 @@ function buildSectionTree<T extends SectionLike>(sections: T[], treeName: string
       root.sections.push(section);
       continue;
     }
-    // Strip the basePath prefix if provided (for curriculum action bar)
-    const relativePath = basePath && path.startsWith(basePath)
-      ? path.slice(basePath.length).replace(/^ > /, '')
-      : path;
+    // Strip the basePath prefix if provided (for curriculum action bar),
+    // also strip treeName prefix if the path starts with it (data may include it)
+    let relativePath = path;
+    if (basePath && relativePath.startsWith(basePath)) {
+      relativePath = relativePath.slice(basePath.length).replace(/^ > /, '');
+    } else if (relativePath.startsWith(treeName + ' > ')) {
+      relativePath = relativePath.slice(treeName.length + 3);
+    } else if (relativePath === treeName) {
+      root.sections.push(section);
+      continue;
+    }
     const parts = relativePath.split(' > ');
     // Last part is the leaf (section heading), everything before is grouping
     const groupParts = parts.length > 1 ? parts.slice(0, -1) : [];
