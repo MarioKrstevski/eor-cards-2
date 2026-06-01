@@ -81,6 +81,7 @@ def list_cards(
     is_reviewed: Optional[bool] = None,
     mark_type_id: Optional[int] = None,
     tag: Optional[str] = None,
+    topic: Optional[str] = None,
     search_q: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
@@ -89,10 +90,16 @@ def list_cards(
     q = db.query(Card).options(
         joinedload(Card.section),
     )
+    # Join Section once if any filter needs it
+    needs_section_join = bool(topic_tree_id or topic)
+    if needs_section_join:
+        q = q.join(Card.section)
     if section_id:
         q = q.filter(Card.section_id == section_id)
     if topic_tree_id:
-        q = q.join(Card.section).filter(Section.topic_tree_id == topic_tree_id)
+        q = q.filter(Section.topic_tree_id == topic_tree_id)
+    if topic:
+        q = q.filter(Section.curriculum_topic_path.startswith(topic))
     if status:
         q = q.filter(Card.status == status)
     if is_reviewed is not None:

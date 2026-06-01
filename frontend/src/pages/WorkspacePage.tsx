@@ -90,6 +90,8 @@ function SectionTreeGroup<T extends SectionLike>({
   onViewSection,
   renderSubtitle,
   onSectionMoved,
+  onSelectGroup,
+  parentPath,
 }: {
   node: SectionTreeNode<T>;
   depth: number;
@@ -99,6 +101,8 @@ function SectionTreeGroup<T extends SectionLike>({
   onViewSection: (id: number) => void;
   renderSubtitle?: (s: T) => React.ReactNode;
   onSectionMoved?: () => void;
+  onSelectGroup?: (path: string) => void;
+  parentPath?: string;
 }) {
   const [collapsed, setCollapsed] = useState(depth > 0);
   const [viewingGroup, setViewingGroup] = useState(false);
@@ -121,17 +125,23 @@ function SectionTreeGroup<T extends SectionLike>({
       {depth > 0 && (
         <>
           <div
-            onClick={() => setCollapsed(!collapsed)}
-            className="flex items-center gap-1.5 pl-2 pr-2 py-1 cursor-pointer hover:bg-gray-50"
+            className="flex items-center gap-1.5 pl-2 pr-2 py-1 hover:bg-gray-50"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
-              className={`h-2.5 w-2.5 text-gray-400 shrink-0 transition-transform duration-150 ${collapsed ? '' : 'rotate-90'}`}
+              className={`h-2.5 w-2.5 text-gray-400 shrink-0 transition-transform duration-150 cursor-pointer ${collapsed ? '' : 'rotate-90'}`}
               fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+              onClick={() => setCollapsed(!collapsed)}
             >
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
             </svg>
-            <span className="text-xs font-medium text-gray-600 truncate flex-1">{node.label}</span>
+            <span
+              className="text-xs font-medium text-gray-600 truncate flex-1 cursor-pointer hover:text-blue-600"
+              onClick={() => {
+                const groupPath = parentPath ? `${parentPath} > ${node.label}` : node.label;
+                onSelectGroup?.(groupPath);
+              }}
+            >{node.label}</span>
             {totalCards > 0 && <span className="text-[9px] text-gray-400 tabular-nums shrink-0">{totalCards}</span>}
             <button
               onClick={(e) => { e.stopPropagation(); setViewingGroup(true); }}
@@ -167,6 +177,8 @@ function SectionTreeGroup<T extends SectionLike>({
               onViewSection={onViewSection}
               renderSubtitle={renderSubtitle}
               onSectionMoved={onSectionMoved}
+              onSelectGroup={onSelectGroup}
+              parentPath={parentPath ? `${parentPath} > ${node.label}` : node.label}
             />
           ))}
           {/* Then orphan sections (no deeper group) at the end */}
@@ -1206,6 +1218,12 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                           onSelectSection={selectSection}
                           onViewSection={setViewingSectionId}
                           onSectionMoved={() => expandTree(tree.id)}
+                          onSelectGroup={(path) => {
+                            setSelectedSectionId(null);
+                            setSelectedSection(null);
+                            setSelectedTopicPath(path);
+                          }}
+                          parentPath={expandedTree.name}
                         />
                       </div>
                     )}
