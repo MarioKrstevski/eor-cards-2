@@ -1223,7 +1223,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                             setSelectedSection(null);
                             setSelectedTopicPath(path);
                           }}
-                          parentPath={expandedTree.name}
+                          parentPath=""
                         />
                       </div>
                     )}
