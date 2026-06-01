@@ -126,14 +126,18 @@ function SectionTreeGroup<T extends SectionLike>({
           <div
             className="flex items-center gap-1.5 pl-2 pr-2 py-1 hover:bg-gray-50"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className={`h-2.5 w-2.5 text-gray-400 shrink-0 transition-transform duration-150 cursor-pointer ${collapsed ? '' : 'rotate-90'}`}
-              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            <button
               onClick={() => setCollapsed(!collapsed)}
+              className="p-1 -m-1 shrink-0 cursor-pointer"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-            </svg>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className={`h-3.5 w-3.5 text-gray-400 transition-transform duration-150 ${collapsed ? '' : 'rotate-90'}`}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
             <span
               className="text-xs font-medium text-gray-600 truncate flex-1 cursor-pointer hover:text-blue-600"
               onClick={() => {
