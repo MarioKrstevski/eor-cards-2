@@ -723,6 +723,7 @@ export default function CardsPanel({
   const [markFilterId, setMarkFilterId] = useState<number | null>(null);
   const [showMarkMenu, setShowMarkMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showDeleteMenu, setShowDeleteMenu] = useState(false);
   const [showFixBatchModal, setShowFixBatchModal] = useState(false);
   const [fixBatchPrompt, setFixBatchPrompt] = useState('');
   const [fixBatchMarkId, setFixBatchMarkId] = useState<number | null>(null);
@@ -1401,17 +1402,27 @@ export default function CardsPanel({
     }
   }, [selectedIds, fetchCards, sectionId, topicPath, onReviewChange]);
 
-  const handleBulkDelete = useCallback(async () => {
-    if (selectedIds.size === 0) return;
+  const handleBulkDelete = useCallback(async (scope: 'selected' | 'all') => {
+    if (scope === 'selected' && selectedIds.size === 0) return;
     try {
-      await bulkDeleteCards([...selectedIds]);
+      if (scope === 'all') {
+        if (sectionId) {
+          await bulkDeleteCards({ section_id: sectionId });
+        } else if (sectionIds && sectionIds.length > 0) {
+          await bulkDeleteCards({ section_ids: sectionIds });
+        } else if (topicTreeId) {
+          await bulkDeleteCards({ topic_tree_id: topicTreeId });
+        }
+      } else {
+        await bulkDeleteCards({ card_ids: [...selectedIds] });
+      }
       setSelectedIds(new Set());
-      fetchCards(sectionId, topicPath, true);
+      fetchCards(sectionId, topicPath, true, undefined, sectionIds);
       onReviewChange?.();
     } catch {
       setActionError('Bulk delete failed');
     }
-  }, [selectedIds, fetchCards, sectionId, topicPath, onReviewChange]);
+  }, [selectedIds, fetchCards, sectionId, sectionIds, topicTreeId, topicPath, onReviewChange]);
 
   const handleBulkMark = useCallback(async (markTypeId: number | null) => {
     if (selectedIds.size === 0) return;
@@ -1765,12 +1776,41 @@ export default function CardsPanel({
               </div>
             )}
           </div>
-          <button
-            onClick={handleBulkDelete}
-            className="px-2.5 py-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors duration-150"
-          >
-            Delete
-          </button>
+          <div className="relative">
+            {selectedIds.size === filteredCards.length && totalCards > selectedIds.size ? (
+              <>
+                <button
+                  onClick={() => setShowDeleteMenu(v => !v)}
+                  className="px-2.5 py-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors duration-150"
+                >
+                  Delete ▾
+                </button>
+                {showDeleteMenu && (
+                  <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 min-w-[190px] py-1">
+                    <button
+                      onClick={() => { setShowDeleteMenu(false); handleBulkDelete('selected'); }}
+                      className="block w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                    >
+                      Selected only ({selectedIds.size})
+                    </button>
+                    <button
+                      onClick={() => { setShowDeleteMenu(false); handleBulkDelete('all'); }}
+                      className="block w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50"
+                    >
+                      All cards in topic ({totalCards})
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <button
+                onClick={() => handleBulkDelete('selected')}
+                className="px-2.5 py-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors duration-150"
+              >
+                Delete
+              </button>
+            )}
+          </div>
           <button
             onClick={() => setSelectedIds(new Set())}
             className="ml-auto p-1 text-blue-400 hover:text-blue-700 rounded"

@@ -236,11 +236,28 @@ def bulk_mark_reviewed(body: BulkReviewRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/bulk-delete", status_code=200)
-def bulk_delete_cards(body: BulkReviewRequest, db: Session = Depends(get_db)):
-    if body.card_ids:
-        db.query(Card).filter(Card.id.in_(body.card_ids)).delete(synchronize_session=False)
-        db.commit()
-    return {"deleted": len(body.card_ids)}
+def bulk_delete_cards(body: dict, db: Session = Depends(get_db)):
+    card_ids = body.get("card_ids", [])
+    section_id = body.get("section_id")
+    section_ids = body.get("section_ids", [])
+    topic_tree_id = body.get("topic_tree_id")
+
+    q = db.query(Card)
+    if card_ids:
+        q = q.filter(Card.id.in_(card_ids))
+    elif section_ids:
+        q = q.filter(Card.section_id.in_(section_ids))
+    elif section_id:
+        q = q.filter(Card.section_id == section_id)
+    elif topic_tree_id:
+        q = q.join(Card.section).filter(Section.topic_tree_id == topic_tree_id)
+    else:
+        return {"deleted": 0}
+
+    count = q.count()
+    q.delete(synchronize_session=False)
+    db.commit()
+    return {"deleted": count}
 
 
 @router.delete("/{card_id}", status_code=204)

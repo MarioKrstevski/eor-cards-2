@@ -365,8 +365,13 @@ export async function bulkMarkReviewed(cardIds: number[], isReviewed = true): Pr
   return res.data;
 }
 
-export async function bulkDeleteCards(cardIds: number[]): Promise<{ deleted: number }> {
-  const res = await http.post<{ deleted: number }>('/cards/bulk-delete', { card_ids: cardIds });
+export async function bulkDeleteCards(params: {
+  card_ids?: number[];
+  section_id?: number;
+  section_ids?: number[];
+  topic_tree_id?: number;
+}): Promise<{ deleted: number }> {
+  const res = await http.post<{ deleted: number }>('/cards/bulk-delete', params);
   return res.data;
 }
 
