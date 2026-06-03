@@ -1388,6 +1388,32 @@ export default function CardsPanel({
     }
   }, [selectedModel, fetchCards, sectionId, topicPath, refreshUsage]);
 
+  const [showBulkRegenModal, setShowBulkRegenModal] = useState(false);
+  const [bulkRegenPrompt, setBulkRegenPrompt] = useState('');
+  const [bulkRegenProgress, setBulkRegenProgress] = useState<{ done: number; total: number } | null>(null);
+
+  const handleBulkRegen = useCallback(async (prompt: string) => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    setBulkRegenProgress({ done: 0, total: ids.length });
+    try {
+      for (let i = 0; i < ids.length; i++) {
+        await regenerateCard(ids[i], { model: selectedModel, prompt: prompt || undefined });
+        setBulkRegenProgress({ done: i + 1, total: ids.length });
+      }
+      setShowBulkRegenModal(false);
+      setBulkRegenPrompt('');
+      setBulkRegenProgress(null);
+      setSelectedIds(new Set());
+      fetchCards(sectionId, topicPath, true, undefined, sectionIds);
+      refreshUsage?.();
+      onReviewChange?.();
+    } catch {
+      setActionError('Bulk regeneration failed');
+      setBulkRegenProgress(null);
+    }
+  }, [selectedIds, selectedModel, fetchCards, sectionId, sectionIds, topicPath, refreshUsage, onReviewChange]);
+
   // ── Bulk actions ─────────────────────────────────────────────────────────
 
   const handleBulkReview = useCallback(async (markAs: boolean) => {
@@ -1745,6 +1771,12 @@ export default function CardsPanel({
             title="Generate vignette + teaching case for selected cards (grouped by condition)"
           >
             Gen Vignettes &amp; Cases
+          </button>
+          <button
+            onClick={() => setShowBulkRegenModal(true)}
+            className="px-2.5 py-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
+          >
+            Regenerate ({selectedIds.size})
           </button>
           <div className="relative">
             <button
@@ -2119,6 +2151,51 @@ export default function CardsPanel({
 
       {viewSectionId != null && (
         <SectionViewer sectionId={viewSectionId} onClose={() => setViewSectionId(null)} />
+      )}
+
+      {/* Bulk regenerate modal */}
+      {showBulkRegenModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => { if (!bulkRegenProgress) setShowBulkRegenModal(false); }}>
+          <div className="bg-white rounded-xl shadow-2xl w-[420px] p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-gray-800 mb-3">Regenerate {selectedIds.size} cards</h3>
+            <p className="text-xs text-gray-500 mb-3">Cards will be regenerated one by one using the current model ({selectedModel}). You can optionally provide guidance.</p>
+            <textarea
+              value={bulkRegenPrompt}
+              onChange={(e) => setBulkRegenPrompt(e.target.value)}
+              placeholder="Optional guidance — e.g. 'make cards more specific' or 'focus on diagnostic criteria'..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-amber-500 resize-none"
+              rows={3}
+              disabled={!!bulkRegenProgress}
+            />
+            {bulkRegenProgress && (
+              <div className="mt-3">
+                <div className="flex items-center justify-between text-[10px] text-gray-500 mb-1">
+                  <span>Regenerating...</span>
+                  <span>{bulkRegenProgress.done} / {bulkRegenProgress.total}</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-1.5">
+                  <div className="bg-amber-500 h-1.5 rounded-full transition-all duration-300" style={{ width: `${(bulkRegenProgress.done / bulkRegenProgress.total) * 100}%` }} />
+                </div>
+              </div>
+            )}
+            <div className="mt-4 flex gap-2 justify-end">
+              <button
+                onClick={() => { setShowBulkRegenModal(false); setBulkRegenPrompt(''); }}
+                disabled={!!bulkRegenProgress}
+                className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleBulkRegen(bulkRegenPrompt)}
+                disabled={!!bulkRegenProgress}
+                className="px-3 py-1.5 text-xs font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-50"
+              >
+                {bulkRegenProgress ? `Working... (${bulkRegenProgress.done}/${bulkRegenProgress.total})` : 'Regenerate All'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
