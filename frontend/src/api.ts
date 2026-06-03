@@ -414,7 +414,9 @@ export async function getActiveJobs(): Promise<GenerationJob[]> {
 }
 
 export async function startSupplemental(params: {
-  card_ids: number[];
+  card_ids?: number[];
+  section_id?: number;
+  section_ids?: number[];
   rule_set_id: number;
   model: string;
   replace_existing?: boolean;

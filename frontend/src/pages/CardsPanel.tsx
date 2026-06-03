@@ -721,9 +721,9 @@ export default function CardsPanel({
   // ── Review marks ─────────────────────────────────────────────────────────
   const [markTypes, setMarkTypes] = useState<ReviewMarkType[]>([]);
   const [markFilterId, setMarkFilterId] = useState<number | null>(null);
-  const [showMarkMenu, setShowMarkMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showDeleteMenu, setShowDeleteMenu] = useState(false);
+  const [showActionsMenu, setShowActionsMenu] = useState(false);
   const [showFixBatchModal, setShowFixBatchModal] = useState(false);
   const [fixBatchPrompt, setFixBatchPrompt] = useState('');
   const [fixBatchMarkId, setFixBatchMarkId] = useState<number | null>(null);
@@ -1455,7 +1455,7 @@ export default function CardsPanel({
     const cardIds = [...selectedIds];
     try {
       await bulkMarkCards({ card_ids: cardIds, mark_type_id: markTypeId });
-      setShowMarkMenu(false);
+      setShowActionsMenu(false);
       fetchCards(sectionId, topicPath, true);
       onReviewChange?.();
       // If marking with a real type, immediately open the fix batch modal
@@ -1491,14 +1491,22 @@ export default function CardsPanel({
     }
   }, [fixBatchCardIds, fixBatchMarkId, fixBatchPrompt, selectedModel, fetchCards, sectionId, topicPath]);
 
-  const handleGenSupplemental = useCallback(async () => {
-    if (selectedIds.size === 0 || !selectedRuleSetId || !selectedModel) return;
+  const handleGenSupplemental = useCallback(async (scope: 'selected' | 'all') => {
+    if (!selectedRuleSetId || !selectedModel) return;
     try {
-      const { job_id } = await startSupplemental({
-        card_ids: [...selectedIds],
+      const params: Parameters<typeof startSupplemental>[0] = {
         rule_set_id: selectedRuleSetId,
         model: selectedModel,
-      });
+        replace_existing: true,
+      };
+      if (scope === 'all') {
+        if (sectionId) params.section_id = sectionId;
+        else if (sectionIds && sectionIds.length > 0) params.section_ids = sectionIds;
+        else { params.card_ids = [...selectedIds]; }
+      } else {
+        params.card_ids = [...selectedIds];
+      }
+      const { job_id } = await startSupplemental(params);
       setJobRunning(true);
       setJobProgress(null);
       intervalRef.current = setInterval(async () => {
@@ -1672,15 +1680,6 @@ export default function CardsPanel({
           {searchQ.trim() ? `${filteredCards.length} / ${totalCards}` : totalCards} cards
         </span>
 
-        {/* Export */}
-        {exportUrl && (
-          <a
-            href={exportUrl}
-            className="px-2.5 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
-          >
-            Export CSV
-          </a>
-        )}
       </div>
 
       {/* Selection action bar — only shown when cards are selected */}
@@ -1688,102 +1687,90 @@ export default function CardsPanel({
         <div className="shrink-0 bg-blue-50 border-b border-blue-200 px-4 py-1.5 flex items-center gap-2">
           <span className="text-xs text-blue-700 font-semibold">{selectedIds.size} selected</span>
           <div className="w-px h-4 bg-blue-200" />
-          <button
-            onClick={() => setAnkifyOpen(true)}
-            className="px-2.5 py-1 text-xs font-medium text-violet-700 bg-violet-50 border border-violet-200 rounded-lg hover:bg-violet-100 transition-colors duration-150"
-          >
-            Ankify
-          </button>
-          <button
-            onClick={() => setShowCreatePresentation(true)}
-            className="px-2.5 py-1 text-xs font-medium text-teal-700 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 transition-colors duration-150"
-            title="Save as a shareable Ankify presentation"
-          >
-            Save Presentation
-          </button>
-          {/* Mark as... dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setShowMarkMenu(v => !v)}
-              className="px-2.5 py-1 text-xs font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 transition-colors duration-150"
-            >
-              Mark as ▾
-            </button>
-            {showMarkMenu && (
-              <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 min-w-[160px] py-1">
-                {markTypes.map(m => (
-                  <button
-                    key={m.id}
-                    onClick={() => handleBulkMark(m.id)}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 text-left"
-                  >
-                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
-                    {m.name}
-                  </button>
-                ))}
-                {markTypes.length > 0 && <div className="border-t border-gray-100 my-1" />}
-                <button
-                  onClick={() => handleBulkMark(null)}
-                  className="w-full px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50 text-left"
-                >
-                  Clear mark
-                </button>
-              </div>
-            )}
-          </div>
-          {/* Create Fix Batch button — only show when marks available */}
-          {markTypes.length > 0 && (
-            <button
-              onClick={() => {
-                setFixBatchMarkId(markFilterId ?? (markTypes[0]?.id ?? null));
-                setFixBatchPrompt('');
-                setShowFixBatchModal(true);
-              }}
-              className="px-2.5 py-1 text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors duration-150"
-            >
-              AI Fix Batch
-            </button>
-          )}
+
+          {/* Mark Reviewed / Unmark */}
           {(() => {
             const selectedCards = cards.filter(c => selectedIds.has(c.id));
             const allReviewed = selectedCards.length > 0 && selectedCards.every(c => c.is_reviewed);
-            return allReviewed ? (
+            return (
               <button
-                onClick={() => handleBulkReview(false)}
-                className="px-2.5 py-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
-                title="Set selected cards back to unreviewed"
+                onClick={() => handleBulkReview(!allReviewed)}
+                className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors duration-150 ${allReviewed ? 'text-amber-700 bg-amber-50 border-amber-200 hover:bg-amber-100' : 'text-green-700 bg-green-50 border-green-200 hover:bg-green-100'}`}
               >
-                Unmark Reviewed
-              </button>
-            ) : (
-              <button
-                onClick={() => handleBulkReview(true)}
-                className="px-2.5 py-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors duration-150"
-              >
-                Mark Reviewed
+                {allReviewed ? 'Unmark Reviewed' : 'Mark Reviewed'}
               </button>
             );
           })()}
-          <button
-            onClick={handleGenSupplemental}
-            disabled={jobRunning || !selectedRuleSetId}
-            className="px-2.5 py-1 text-xs font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 disabled:opacity-50 transition-colors duration-150"
-            title="Generate vignette + teaching case for selected cards (grouped by condition)"
-          >
-            Gen Vignettes &amp; Cases
-          </button>
-          <button
-            onClick={() => setShowBulkRegenModal(true)}
-            className="px-2.5 py-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
-          >
-            Regenerate ({selectedIds.size})
-          </button>
+
+          {/* Actions dropdown — groups less common actions */}
+          <div className="relative">
+            <button
+              onClick={() => setShowActionsMenu(v => !v)}
+              className="px-2.5 py-1 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+            >
+              Actions ▾
+            </button>
+            {showActionsMenu && (
+              <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 min-w-[200px] py-1">
+                <button onClick={() => { setShowActionsMenu(false); setAnkifyOpen(true); }} className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50">
+                  Ankify
+                </button>
+                <button onClick={() => { setShowActionsMenu(false); setShowCreatePresentation(true); }} className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50">
+                  Save Presentation
+                </button>
+                <div className="border-t border-gray-100 my-1" />
+                <button onClick={() => { setShowActionsMenu(false); setShowBulkRegenModal(true); }} className="w-full text-left px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50">
+                  Regenerate ({selectedIds.size})
+                </button>
+                <button
+                  onClick={() => { setShowActionsMenu(false); handleGenSupplemental('selected'); }}
+                  disabled={jobRunning || !selectedRuleSetId}
+                  className="w-full text-left px-3 py-1.5 text-xs text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+                >
+                  Gen Vignettes — selected ({selectedIds.size})
+                </button>
+                {(sectionId || (sectionIds && sectionIds.length > 0)) && (
+                  <button
+                    onClick={() => { setShowActionsMenu(false); handleGenSupplemental('all'); }}
+                    disabled={jobRunning || !selectedRuleSetId}
+                    className="w-full text-left px-3 py-1.5 text-xs text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+                  >
+                    Gen Vignettes — all in topic
+                  </button>
+                )}
+                <div className="border-t border-gray-100 my-1" />
+                {markTypes.length > 0 && (
+                  <>
+                    <p className="px-3 py-1 text-[9px] font-semibold text-gray-400 uppercase tracking-wide">Mark as</p>
+                    {markTypes.map(m => (
+                      <button key={m.id} onClick={() => { setShowActionsMenu(false); handleBulkMark(m.id); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 text-left">
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
+                        {m.name}
+                      </button>
+                    ))}
+                    <button onClick={() => { setShowActionsMenu(false); handleBulkMark(null); }} className="w-full px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50 text-left">
+                      Clear mark
+                    </button>
+                    <div className="border-t border-gray-100 my-1" />
+                    <button
+                      onClick={() => { setShowActionsMenu(false); setFixBatchMarkId(markFilterId ?? (markTypes[0]?.id ?? null)); setFixBatchPrompt(''); setShowFixBatchModal(true); }}
+                      className="w-full text-left px-3 py-1.5 text-xs text-purple-700 hover:bg-purple-50"
+                    >
+                      AI Fix Batch
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Export CSV dropdown */}
           <div className="relative">
             <button
               onClick={() => setShowExportMenu(v => !v)}
               className="px-2.5 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
             >
-              Export CSV ▾
+              Export ▾
             </button>
             {showExportMenu && (
               <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 min-w-[170px] py-1">
@@ -1808,6 +1795,8 @@ export default function CardsPanel({
               </div>
             )}
           </div>
+
+          {/* Delete */}
           <div className="relative">
             {selectedIds.size === filteredCards.length && totalCards > selectedIds.size ? (
               <>

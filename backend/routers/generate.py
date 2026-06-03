@@ -42,7 +42,9 @@ class SupplementalEstimateRequest(BaseModel):
 
 
 class SupplementalStartRequest(BaseModel):
-    card_ids: list[int]
+    card_ids: Optional[list[int]] = None
+    section_id: Optional[int] = None
+    section_ids: Optional[list[int]] = None
     rule_set_id: int
     model: str
     replace_existing: bool = False
@@ -156,7 +158,14 @@ def start_supplemental(body: SupplementalStartRequest, bg: BackgroundTasks, db: 
     rs = db.get(RuleSet, body.rule_set_id)
     if not rs:
         raise HTTPException(404, "Rule set not found")
-    cards = db.query(Card).filter(Card.id.in_(body.card_ids)).all()
+    if body.card_ids:
+        cards = db.query(Card).filter(Card.id.in_(body.card_ids)).all()
+    elif body.section_ids:
+        cards = db.query(Card).filter(Card.section_id.in_(body.section_ids)).all()
+    elif body.section_id:
+        cards = db.query(Card).filter(Card.section_id == body.section_id).all()
+    else:
+        cards = []
     if not cards:
         raise HTTPException(400, "No cards found")
 
