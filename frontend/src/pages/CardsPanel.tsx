@@ -1392,8 +1392,25 @@ export default function CardsPanel({
   const [bulkRegenPrompt, setBulkRegenPrompt] = useState('');
   const [bulkRegenProgress, setBulkRegenProgress] = useState<{ done: number; total: number } | null>(null);
 
-  const handleBulkRegen = useCallback(async (prompt: string) => {
-    const ids = [...selectedIds];
+  const [bulkRegenScope, setBulkRegenScope] = useState<'selected' | 'all'>('selected');
+
+  const handleBulkRegen = useCallback(async (prompt: string, scope: 'selected' | 'all') => {
+    let ids: number[];
+    if (scope === 'all') {
+      // Fetch all card IDs for the current context
+      try {
+        const allParams: Parameters<typeof getCards>[0] = { limit: 10000, offset: 0 };
+        if (sectionId) allParams.section_id = sectionId;
+        else if (sectionIds && sectionIds.length > 0) allParams.section_ids = sectionIds.join(',');
+        const resp = await getCards(allParams);
+        ids = resp.cards.map(c => c.id);
+      } catch {
+        setActionError('Failed to fetch all cards');
+        return;
+      }
+    } else {
+      ids = [...selectedIds];
+    }
     if (ids.length === 0) return;
     setBulkRegenProgress({ done: 0, total: ids.length });
     try {
@@ -1412,7 +1429,7 @@ export default function CardsPanel({
       setActionError('Bulk regeneration failed');
       setBulkRegenProgress(null);
     }
-  }, [selectedIds, selectedModel, fetchCards, sectionId, sectionIds, topicPath, refreshUsage, onReviewChange]);
+  }, [selectedIds, selectedModel, sectionId, sectionIds, fetchCards, topicPath, refreshUsage, onReviewChange]);
 
   // ── Bulk actions ─────────────────────────────────────────────────────────
 
@@ -1719,9 +1736,14 @@ export default function CardsPanel({
                   Save Presentation
                 </button>
                 <div className="border-t border-gray-100 my-1" />
-                <button onClick={() => { setShowActionsMenu(false); setShowBulkRegenModal(true); }} className="w-full text-left px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50">
-                  Regenerate ({selectedIds.size})
+                <button onClick={() => { setShowActionsMenu(false); setBulkRegenScope('selected'); setShowBulkRegenModal(true); }} className="w-full text-left px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50">
+                  Regenerate — selected ({selectedIds.size})
                 </button>
+                {(sectionId || (sectionIds && sectionIds.length > 0)) && (
+                  <button onClick={() => { setShowActionsMenu(false); setBulkRegenScope('all'); setShowBulkRegenModal(true); }} className="w-full text-left px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50">
+                    Regenerate — all in topic ({totalCards})
+                  </button>
+                )}
                 <button
                   onClick={() => { setShowActionsMenu(false); handleGenSupplemental('selected'); }}
                   disabled={jobRunning || !selectedRuleSetId}
@@ -2146,8 +2168,8 @@ export default function CardsPanel({
       {showBulkRegenModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => { if (!bulkRegenProgress) setShowBulkRegenModal(false); }}>
           <div className="bg-white rounded-xl shadow-2xl w-[420px] p-5" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold text-gray-800 mb-3">Regenerate {selectedIds.size} cards</h3>
-            <p className="text-xs text-gray-500 mb-3">Cards will be regenerated one by one using the current model ({selectedModel}). You can optionally provide guidance.</p>
+            <h3 className="text-sm font-semibold text-gray-800 mb-3">Regenerate {bulkRegenScope === 'all' ? `all ${totalCards}` : selectedIds.size} cards</h3>
+            <p className="text-xs text-gray-500 mb-3">Cards will be regenerated one by one using {selectedModel}. You can optionally provide guidance.</p>
             <textarea
               value={bulkRegenPrompt}
               onChange={(e) => setBulkRegenPrompt(e.target.value)}
@@ -2176,7 +2198,7 @@ export default function CardsPanel({
                 Cancel
               </button>
               <button
-                onClick={() => handleBulkRegen(bulkRegenPrompt)}
+                onClick={() => handleBulkRegen(bulkRegenPrompt, bulkRegenScope)}
                 disabled={!!bulkRegenProgress}
                 className="px-3 py-1.5 text-xs font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-50"
               >
