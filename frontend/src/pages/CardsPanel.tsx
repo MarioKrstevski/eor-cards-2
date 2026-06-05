@@ -1749,7 +1749,7 @@ export default function CardsPanel({
                   disabled={jobRunning || !selectedRuleSetId}
                   className="w-full text-left px-3 py-1.5 text-xs text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
                 >
-                  Gen Vignettes — selected ({selectedIds.size})
+                  Gen Vignettes &amp; Cases — selected ({selectedIds.size})
                 </button>
                 {(sectionId || (sectionIds && sectionIds.length > 0)) && (
                   <button
@@ -1757,7 +1757,7 @@ export default function CardsPanel({
                     disabled={jobRunning || !selectedRuleSetId}
                     className="w-full text-left px-3 py-1.5 text-xs text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
                   >
-                    Gen Vignettes — all in topic
+                    Gen Vignettes &amp; Cases — all in topic
                   </button>
                 )}
                 <div className="border-t border-gray-100 my-1" />
