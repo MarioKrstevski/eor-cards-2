@@ -1964,7 +1964,7 @@ export default function CardsPanel({
           </div>
         ) : (
           // Table view — Excel-like grid
-          <div ref={tableContainerRef} className="overflow-auto">
+          <div ref={tableContainerRef} className="overflow-auto h-full">
             <table className="w-full text-left border-collapse">
               <thead className="bg-gray-50 sticky top-0 z-10">
                 {table.getHeaderGroups().map((headerGroup) => (
