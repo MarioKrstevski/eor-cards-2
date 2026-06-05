@@ -2,9 +2,9 @@
 import re
 import anthropic
 
-FORMAT_INSTRUCTION = """FORMATTING: Output HTML only, not markdown. Use <b> for bold, <u> for underline, \
-<i> for italic, <br> for line breaks. Do NOT use markdown syntax (**, *, #, backticks). \
-The output will be rendered as HTML in a browser."""
+def _strip_cloze(text: str) -> str:
+    """Remove cloze deletion markup, keeping the visible term. {{c1::term}} -> term"""
+    return re.sub(r'\{\{c\d+::(.*?)\}\}', r'\1', text)
 
 
 def generate_supplemental_for_group(
@@ -25,7 +25,7 @@ def generate_supplemental_for_group(
     Returns (vignette, teaching_case, usage_dict).
     """
     card_list = "\n".join(
-        f"Card {c['card_number']}: {c['front_text']}"
+        f"Card {c['card_number']}: {_strip_cloze(c['front_text'])}"
         for c in cards
     )
 
@@ -44,13 +44,13 @@ Output format — use these exact markers:
 
     response = client.messages.create(
         model=model,
-        max_tokens=4096,
+        max_tokens=8192,
         temperature=0,
         messages=[
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": FORMAT_INSTRUCTION + "\n\n" + rules_text, "cache_control": {"type": "ephemeral"}},
+                    {"type": "text", "text": rules_text, "cache_control": {"type": "ephemeral"}},
                     {"type": "text", "text": card_context},
                 ],
             }
