@@ -101,8 +101,8 @@ def _parse_json_output(raw: str, cards: list[dict]) -> list[dict]:
         results = json.loads(cleaned)
         if isinstance(results, list):
             return results
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse supplemental JSON output, attempting extraction")
+    except json.JSONDecodeError as e:
+        logger.warning("Failed to parse supplemental JSON output: %s", e)
 
     # Fallback: try to extract JSON array from the text
     match = re.search(r'\[.*\]', cleaned, re.DOTALL)
@@ -114,12 +114,59 @@ def _parse_json_output(raw: str, cards: list[dict]) -> list[dict]:
         except json.JSONDecodeError:
             pass
 
-    # Last resort: treat entire output as one condition for all cards
-    logger.warning("Could not parse supplemental output as JSON, using fallback")
-    all_ids = [c["id"] for c in cards]
-    return [{
-        "condition": "Unknown",
-        "card_ids": all_ids,
-        "vignette": raw,
-        "teaching_case": "",
-    }]
+    # Fallback 2: try fixing common JSON issues (unescaped newlines in strings)
+    try:
+        # Replace literal newlines inside strings with <br>
+        fixed = re.sub(r'(?<=": ")(.*?)(?="[,\}])', lambda m: m.group(0).replace('\n', '<br>'), cleaned, flags=re.DOTALL)
+        results = json.loads(fixed)
+        if isinstance(results, list):
+            return results
+    except (json.JSONDecodeError, Exception):
+        pass
+
+    # Last resort: fall back to marker-based parsing
+    logger.warning("JSON parse failed, trying marker-based fallback. First 200 chars: %s", cleaned[:200])
+    return _parse_marker_fallback(raw, cards)
+
+
+def _parse_marker_fallback(raw: str, cards: list[dict]) -> list[dict]:
+    """Fall back to ===VIGNETTE=== / ===TEACHING_CASE=== marker parsing."""
+    results = []
+    # Split by ===VIGNETTE=== markers
+    blocks = re.split(r'===VIGNETTE===', raw)
+
+    for block in blocks[1:]:  # skip anything before the first marker
+        vignette = ""
+        teaching_case = ""
+        tc_split = block.split('===TEACHING_CASE===', 1)
+        vignette = tc_split[0].strip()
+        if len(tc_split) > 1:
+            teaching_case = tc_split[1].strip()
+            # Stop at next condition block if present
+            next_condition = re.search(r'\n\s*Condition:', teaching_case)
+            if next_condition:
+                teaching_case = teaching_case[:next_condition.start()].strip()
+
+        # Try to extract card IDs from the text before the vignette
+        results.append({
+            "condition": "Parsed",
+            "card_ids": [c["id"] for c in cards] if not results else [],
+            "vignette": vignette,
+            "teaching_case": teaching_case,
+        })
+
+    if not results:
+        # Nothing parsed at all — assign raw to all cards
+        all_ids = [c["id"] for c in cards]
+        results.append({
+            "condition": "Unknown",
+            "card_ids": all_ids,
+            "vignette": "",
+            "teaching_case": "",
+        })
+
+    # If only one result from markers, assign all card IDs to it
+    if len(results) == 1 and not results[0]["card_ids"]:
+        results[0]["card_ids"] = [c["id"] for c in cards]
+
+    return results
