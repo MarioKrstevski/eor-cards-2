@@ -500,15 +500,18 @@ def _run_supplemental(
             for future in as_completed(futures):
                 condition, group_cards = futures[future]
                 try:
-                    vignette, teaching_case, usage = future.result()
-                    card_ids_in_group = [c["id"] for c in group_cards]
-                    db.query(Card).filter(Card.id.in_(card_ids_in_group)).update(
-                        {"vignette": vignette, "teaching_case": teaching_case},
-                        synchronize_session="fetch",
-                    )
+                    condition_results, usage = future.result()
+                    # Update each condition's cards with their specific vignette/teaching case
+                    for cr in condition_results:
+                        cr_ids = cr.get("card_ids", [])
+                        if cr_ids:
+                            db.query(Card).filter(Card.id.in_(cr_ids)).update(
+                                {"vignette": cr.get("vignette", ""), "teaching_case": cr.get("teaching_case", "")},
+                                synchronize_session="fetch",
+                            )
                     total_input += usage.get("input_tokens", 0)
                     total_output += usage.get("output_tokens", 0)
-                    total_cards_updated += len(card_ids_in_group)
+                    total_cards_updated += len([c["id"] for c in group_cards])
                 except Exception:
                     logger.exception("Error generating supplemental for condition '%s'", condition)
                 finally:

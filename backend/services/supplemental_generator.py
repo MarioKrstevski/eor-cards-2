@@ -1,6 +1,11 @@
 """Generate vignettes and teaching cases for condition groups (grouped by leaf topic)."""
+import json
 import re
+import logging
 import anthropic
+
+logger = logging.getLogger(__name__)
+
 
 def _strip_cloze(text: str) -> str:
     """Remove cloze deletion markup, keeping the visible term. {{c1::term}} -> term"""
@@ -9,48 +14,63 @@ def _strip_cloze(text: str) -> str:
 
 def generate_supplemental_for_group(
     client: anthropic.Anthropic,
-    condition_name: str,
+    topic_name: str,
     cards: list[dict],
     rules_text: str,
     model: str,
-) -> tuple[str, str, dict]:
-    """Generate a shared vignette + teaching case for a condition group.
+) -> tuple[list[dict], dict]:
+    """Generate vignettes + teaching cases for cards in a topic group.
+
+    The AI identifies conditions within the cards, groups them, and returns
+    a JSON array with vignette + teaching case per condition, tagged with card IDs.
 
     Args:
-        condition_name: The leaf topic name (e.g., "Atrial Fibrillation")
-        cards: List of card dicts with "card_number" and "front_text"
+        topic_name: The leaf topic name (e.g., "Prenatal Care/Pregnancy")
+        cards: List of card dicts with "id", "card_number", and "front_text"
         rules_text: The combined vignette+teaching case rules
         model: Claude model to use
 
-    Returns (vignette, teaching_case, usage_dict).
+    Returns (condition_results, usage_dict) where condition_results is a list of
+    dicts with keys: condition, card_ids, vignette, teaching_case.
     """
     card_list = "\n".join(
-        f"Card {c['card_number']}: {_strip_cloze(c['front_text'])}"
+        f"Card (id:{c['id']}): {_strip_cloze(c['front_text'])}"
         for c in cards
     )
 
-    card_context = f"""Condition: {condition_name}
-Cards for this condition:
+    card_context = f"""Topic: {topic_name}
+Cards:
 
 {card_list}
 
-Generate the vignette (COLUMN 5) and teaching case (COLUMN 6) for this condition following ALL the rules above.
+Read every card. Identify each unique condition. Group cards by condition.
+For each condition, generate the vignette (COLUMN 5) and teaching case (COLUMN 6) following ALL the rules above.
 
-Output format — use these exact markers:
-===VIGNETTE===
-(your vignette here)
-===TEACHING_CASE===
-(your teaching case here)"""
+CRITICAL OUTPUT RULES:
+- Output ONLY valid JSON — no text before or after the JSON array.
+- Use HTML tags (<b>, <br>, <i>, <u>) inside string values. NO markdown (**bold**, #headers).
+- Do NOT include cloze syntax ({{{{c1::}}}} or similar) anywhere in the output.
+- Escape quotes inside strings properly.
+
+Output a JSON array with this exact structure:
+[
+  {{
+    "condition": "Condition Name",
+    "card_ids": [12, 34, 56],
+    "vignette": "<b>You are seeing...</b> ...",
+    "teaching_case": "<b><u>Patient Presentation</u></b><br>..."
+  }}
+]"""
 
     response = client.messages.create(
         model=model,
-        max_tokens=8192,
+        max_tokens=16384,
         temperature=0,
         messages=[
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "CRITICAL: Output HTML only. Use <b> for bold, <br> for line breaks. Do NOT use markdown (**bold**, #headers, backticks). No cloze syntax {{c1::}}.\n\n" + rules_text, "cache_control": {"type": "ephemeral"}},
+                    {"type": "text", "text": rules_text, "cache_control": {"type": "ephemeral"}},
                     {"type": "text", "text": card_context},
                 ],
             }
@@ -65,34 +85,41 @@ Output format — use these exact markers:
         "cache_creation_input_tokens": getattr(response.usage, "cache_creation_input_tokens", 0) or 0,
     }
 
-    vignette, teaching_case = _parse_output(raw)
-    return vignette, teaching_case, usage
+    results = _parse_json_output(raw, cards)
+    return results, usage
 
 
-def _parse_output(raw: str) -> tuple[str, str]:
-    """Parse the ===VIGNETTE=== / ===TEACHING_CASE=== markers from Claude's output."""
-    vignette = ""
-    teaching_case = ""
+def _parse_json_output(raw: str, cards: list[dict]) -> list[dict]:
+    """Parse the JSON array from Claude's output."""
+    # Strip markdown code fences if present
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
+        cleaned = re.sub(r'\s*```$', '', cleaned)
 
-    vig_match = re.search(r'===VIGNETTE===(.*?)===TEACHING_CASE===', raw, re.DOTALL)
-    tc_match = re.search(r'===TEACHING_CASE===(.*?)$', raw, re.DOTALL)
+    try:
+        results = json.loads(cleaned)
+        if isinstance(results, list):
+            return results
+    except json.JSONDecodeError:
+        logger.warning("Failed to parse supplemental JSON output, attempting extraction")
 
-    if vig_match:
-        vignette = vig_match.group(1).strip()
-    if tc_match:
-        teaching_case = tc_match.group(1).strip()
+    # Fallback: try to extract JSON array from the text
+    match = re.search(r'\[.*\]', cleaned, re.DOTALL)
+    if match:
+        try:
+            results = json.loads(match.group())
+            if isinstance(results, list):
+                return results
+        except json.JSONDecodeError:
+            pass
 
-    # Fallback: if markers weren't used, try to split on "COLUMN 5" / "COLUMN 6"
-    if not vignette and not teaching_case:
-        col5 = re.search(r'COLUMN\s*5[:\s]*(.*?)(?:COLUMN\s*6|$)', raw, re.DOTALL | re.IGNORECASE)
-        col6 = re.search(r'COLUMN\s*6[:\s]*(.*?)$', raw, re.DOTALL | re.IGNORECASE)
-        if col5:
-            vignette = col5.group(1).strip()
-        if col6:
-            teaching_case = col6.group(1).strip()
-
-    # Last resort: put everything in teaching_case
-    if not vignette and not teaching_case:
-        teaching_case = raw
-
-    return vignette, teaching_case
+    # Last resort: treat entire output as one condition for all cards
+    logger.warning("Could not parse supplemental output as JSON, using fallback")
+    all_ids = [c["id"] for c in cards]
+    return [{
+        "condition": "Unknown",
+        "card_ids": all_ids,
+        "vignette": raw,
+        "teaching_case": "",
+    }]
