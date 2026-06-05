@@ -408,6 +408,10 @@ export async function getGenerationJob(jobId: number): Promise<GenerationJob> {
   return res.data;
 }
 
+export async function cancelGenerationJob(jobId: number): Promise<void> {
+  await http.post(`/generate/jobs/${jobId}/cancel`);
+}
+
 export async function getActiveJobs(): Promise<GenerationJob[]> {
   const res = await http.get<GenerationJob[]>('/generate/jobs/active');
   return res.data;

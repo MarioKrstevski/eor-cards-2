@@ -254,6 +254,21 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
     }
 
 
+@router.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: int, db: Session = Depends(get_db)):
+    """Cancel a running or pending job by marking it as failed."""
+    job = db.get(GenerationJob, job_id)
+    if not job:
+        raise HTTPException(404)
+    if job.status not in (JobStatus.pending, JobStatus.running):
+        return {"ok": True, "status": job.status}
+    job.status = JobStatus.failed
+    job.error_message = "Cancelled by user"
+    job.finished_at = utcnow()
+    db.commit()
+    return {"ok": True, "status": "failed"}
+
+
 def _fail_job(db, job_id: int, message: str):
     try:
         job = db.get(GenerationJob, job_id)

@@ -20,6 +20,7 @@ import {
   estimateCost,
   startGeneration,
   getGenerationJob,
+  cancelGenerationJob,
   getActiveJobs,
   startSupplemental,
   getReviewMarkTypes,
@@ -687,6 +688,7 @@ export default function CardsPanel({
   const [jobProgress, setJobProgress] = useState<{ processed: number; total: number } | null>(null);
   const [jobError, setJobError] = useState<string | null>(null);
   const [jobAlertError, setJobAlertError] = useState<string | null>(null);
+  const [activeJobId, setActiveJobId] = useState<number | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Card list state ──────────────────────────────────────────────────────
@@ -1231,6 +1233,7 @@ export default function CardsPanel({
         model: selectedModel,
       };
       if (sectionId) params.section_ids = [sectionId];
+      else if (sectionIds && sectionIds.length > 0) params.section_ids = sectionIds;
       else if (topicTreeId) params.topic_tree_id = topicTreeId;
       const est = await estimateCost(params);
       setEstimate(est);
@@ -1239,7 +1242,7 @@ export default function CardsPanel({
     } finally {
       setEstimating(false);
     }
-  }, [selectedRuleSetId, selectedModel, sectionId, topicTreeId]);
+  }, [selectedRuleSetId, selectedModel, sectionId, sectionIds, topicTreeId]);
 
   const handleGenerate = useCallback(async () => {
     if (!selectedRuleSetId || !selectedModel) return;
@@ -1253,8 +1256,10 @@ export default function CardsPanel({
         model: selectedModel,
       };
       if (sectionId) params.section_ids = [sectionId];
+      else if (sectionIds && sectionIds.length > 0) params.section_ids = sectionIds;
       else if (topicTreeId) params.topic_tree_id = topicTreeId;
       const { job_id } = await startGeneration(params);
+      setActiveJobId(job_id);
 
       intervalRef.current = setInterval(async () => {
         try {
@@ -1291,6 +1296,7 @@ export default function CardsPanel({
       );
       if (!relevant) return;
       setJobRunning(true);
+      setActiveJobId(relevant.id);
       setJobProgress({ processed: relevant.processed_sections, total: relevant.total_sections });
       if (intervalRef.current) clearInterval(intervalRef.current);
       intervalRef.current = setInterval(async () => {
@@ -1891,7 +1897,7 @@ export default function CardsPanel({
       )}
 
       {/* Generation controls */}
-      {sectionId != null && (
+      {hasContext && (
         <div className="shrink-0 bg-gray-50 border-b border-gray-200 px-4 py-2 flex items-center gap-2">
           <button
             onClick={handleEstimate}
@@ -1914,6 +1920,23 @@ export default function CardsPanel({
               ? `Generating… ${jobProgress ? `${jobProgress.processed}/${jobProgress.total}` : ''}`
               : 'Generate Cards'}
           </button>
+          {jobRunning && activeJobId && (
+            <button
+              onClick={async () => {
+                try {
+                  await cancelGenerationJob(activeJobId);
+                  if (intervalRef.current) clearInterval(intervalRef.current);
+                  setJobRunning(false);
+                  setActiveJobId(null);
+                  setJobError('Cancelled');
+                } catch { /* ignore */ }
+              }}
+              className="px-2 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors duration-150"
+              title="Cancel generation"
+            >
+              ✕ Stop
+            </button>
+          )}
           {jobError && <span className="text-xs text-red-600">{jobError}</span>}
         </div>
       )}
