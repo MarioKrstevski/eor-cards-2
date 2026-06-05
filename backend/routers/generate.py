@@ -136,7 +136,7 @@ def estimate_supplemental(body: SupplementalEstimateRequest, db: Session = Depen
     cards = db.query(Card).filter(Card.id.in_(body.card_ids)).all()
     groups = {}
     for c in cards:
-        leaf = (c.tags or [])[-1] if c.tags else "Unassigned"
+        leaf = ((c.tags or c.tags_mapped) or [])[-1] if (c.tags or c.tags_mapped) else "Unassigned"
         groups.setdefault(leaf, []).append(c)
     num_groups = len(groups)
     est_input = num_groups * 500
@@ -171,7 +171,7 @@ def start_supplemental(body: SupplementalStartRequest, bg: BackgroundTasks, db: 
 
     groups = {}
     for c in cards:
-        leaf = (c.tags or [])[-1] if c.tags else "Unassigned"
+        leaf = ((c.tags or c.tags_mapped) or [])[-1] if (c.tags or c.tags_mapped) else "Unassigned"
         groups.setdefault(leaf, []).append(c)
 
     est_input = len(groups) * 500
@@ -469,7 +469,7 @@ def _run_supplemental(
         for c in cards:
             if not replace_existing and c.vignette and c.teaching_case:
                 continue
-            leaf = (c.tags or [])[-1] if c.tags else "Unassigned"
+            leaf = ((c.tags or c.tags_mapped) or [])[-1] if (c.tags or c.tags_mapped) else "Unassigned"
             condition_groups.setdefault(leaf, []).append({
                 "id": c.id,
                 "card_number": c.card_number,

@@ -50,7 +50,7 @@ Output format — use these exact markers:
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": rules_text, "cache_control": {"type": "ephemeral"}},
+                    {"type": "text", "text": "CRITICAL: Output HTML only. Use <b> for bold, <br> for line breaks. Do NOT use markdown (**bold**, #headers, backticks). No cloze syntax {{c1::}}.\n\n" + rules_text, "cache_control": {"type": "ephemeral"}},
                     {"type": "text", "text": card_context},
                 ],
             }
