@@ -44,14 +44,16 @@ v4/
 │   │   ├── export.py        # CSV export
 │   │   └── usage.py         # AI usage cost summary
 │   └── services/
+│       ├── ai_utils.py               # Shared: retryable errors, cloze regex, JSON parsing, usage extraction
 │       ├── doc_processor.py          # Parse .docx/.html, split by H2, build heading tree
 │       ├── image_classifier.py       # Claude Vision: classify images, extract text
 │       ├── table_converter.py        # Word tables → plain text blocks
-│       ├── duplicate_detector.py     # Semantic duplicate detection via Claude
-│       ├── merge_engine.py           # Merge new content into existing sections
-│       ├── generator.py              # ANCHOR_INSTRUCTION, card generation per section
-│       ├── supplemental_generator.py # Vignette + teaching case generation
-│       └── cost_estimator.py         # Token estimation + cost calculation
+│       ├── duplicate_detector.py     # Semantic duplicate detection (NOT wired into pipeline — dead code)
+│       ├── merge_engine.py           # Merge new content into sections (NOT wired into pipeline — dead code)
+│       ├── generator.py              # ANCHOR_INSTRUCTION, card generation + validation per section
+│       ├── supplemental_generator.py # Vignette + teaching case generation (JSON per condition)
+│       ├── scorer.py                 # PA EOR accuracy (1-5) + yield (Gold/Silver/Bronze/Skip) scoring
+│       └── cost_estimator.py         # Cache-aware token estimation + cost calculation
 ├── frontend/src/
 │   ├── App.tsx               # Router + nav bar + cost display
 │   ├── main.tsx              # React entry point
@@ -93,10 +95,12 @@ v4/
 - **section_images**: id, section_id (FK), upload_id (FK), data_uri, category (decorative/diagram/chart/table_image/unclear), extracted_text, alt_text_hint, position
 
 ### Card & Generation
-- **cards**: id, section_id (FK), card_number, front_html, front_text, tags (JSON), extra, vignette, teaching_case, source_ref, ref_img_id (FK to section_images), ref_img_position, note_id (BigInt), status (active/rejected), needs_review, is_reviewed, created_at, updated_at
+- **cards**: id, section_id (FK), card_number, front_html, front_text, front_html_v1/v2/v3, tags (JSON), tags_mapped (JSON), extra, vignette, teaching_case, source_ref, ref_img_id (FK to section_images), ref_img_position, note_id (BigInt), status (active/rejected), needs_review, is_reviewed, review_mark_id, in_fix_batch, accuracy_score (1-5), accuracy_note, eor_yield (JSON: rotation → Gold/Silver/Bronze/Skip), created_at, updated_at
 - **generation_jobs**: id, section_id (FK, nullable), topic_tree_id (FK, nullable), job_type, scope, model, rule_set_id (FK), status (pending/running/done/failed), total_sections, processed_sections, total_cards, estimated_cost_usd, actual_input/output_tokens, pipeline_step, error_message, started_at, finished_at
 - **processing_jobs**: id, upload_id (FK), status, pipeline_step (parsing/images/tables/comparing/merging/done), error_message, started_at, finished_at
-- **ai_usage_log**: id, operation, model, input_tokens, output_tokens, cost_usd, topic_tree_id, section_id, card_id, job_id, created_at
+- **ai_usage_log**: id, operation, model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, cost_usd, topic_tree_id, section_id, card_id, job_id, created_at
+
+Tag routing by curriculum version: v1 ("New") cards store tags in `tags_mapped`, v2 ("Current") in `tags`. Read with `(c.tags or c.tags_mapped)`.
 
 ## Key Workflows
 
@@ -116,11 +120,21 @@ v4/
 4. Supplementals (vignettes + teaching cases) generated per condition group
 5. Generation runs in background — survives page close, resumes polling on refresh
 
+### Card Scoring
+- After each section's cards are created, a separate scoring call (same model) rates each card: accuracy 1-5 + per-rotation EOR yield (Gold/Silver/Bronze/Skip)
+- The 7 rotations are PAEA EOR exam categories (not curriculum topics) — the AI only returns rotations relevant to each card
+- Scoring judges both card text and the extra field; results validated against sent card IDs
+- `POST /api/cards/bulk-score` re-scores existing cards on demand (Actions → Score Cards)
+
 ### Background Job Resilience
 - `GET /api/generate/jobs/active` returns running/pending jobs
 - Frontend checks on mount, resumes polling for all active jobs
 - Animated badge on topic trees with active generation in sidebar
 - Safe delete: active jobs failed + nullified before CASCADE delete
+- `POST /api/generate/jobs/{id}/cancel` — checked between sections, stops remaining work
+- Startup sweep marks jobs orphaned by a restart as failed ("Interrupted by server restart")
+- One failed section doesn't abort the job; partial failures land in `error_message` on a `done` job and show as warnings in the UI
+- AI output truncation (`stop_reason == "max_tokens"`) is never committed — generation retries once at a higher cap, other services raise
 
 ## Key Conventions
 - FastAPI routes have NO trailing slash
@@ -129,11 +143,14 @@ v4/
 - All AI calls use `temperature=0`
 - System prompts use `cache_control: {"type": "ephemeral"}` for Anthropic prompt caching
 - Background tasks use `SessionLocal()` (not the request session)
-- Card generation: 3 concurrent workers with exponential backoff retry (20/40/80s, 4 attempts max)
-- Server-side pagination: cards fetched with `limit`/`offset`, TanStack Table uses `manualPagination`
-- Cloze format: `{{c1::term}}` — always c1, regardless of card number
+- Card generation: 3 concurrent workers; retries 429/5xx/529/connection errors with backoff (20/40/80s, 4 attempts) — `RETRYABLE_ERRORS` in `ai_utils.py`
+- Server-side pagination: cards fetched with `limit`/`offset` (max 1000), TanStack Table uses `manualPagination`
+- Cloze format: `{{c1::term}}` — always c1; the parser normalizes c2/c3 to c1 and flags cards with no cloze or leftover markdown as `needs_review`
 - `**markdown bold**` is FORBIDDEN in card output — use `<b>HTML bold</b>` only
 - Topic path format: `Parent > Child > Leaf` with ` > ` separators
+- AI-returned card IDs (scoring, supplemental) are always validated against the IDs sent — hallucinated IDs are dropped, never written
+- `compute_cost(model, input, output, cache_write, cache_read)` prices cache writes at 1.25x and reads at 0.1x input price
+- Use `ai_utils.py` helpers for new AI calls: `response_text()` (truncation-safe extraction), `usage_dict()`, `parse_json_array()`, `CLOZE_RE`/`strip_cloze()` (handles `{{c1::term::hint}}`)
 
 ## Adding Models
 Edit `backend/config.py` — the `MODELS` dict is the single source of truth:
@@ -171,10 +188,11 @@ Only Anthropic models work — the SDK is `anthropic.Anthropic` only.
 
 ## Notes for AI Assistants
 - The client is a PA exam prep provider. Medical accuracy in card content matters.
+- This is a private two-user MVP (developer + reviewer). No authentication by design; do NOT add auth/security layers unless asked.
 - The OLD curriculum (curriculum.json) is the working reference. New curriculum mapping planned for post-June 2026.
 - `doc_processor.py` handles both .docx (python-docx) and HTML (BeautifulSoup) parsing
 - Image alt text hints: `EXTRACT` = extract knowledge, `REFERENCE` = keep as decorative, empty = AI classifies
-- The merge engine uses Claude for both duplicate detection and insertion positioning
+- `duplicate_detector.py` and `merge_engine.py` are NOT called anywhere — the semantic merge feature is unwired. Re-uploading to an existing topic does NOT dedupe.
 - Content blocks track provenance (which upload contributed each paragraph)
 - `section.heading_tree` is a JSON field with nested H3/H4 structure for the heading tree context sent to the AI during generation
 - Supplemental generation (vignettes/teaching cases) groups cards by leaf topic and generates per condition
