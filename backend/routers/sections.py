@@ -246,19 +246,25 @@ async def upload_section_image(
     }
 
 
+class SectionImageUpdate(BaseModel):
+    category: Optional[str] = None
+    alt_text_hint: Optional[str] = None
+    intended_position: Optional[str] = None
+
+
 @router.patch("/{section_id}/images/{image_id}")
-def update_section_image(section_id: int, image_id: int, body: dict, db: Session = Depends(get_db)):
+def update_section_image(section_id: int, image_id: int, body: SectionImageUpdate, db: Session = Depends(get_db)):
     """Update an image's category or alt_text_hint."""
     img = db.get(SectionImage, image_id)
     if not img or img.section_id != section_id:
         raise HTTPException(404)
 
-    if "category" in body:
-        img.category = body["category"]
-    if "alt_text_hint" in body:
-        img.alt_text_hint = body["alt_text_hint"]
-    if "intended_position" in body:
-        img.intended_position = body["intended_position"]
+    if body.category is not None:
+        img.category = body.category
+    if body.alt_text_hint is not None:
+        img.alt_text_hint = body.alt_text_hint
+    if body.intended_position is not None:
+        img.intended_position = body.intended_position
     db.commit()
     db.refresh(img)
     return {

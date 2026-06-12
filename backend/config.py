@@ -10,8 +10,8 @@ MODELS = {
     # ── Add or remove models here. Order determines display order in Settings. ──
     "claude-haiku-4-5-20251001": {
         "display": "Claude Haiku 4.5",
-        "input_per_1m": 0.80,
-        "output_per_1m": 4.0,
+        "input_per_1m": 1.0,
+        "output_per_1m": 5.0,
     },
     "claude-sonnet-4-6": {
         "display": "Claude Sonnet 4.6",
@@ -20,8 +20,8 @@ MODELS = {
     },
     # "claude-opus-4-6": {
     #     "display": "Claude Opus 4.6",
-    #     "input_per_1m": 15.0,
-    #     "output_per_1m": 75.0,
+    #     "input_per_1m": 5.0,
+    #     "output_per_1m": 25.0,
     # },
 }
 
@@ -33,8 +33,19 @@ UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 SEED_DIR = os.path.join(os.path.dirname(__file__), "..", "seed")
 
 
-def compute_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+def compute_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_write_tokens: int = 0,
+    cache_read_tokens: int = 0,
+) -> float:
+    """Cost in USD. input_tokens is the UNCACHED portion only (as reported by
+    the API); cache writes bill at 1.25x input price, cache reads at 0.1x."""
     pricing = MODELS.get(model, {})
-    input_cost = (input_tokens / 1_000_000) * pricing.get("input_per_1m", 0)
+    in_price = pricing.get("input_per_1m", 0)
+    input_cost = (input_tokens / 1_000_000) * in_price
+    cache_write_cost = (cache_write_tokens / 1_000_000) * in_price * 1.25
+    cache_read_cost = (cache_read_tokens / 1_000_000) * in_price * 0.1
     output_cost = (output_tokens / 1_000_000) * pricing.get("output_per_1m", 0)
-    return round(input_cost + output_cost, 6)
+    return round(input_cost + cache_write_cost + cache_read_cost + output_cost, 6)

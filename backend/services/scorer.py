@@ -1,8 +1,7 @@
 """Score cards for medical accuracy and PA EOR exam yield."""
-import json
-import re
 import logging
 import anthropic
+from backend.services.ai_utils import parse_json_array, response_text, usage_dict
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +52,15 @@ def score_cards(
     Returns (scores, usage) where scores is a list of dicts with
     card_id, accuracy, accuracy_note, eor_yield.
     """
-    card_lines = "\n".join(
-        f"Card {c['id']}: {c['front_text']}"
-        for c in cards
-    )
+    def card_line(c):
+        line = f"Card {c['id']}: {c['front_text']}"
+        if c.get('extra'):
+            line += f" | Extra: {c['extra']}"
+        return line
 
-    user_message = f"""Score these cards for accuracy and PAEA EOR yield.
+    card_lines = "\n".join(card_line(c) for c in cards)
+
+    user_message = f"""Score these cards for accuracy and PAEA EOR yield. Judge both the card text and its Extra content.
 Curriculum path: {curriculum_path or 'General'}
 
 {card_lines}
@@ -68,53 +70,21 @@ Return a JSON array only. One object per card, same order. No text outside the J
 
     response = client.messages.create(
         model=model,
-        max_tokens=4096,
+        max_tokens=8192,
         temperature=0,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": SCORING_SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}},
-                    {"type": "text", "text": user_message},
-                ],
-            }
-        ],
+        system=SCORING_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_message}],
     )
 
-    raw = response.content[0].text.strip()
-    usage = {
-        "input_tokens": response.usage.input_tokens,
-        "output_tokens": response.usage.output_tokens,
-    }
+    raw = response_text(response)
+    scores = parse_json_array(raw)
+    if scores is None:
+        raise ValueError("Could not parse scoring output as JSON")
 
-    scores = _parse_scores(raw, cards)
-    return scores, usage
+    # Drop hallucinated/transposed IDs — only accept scores for cards we sent
+    sent_ids = {c["id"] for c in cards}
+    valid = [s for s in scores if s.get("card_id") in sent_ids]
+    if len(valid) < len(scores):
+        logger.warning("Dropped %d score(s) with unknown card IDs", len(scores) - len(valid))
 
-
-def _parse_scores(raw: str, cards: list) -> list:
-    """Parse JSON array of scores from AI output."""
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
-        cleaned = re.sub(r'\s*```$', '', cleaned)
-
-    try:
-        results = json.loads(cleaned)
-        if isinstance(results, list):
-            return results
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse scoring JSON output")
-
-    # Fallback: try to extract JSON array
-    match = re.search(r'\[.*\]', cleaned, re.DOTALL)
-    if match:
-        try:
-            results = json.loads(match.group())
-            if isinstance(results, list):
-                return results
-        except json.JSONDecodeError:
-            pass
-
-    # Last resort: return empty scores
-    logger.warning("Could not parse scoring output, returning empty scores")
-    return []
+    return valid, usage_dict(response)

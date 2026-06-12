@@ -1,8 +1,12 @@
 """Card generation: produce cloze flashcards from section content."""
 from __future__ import annotations
 import re
+import logging
 import anthropic
 from backend.config import DEFAULT_MODEL
+from backend.services.ai_utils import CLOZE_RE, response_text, usage_dict
+
+logger = logging.getLogger(__name__)
 
 ANCHOR_INSTRUCTION = """CRITICAL RULE — Anchor term: Every card must contain a visible, unclosed "anchor" \
 that tells the student what topic/condition/concept they are being tested on. \
@@ -55,13 +59,13 @@ def number_paragraphs(text: str) -> str:
 
 def strip_card_html(card_text: str) -> str:
     """Strip HTML tags and reveal cloze terms to produce plain text."""
-    text = re.sub(r'\{\{c\d+::([^}]+)\}\}', r'\1', card_text)
+    text = CLOZE_RE.sub(r'\1', card_text)
     return re.sub(r'<[^>]+>', '', text).strip()
 
 
 def extract_cloze_terms(card_text: str) -> list[str]:
     """Extract cloze deletion terms from card HTML."""
-    return re.findall(r'\{\{c\d+::([^}]+)\}\}', card_text)
+    return CLOZE_RE.findall(card_text)
 
 
 def fix_markdown_bold(text: str) -> str:
@@ -81,8 +85,11 @@ def format_extra_as_list(text: str) -> str:
         if len(items) > 1:
             items_html = ''.join(f'<br>• {item}' for item in items)
             return f'{label}{items_html}'
-    if re.search(r'(?:^|- )', text):
-        parts = re.split(r'\s*-\s+', text)
+    # Dash-separated list: require at least 2 real separators, and never split
+    # numeric ranges like "25 - 50 mg" or "2 - 3 weeks"
+    list_sep = re.compile(r'(?<!\d)\s+-\s+(?!\d)')
+    if len(list_sep.findall(text)) >= 2:
+        parts = list_sep.split(text)
         label = parts[0].strip()
         items = [p.strip() for p in parts[1:] if p.strip()]
         if len(items) > 1:
@@ -91,18 +98,43 @@ def format_extra_as_list(text: str) -> str:
     return text
 
 
+def validate_card_text(card_text: str) -> tuple[str, bool]:
+    """Normalize cloze indices to c1 and check the card is well-formed.
+
+    Returns (normalized_text, is_valid). Invalid = no cloze at all, or
+    residual markdown formatting that survived fix_markdown_bold.
+    """
+    normalized = re.sub(r'\{\{c\d+::', '{{c1::', card_text)
+    has_cloze = bool(re.search(r'\{\{c1::', normalized))
+    has_markdown = bool(re.search(r'\*\*|(?:^|\s)#{1,3}\s', normalized))
+    return normalized, has_cloze and not has_markdown
+
+
 def parse_card_output(raw: str) -> tuple[list[dict], bool]:
     """Parse the numbered|card format output from Claude.
 
     Returns (cards, needs_review) where needs_review is True if NEEDS_REVIEW
-    marker was present in the output.
+    marker was present in the output. Each card also carries its own
+    "needs_review" flag when it fails validation (no cloze / markdown residue).
     """
-    cards = []
-    needs_review = False
+    # Join wrapped lines: any line that doesn't start a new "N|" card is a
+    # continuation of the previous one — without this, multi-line extras are
+    # silently dropped.
+    logical_lines: list[str] = []
     for line in raw.strip().split("\n"):
         line = line.strip()
         if not line:
             continue
+        if line == "NEEDS_REVIEW" or re.match(r'^\d+\|', line):
+            logical_lines.append(line)
+        elif logical_lines and logical_lines[-1] != "NEEDS_REVIEW":
+            logical_lines[-1] += " " + line
+        else:
+            logger.warning("Unparseable line in card output dropped: %.120s", line)
+
+    cards = []
+    needs_review = False
+    for line in logical_lines:
         if line == "NEEDS_REVIEW":
             needs_review = True
             continue
@@ -110,6 +142,7 @@ def parse_card_output(raw: str) -> tuple[list[dict], bool]:
         if match:
             parts = match.group(2).split('|')
             card_text = fix_markdown_bold(parts[0].strip())
+            card_text, card_valid = validate_card_text(card_text)
             extra = None
             source_ref = None
             non_source_parts = []
@@ -128,6 +161,7 @@ def parse_card_output(raw: str) -> tuple[list[dict], bool]:
                 "front_text": strip_card_html(card_text),
                 "extra": extra,
                 "source_ref": source_ref,
+                "needs_review": not card_valid,
             })
     return cards, needs_review
 
@@ -158,7 +192,7 @@ def regenerate_single_card(
 
     response = client.messages.create(
         model=model,
-        max_tokens=512,
+        max_tokens=1024,
         temperature=0,
         system=[{
             "type": "text",
@@ -170,15 +204,9 @@ def regenerate_single_card(
             "content": chunk_prompt,
         }],
     )
-    raw = response.content[0].text.strip()
+    raw = response_text(response)
     cards, needs_review = parse_card_output(raw)
-    usage = {
-        "input_tokens": response.usage.input_tokens,
-        "output_tokens": response.usage.output_tokens,
-        "cache_read_input_tokens": getattr(response.usage, "cache_read_input_tokens", 0) or 0,
-        "cache_creation_input_tokens": getattr(response.usage, "cache_creation_input_tokens", 0) or 0,
-    }
-    return cards, needs_review, usage
+    return cards, needs_review, usage_dict(response)
 
 
 def generate_cards_for_section(
@@ -213,29 +241,40 @@ def generate_cards_for_section(
         f"Remember: ALL clozes on every card use {{{{c1::term}}}} — always c1, regardless of card number."
     )
 
-    response = client.messages.create(
-        model=model,
-        max_tokens=4096,
-        temperature=0,
-        system=[{
-            "type": "text",
-            "text": ANCHOR_INSTRUCTION + "\n\n" + rules_text,
-            "cache_control": {"type": "ephemeral"},
-        }],
-        messages=[{
-            "role": "user",
-            "content": chunk_prompt,
-        }],
-    )
-    raw = response.content[0].text.strip()
+    # Retry once with a higher cap if the output hits max_tokens — a truncated
+    # response would otherwise silently drop the cards on its final line.
+    total_usage = None
+    for max_tokens in (8192, 16384):
+        response = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=0,
+            system=[{
+                "type": "text",
+                "text": ANCHOR_INSTRUCTION + "\n\n" + rules_text,
+                "cache_control": {"type": "ephemeral"},
+            }],
+            messages=[{
+                "role": "user",
+                "content": chunk_prompt,
+            }],
+        )
+        usage = usage_dict(response)
+        if total_usage:
+            for k in total_usage:
+                total_usage[k] += usage[k]
+        else:
+            total_usage = usage
+        if response.stop_reason != "max_tokens":
+            break
+        logger.warning(
+            "Section '%s' output truncated at %d tokens, retrying with higher cap",
+            section_data.get("heading", "?"), max_tokens,
+        )
+
+    raw = response_text(response)
     cards, needs_review = parse_card_output(raw)
-    usage = {
-        "input_tokens": response.usage.input_tokens,
-        "output_tokens": response.usage.output_tokens,
-        "cache_read_input_tokens": getattr(response.usage, "cache_read_input_tokens", 0) or 0,
-        "cache_creation_input_tokens": getattr(response.usage, "cache_creation_input_tokens", 0) or 0,
-    }
-    return cards, needs_review, usage
+    return cards, needs_review, total_usage
 
 
 def _format_heading_tree(tree: list[dict], indent: int = 0) -> str:

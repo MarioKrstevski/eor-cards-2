@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo, useDeferredValue } from 'react';
 import { createPortal } from 'react-dom';
 import type { ColumnSizingState, PaginationState, VisibilityState } from '@tanstack/react-table';
 import {
@@ -777,15 +777,17 @@ export default function CardsPanel({
   }, []);
 
   // ── Filtered cards ───────────────────────────────────────────────────────
+  // Deferred so fast typing doesn't block the input on re-filtering the table
+  const deferredSearchQ = useDeferredValue(searchQ);
   const filteredCards = useMemo(() => {
-    if (!searchQ.trim()) return cards;
-    const q = searchQ.toLowerCase();
+    if (!deferredSearchQ.trim()) return cards;
+    const q = deferredSearchQ.toLowerCase();
     return cards.filter(c =>
       (c.front_text ?? stripHtml(c.front_html)).toLowerCase().includes(q) ||
       c.tags.some(t => t.toLowerCase().includes(q)) ||
       (c.tags_mapped ?? []).some(t => t.toLowerCase().includes(q))
     );
-  }, [cards, searchQ]);
+  }, [cards, deferredSearchQ]);
 
   // ── Cell selection handlers ──────────────────────────────────────────────
   const handleCellSelect = useCallback((cellId: string) => {
@@ -867,8 +869,10 @@ export default function CardsPanel({
         }
         setCards(resp.cards);
         setTotalCards(resp.total);
+        setActionError(null);
       } catch {
-        // silently fail
+        // surface the failure — an empty table otherwise reads as "no cards"
+        setActionError('Failed to load cards — check that the backend is running');
       } finally {
         if (!silent) setCardsLoading(false);
       }
@@ -959,7 +963,7 @@ export default function CardsPanel({
                 />
                 {card.accuracy_score != null && (
                   <span
-                    className={`w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white shrink-0 cursor-help ${
+                    className={`w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white shrink-0 ${
                       card.accuracy_score >= 5 ? 'bg-green-500' :
                       card.accuracy_score >= 4 ? 'bg-blue-500' :
                       card.accuracy_score >= 3 ? 'bg-amber-500' :
@@ -1277,6 +1281,7 @@ export default function CardsPanel({
       const { job_id } = await startGeneration(params);
       setActiveJobId(job_id);
 
+      if (intervalRef.current) clearInterval(intervalRef.current);
       intervalRef.current = setInterval(async () => {
         try {
           const job = await getGenerationJob(job_id);
@@ -1286,8 +1291,11 @@ export default function CardsPanel({
             setJobRunning(false);
             if (job.status === 'failed') {
               setJobAlertError(job.error_message ?? 'Generation failed');
+            } else if (job.error_message) {
+              // done with partial failures (some sections/scoring failed)
+              setJobAlertError(`Finished with warnings: ${job.error_message}`);
             }
-            fetchCards(sectionId, topicPath);
+            fetchCards(sectionId, topicPath, false, undefined, sectionIds);
             onReviewChange?.();
             refreshUsage?.();
           }
@@ -1300,7 +1308,7 @@ export default function CardsPanel({
       setJobRunning(false);
       setJobError(err instanceof Error ? err.message : 'Start failed');
     }
-  }, [selectedRuleSetId, selectedModel, sectionId, topicTreeId, topicPath, fetchCards, onReviewChange, refreshUsage]);
+  }, [selectedRuleSetId, selectedModel, sectionId, sectionIds, topicTreeId, topicPath, fetchCards, onReviewChange, refreshUsage]);
 
   // Resume polling for active jobs on mount and when topic/section context changes (handles page refresh)
   useEffect(() => {
@@ -1324,8 +1332,10 @@ export default function CardsPanel({
             setJobRunning(false);
             if (job.status === 'failed') {
               setJobAlertError(job.error_message ?? 'Generation failed');
+            } else if (job.error_message) {
+              setJobAlertError(`Finished with warnings: ${job.error_message}`);
             }
-            fetchCards(sectionId, topicPath);
+            fetchCards(sectionId, topicPath, false, undefined, sectionIds);
             onReviewChange?.();
             refreshUsage?.();
           }
@@ -1548,6 +1558,7 @@ export default function CardsPanel({
       const { job_id } = await startSupplemental(params);
       setJobRunning(true);
       setJobProgress(null);
+      if (intervalRef.current) clearInterval(intervalRef.current);
       intervalRef.current = setInterval(async () => {
         try {
           const job = await getGenerationJob(job_id);
@@ -1557,8 +1568,10 @@ export default function CardsPanel({
             setJobRunning(false);
             if (job.status === 'failed') {
               setJobAlertError(job.error_message ?? 'Supplemental generation failed');
+            } else if (job.error_message) {
+              setJobAlertError(`Finished with warnings: ${job.error_message}`);
             }
-            fetchCards(sectionId, topicPath, true);
+            fetchCards(sectionId, topicPath, true, undefined, sectionIds);
             refreshUsage?.();
           }
         } catch {
@@ -1569,7 +1582,7 @@ export default function CardsPanel({
     } catch {
       setActionError('Failed to start vignette & case generation');
     }
-  }, [selectedIds, selectedRuleSetId, selectedModel, fetchCards, sectionId, topicPath, refreshUsage]);
+  }, [selectedIds, selectedRuleSetId, selectedModel, fetchCards, sectionId, sectionIds, topicPath, refreshUsage]);
 
   // ── Empty state ──────────────────────────────────────────────────────────
 

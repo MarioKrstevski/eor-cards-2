@@ -13,7 +13,8 @@ from backend.models import (
 )
 from backend.services.generator import generate_cards_for_section
 from backend.services.scorer import score_cards
-from backend.services.cost_estimator import estimate_cost
+from backend.services.cost_estimator import estimate_cost, estimate_supplemental_cost
+from backend.services.ai_utils import RETRYABLE_ERRORS
 from backend.config import MODELS, DEFAULT_MODEL, ANTHROPIC_API_KEY, compute_cost
 import anthropic
 
@@ -139,18 +140,11 @@ def estimate_supplemental(body: SupplementalEstimateRequest, db: Session = Depen
     for c in cards:
         leaf = ((c.tags or c.tags_mapped) or [])[-1] if (c.tags or c.tags_mapped) else "Unassigned"
         groups.setdefault(leaf, []).append(c)
-    num_groups = len(groups)
-    est_input = num_groups * 500
-    est_output = num_groups * 1500
-    cost = compute_cost(body.model, est_input, est_output)
-    return {
-        "card_count": len(cards),
-        "condition_groups": num_groups,
-        "estimated_input_tokens": est_input,
-        "estimated_output_tokens": est_output,
-        "estimated_cost_usd": cost,
-        "model": body.model,
-    }
+    rs = db.query(RuleSet).filter_by(rule_type='vignette', is_default=True).first()
+    rules_text = rs.content if rs else ""
+    est = estimate_supplemental_cost(groups, rules_text, body.model)
+    est["card_count"] = len(cards)
+    return est
 
 
 @router.post("/supplemental/start")
@@ -175,9 +169,7 @@ def start_supplemental(body: SupplementalStartRequest, bg: BackgroundTasks, db: 
         leaf = ((c.tags or c.tags_mapped) or [])[-1] if (c.tags or c.tags_mapped) else "Unassigned"
         groups.setdefault(leaf, []).append(c)
 
-    est_input = len(groups) * 500
-    est_output = len(groups) * 1500
-    est_cost = compute_cost(body.model, est_input, est_output)
+    est_cost = estimate_supplemental_cost(groups, rs.content, body.model)["estimated_cost_usd"]
 
     # Determine topic_tree_id from the first card's section
     first_card = cards[0]
@@ -272,14 +264,21 @@ def cancel_job(job_id: int, db: Session = Depends(get_db)):
 
 def _fail_job(db, job_id: int, message: str):
     try:
+        db.rollback()  # clear any aborted transaction state first
         job = db.get(GenerationJob, job_id)
-        if job:
+        if job and job.status != JobStatus.failed:  # don't overwrite a user cancel
             job.status = JobStatus.failed
             job.error_message = message
             job.finished_at = utcnow()
             db.commit()
     except Exception:
         logger.exception("Failed to write error status for job %d", job_id)
+
+
+def _job_cancelled(db, job_id: int) -> bool:
+    """Check current job status straight from the DB (cancel comes from another session)."""
+    status = db.query(GenerationJob.status).filter(GenerationJob.id == job_id).scalar()
+    return status == JobStatus.failed
 
 
 def _run_generation(
@@ -302,32 +301,32 @@ def _run_generation(
         total_cards = 0
         total_input_tokens = 0
         total_output_tokens = 0
+        total_cache_write = 0
+        total_cache_read = 0
 
-        # Pre-load all sections
+        # Pre-load all sections in one query, curriculum versions in another
+        sections = db.query(Section).filter(Section.id.in_(section_ids)).all()
+        cur_ids = {s.curriculum_topic_id for s in sections if s.curriculum_topic_id}
+        cur_versions = {}
+        if cur_ids:
+            for c in db.query(Curriculum).filter(Curriculum.id.in_(cur_ids)).all():
+                cur_versions[c.id] = c.version
+
         sections_by_id = {}
-        for section_id in section_ids:
-            section = db.get(Section, section_id)
-            if section:
-                sections_by_id[section_id] = {
-                    "id": section.id,
-                    "content_text": section.content_text,
-                    "heading": section.heading,
-                    "heading_tree": section.heading_tree,
-                    "curriculum_topic_path": section.curriculum_topic_path,
-                    "topic_tree_id": section.topic_tree_id,
-                }
-
-        # Look up curriculum version for each section
-        for section_id, sdata in sections_by_id.items():
-            if sdata.get("curriculum_topic_path"):
-                section_obj = db.get(Section, section_id)
-                if section_obj and section_obj.curriculum_topic_id:
-                    cur_node = db.get(Curriculum, section_obj.curriculum_topic_id)
-                    sdata["curriculum_version"] = cur_node.version if cur_node else None
-                else:
-                    sdata["curriculum_version"] = None
-            else:
-                sdata["curriculum_version"] = None
+        for section in sections:
+            sections_by_id[section.id] = {
+                "id": section.id,
+                "content_text": section.content_text,
+                "heading": section.heading,
+                "heading_tree": section.heading_tree,
+                "curriculum_topic_path": section.curriculum_topic_path,
+                "topic_tree_id": section.topic_tree_id,
+                "curriculum_version": (
+                    cur_versions.get(section.curriculum_topic_id)
+                    if section.curriculum_topic_path and section.curriculum_topic_id
+                    else None
+                ),
+            }
 
         note_id_base = int(time.time() * 1000)
         note_id_counter = {"value": 0}
@@ -370,19 +369,47 @@ def _run_generation(
                         model,
                     )
                     return section_data, cards_data, needs_review, usage
-                except anthropic.RateLimitError:
+                except RETRYABLE_ERRORS as e:
                     if attempt == 3:
                         raise
                     wait = 20 * (2 ** attempt)
-                    logger.warning("Rate limit on section %d, retrying in %ds (attempt %d/4)", section_data["id"], wait, attempt + 1)
+                    logger.warning(
+                        "Retryable API error on section %d (%s), retrying in %ds (attempt %d/4)",
+                        section_data["id"], type(e).__name__, wait, attempt + 1,
+                    )
                     time.sleep(wait)
+
+        failed_sections: list[str] = []
+        scoring_failures = 0
+        cancelled = False
 
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = {executor.submit(process_section, s): s for s in sections_by_id.values()}
             for future in as_completed(futures):
-                section_data, cards_data, needs_review, usage = future.result()
+                submitted_section = futures[future]
+
+                if _job_cancelled(db, job_id):
+                    logger.info("Job %d cancelled by user — stopping remaining sections", job_id)
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    cancelled = True
+                    break
+
+                try:
+                    section_data, cards_data, needs_review, usage = future.result()
+                except (anthropic.AuthenticationError, anthropic.PermissionDeniedError):
+                    # Fatal for every section — stop the whole job with a friendly message
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    raise
+                except Exception:
+                    logger.exception("Section '%s' failed", submitted_section.get("heading", "?"))
+                    failed_sections.append(submitted_section.get("heading", f"id {submitted_section['id']}"))
+                    job.processed_sections += 1
+                    db.commit()
+                    continue
+
                 tags = section_data["curriculum_topic_path"].split(" > ") if section_data.get("curriculum_topic_path") else []
                 cv = section_data.get("curriculum_version")
+                created_cards: list[Card] = []
 
                 if card_version == "base":
                     # Create new card rows
@@ -394,7 +421,7 @@ def _run_generation(
                             front_text=card_data["front_text"],
                             extra=card_data.get("extra"),
                             source_ref=card_data.get("source_ref"),
-                            needs_review=needs_review,
+                            needs_review=needs_review or card_data.get("needs_review", False),
                             note_id=next_note_id(),
                         )
                         if cv == "v1":
@@ -404,6 +431,7 @@ def _run_generation(
                             card_kwargs["tags"] = tags
                         card = Card(**card_kwargs)
                         db.add(card)
+                        created_cards.append(card)
                     total_cards += len(cards_data)
                 else:
                     # Update version column on existing cards matched by card_number
@@ -418,17 +446,17 @@ def _run_generation(
 
                 total_input_tokens += usage["input_tokens"]
                 total_output_tokens += usage["output_tokens"]
+                total_cache_write += usage.get("cache_creation_input_tokens", 0)
+                total_cache_read += usage.get("cache_read_input_tokens", 0)
                 db.commit()
 
-                # Score newly created/updated cards for this section
-                try:
-                    section_cards = db.query(Card).filter(
-                        Card.section_id == section_data["id"]
-                    ).all()
-                    if section_cards:
+                # Score the cards created in this run (base generation only —
+                # v1/v2/v3 runs don't change the base content the score is based on)
+                if created_cards:
+                    try:
                         cards_for_scoring = [
-                            {"id": c.id, "front_text": c.front_text}
-                            for c in section_cards
+                            {"id": c.id, "front_text": c.front_text, "extra": c.extra}
+                            for c in created_cards
                         ]
                         scores, score_usage = score_cards(
                             client,
@@ -436,32 +464,58 @@ def _run_generation(
                             section_data.get("curriculum_topic_path", ""),
                             model,
                         )
+                        cards_by_id = {c.id: c for c in created_cards}
                         for score in scores:
-                            card = db.query(Card).filter(Card.id == score.get("card_id")).first()
+                            card = cards_by_id.get(score.get("card_id"))
                             if card:
                                 card.accuracy_score = score.get("accuracy")
                                 card.accuracy_note = score.get("accuracy_note")
                                 card.eor_yield = score.get("eor_yield")
                         total_input_tokens += score_usage.get("input_tokens", 0)
                         total_output_tokens += score_usage.get("output_tokens", 0)
+                        total_cache_write += score_usage.get("cache_creation_input_tokens", 0)
+                        total_cache_read += score_usage.get("cache_read_input_tokens", 0)
                         db.commit()
-                except Exception:
-                    logger.exception("Error scoring cards for section %d", section_data["id"])
+                    except Exception:
+                        logger.exception("Error scoring cards for section %d", section_data["id"])
+                        scoring_failures += 1
 
                 job.processed_sections += 1
                 db.commit()
 
         topic_tree_id = next(iter(sections_by_id.values()), {}).get("topic_tree_id")
-        db.add(AIUsageLog(
-            operation="card_generation",
-            model=model,
-            input_tokens=total_input_tokens,
-            output_tokens=total_output_tokens,
-            cost_usd=compute_cost(model, total_input_tokens, total_output_tokens),
-            topic_tree_id=topic_tree_id,
-            job_id=job_id,
-        ))
-        job.status = JobStatus.done
+        if total_input_tokens or total_output_tokens:
+            db.add(AIUsageLog(
+                operation="card_generation",
+                model=model,
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                cache_write_tokens=total_cache_write,
+                cache_read_tokens=total_cache_read,
+                cost_usd=compute_cost(model, total_input_tokens, total_output_tokens, total_cache_write, total_cache_read),
+                topic_tree_id=topic_tree_id,
+                job_id=job_id,
+            ))
+        if cancelled:
+            db.commit()  # keep the usage log; status stays cancelled
+            return
+
+        # Surface partial failures; fail outright only if nothing succeeded
+        warnings = []
+        if failed_sections:
+            warnings.append(f"{len(failed_sections)} section(s) failed: {', '.join(failed_sections[:5])}")
+        if scoring_failures:
+            warnings.append(f"scoring failed for {scoring_failures} section(s)")
+
+        if _job_cancelled(db, job_id):
+            db.commit()  # keep the usage log; leave status as cancelled/failed
+            return
+        if failed_sections and len(failed_sections) == len(sections_by_id):
+            job.status = JobStatus.failed
+            job.error_message = warnings[0]
+        else:
+            job.status = JobStatus.done
+            job.error_message = "; ".join(warnings) if warnings else None
         job.total_cards = total_cards
         job.actual_input_tokens = total_input_tokens
         job.actual_output_tokens = total_output_tokens
@@ -524,6 +578,8 @@ def _run_supplemental(
 
         total_input = 0
         total_output = 0
+        total_cache_write = 0
+        total_cache_read = 0
         processed_groups = 0
         total_cards_updated = 0
 
@@ -531,12 +587,15 @@ def _run_supplemental(
             for attempt in range(4):
                 try:
                     return generate_supplemental_for_group(client, condition, group_cards, rules_text, model)
-                except anthropic.RateLimitError:
+                except RETRYABLE_ERRORS as e:
                     if attempt == 3:
                         raise
                     wait = 20 * (2 ** attempt)
-                    logger.warning("Rate limit on supplemental '%s', retrying in %ds", condition, wait)
+                    logger.warning("Retryable API error on supplemental '%s' (%s), retrying in %ds", condition, type(e).__name__, wait)
                     time.sleep(wait)
+
+        failed_groups: list[str] = []
+        cancelled = False
 
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = {
@@ -545,37 +604,70 @@ def _run_supplemental(
             }
             for future in as_completed(futures):
                 condition, group_cards = futures[future]
+
+                if _job_cancelled(db, job_id):
+                    logger.info("Supplemental job %d cancelled by user", job_id)
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    cancelled = True
+                    break
+
                 try:
                     condition_results, usage = future.result()
-                    # Update each condition's cards with their specific vignette/teaching case
-                    for cr in condition_results:
-                        cr_ids = cr.get("card_ids", [])
-                        if cr_ids:
-                            db.query(Card).filter(Card.id.in_(cr_ids)).update(
-                                {"vignette": cr.get("vignette", ""), "teaching_case": cr.get("teaching_case", "")},
-                                synchronize_session="fetch",
-                            )
-                    total_input += usage.get("input_tokens", 0)
-                    total_output += usage.get("output_tokens", 0)
-                    total_cards_updated += len([c["id"] for c in group_cards])
+                except (anthropic.AuthenticationError, anthropic.PermissionDeniedError):
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    raise
                 except Exception:
                     logger.exception("Error generating supplemental for condition '%s'", condition)
-                finally:
+                    failed_groups.append(condition)
                     processed_groups += 1
                     job.processed_sections = processed_groups
                     db.commit()
+                    continue
 
-        cost = compute_cost(model, total_input, total_output)
-        db.add(AIUsageLog(
-            operation="supplemental_generation",
-            model=model,
-            input_tokens=total_input,
-            output_tokens=total_output,
-            cost_usd=cost,
-            job_id=job_id,
-        ))
+                # Update each condition's cards with their specific vignette/teaching case
+                # (card_ids already validated against the sent group by the generator)
+                for cr in condition_results:
+                    cr_ids = cr.get("card_ids", [])
+                    if cr_ids:
+                        total_cards_updated += db.query(Card).filter(Card.id.in_(cr_ids)).update(
+                            {"vignette": cr.get("vignette", ""), "teaching_case": cr.get("teaching_case", "")},
+                            synchronize_session="fetch",
+                        )
+                total_input += usage.get("input_tokens", 0)
+                total_output += usage.get("output_tokens", 0)
+                total_cache_write += usage.get("cache_creation_input_tokens", 0)
+                total_cache_read += usage.get("cache_read_input_tokens", 0)
+                processed_groups += 1
+                job.processed_sections = processed_groups
+                db.commit()
 
-        job.status = JobStatus.done
+        if total_input or total_output:
+            db.add(AIUsageLog(
+                operation="supplemental_generation",
+                model=model,
+                input_tokens=total_input,
+                output_tokens=total_output,
+                cache_write_tokens=total_cache_write,
+                cache_read_tokens=total_cache_read,
+                cost_usd=compute_cost(model, total_input, total_output, total_cache_write, total_cache_read),
+                job_id=job_id,
+            ))
+        if cancelled:
+            db.commit()
+            return
+
+        if _job_cancelled(db, job_id):
+            db.commit()
+            return
+        if failed_groups and len(failed_groups) == len(condition_groups):
+            job.status = JobStatus.failed
+            job.error_message = f"All {len(failed_groups)} condition group(s) failed"
+        else:
+            job.status = JobStatus.done
+            job.error_message = (
+                f"{len(failed_groups)} of {len(condition_groups)} condition group(s) failed: "
+                f"{', '.join(failed_groups[:5])}"
+            ) if failed_groups else None
         job.actual_input_tokens = total_input
         job.actual_output_tokens = total_output
         job.total_cards = total_cards_updated

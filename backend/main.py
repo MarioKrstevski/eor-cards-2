@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from backend.db import engine, Base
+from backend.db import engine, Base, SessionLocal
 from backend.routers import documents, sections, cards, generate, curriculum, rules, export, usage, review_marks, fix_batches, presentations
 from backend import models  # noqa — ensure all models registered
 
@@ -90,6 +90,16 @@ def _migrate_db():
             "ALTER TABLE cards ADD COLUMN accuracy_score INTEGER",
             "ALTER TABLE cards ADD COLUMN accuracy_note TEXT",
             "ALTER TABLE cards ADD COLUMN eor_yield TEXT",
+            "ALTER TABLE ai_usage_log ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE ai_usage_log ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0",
+            # Indexes for the most common filters (no-ops if they already exist)
+            "CREATE INDEX IF NOT EXISTS ix_cards_section_id ON cards(section_id)",
+            "CREATE INDEX IF NOT EXISTS ix_cards_status ON cards(status)",
+            "CREATE INDEX IF NOT EXISTS ix_sections_topic_tree_id ON sections(topic_tree_id)",
+            "CREATE INDEX IF NOT EXISTS ix_sections_curriculum_topic_path ON sections(curriculum_topic_path)",
+            "CREATE INDEX IF NOT EXISTS ix_content_blocks_section_id ON content_blocks(section_id)",
+            "CREATE INDEX IF NOT EXISTS ix_section_images_section_id ON section_images(section_id)",
+            "CREATE INDEX IF NOT EXISTS ix_ai_usage_log_job_id ON ai_usage_log(job_id)",
         ]:
             try:
                 conn.execute(text(col_sql))
@@ -98,12 +108,39 @@ def _migrate_db():
                 pass
 
 
+def _sweep_orphaned_jobs():
+    """Mark jobs left running/pending by a previous process as failed.
+
+    Background tasks die with the process — any job still 'running' at startup
+    can never finish and would show as stuck in the UI forever.
+    """
+    from backend.models import GenerationJob, ProcessingJob, JobStatus, utcnow
+    db = SessionLocal()
+    try:
+        for model_cls in (GenerationJob, ProcessingJob):
+            stuck = db.query(model_cls).filter(
+                model_cls.status.in_([JobStatus.pending, JobStatus.running])
+            ).all()
+            for job in stuck:
+                job.status = JobStatus.failed
+                job.error_message = "Interrupted by server restart"
+                job.finished_at = utcnow()
+        db.commit()
+    except Exception:
+        db.rollback()
+        import logging
+        logging.getLogger(__name__).exception("Orphaned-job sweep failed")
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     os.makedirs(os.path.join(os.path.dirname(__file__), "..", "data", "uploads"), exist_ok=True)
     Base.metadata.create_all(bind=engine)
     _migrate_db()
     seed_data()
+    _sweep_orphaned_jobs()
     yield
 
 

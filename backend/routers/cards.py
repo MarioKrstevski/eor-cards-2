@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 import logging
 import anthropic
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import cast, String
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel
@@ -38,13 +38,16 @@ class CardPatch(BaseModel):
     is_reviewed: Optional[bool] = None
 
 
-def card_to_dict(card: Card, db: Session | None = None) -> dict:
+def card_to_dict(card: Card, db: Session | None = None, img_cache: dict | None = None) -> dict:
     resolved_img = None
     ref_img_id = getattr(card, "ref_img_id", None)
-    if ref_img_id and db:
-        section_img = db.get(SectionImage, ref_img_id)
-        if section_img:
-            resolved_img = section_img.data_uri
+    if ref_img_id:
+        if img_cache is not None:
+            resolved_img = img_cache.get(ref_img_id)
+        elif db:
+            section_img = db.get(SectionImage, ref_img_id)
+            if section_img:
+                resolved_img = section_img.data_uri
     return {
         "id": card.id,
         "section_id": card.section_id,
@@ -90,7 +93,7 @@ def list_cards(
     tag: Optional[str] = None,
     topic: Optional[str] = None,
     search_q: Optional[str] = None,
-    limit: int = 100,
+    limit: int = Query(100, le=1000),
     offset: int = 0,
     db: Session = Depends(get_db),
 ):
@@ -128,7 +131,15 @@ def list_cards(
 
     total = q.count()
     cards = q.offset(offset).limit(limit).all()
-    return {"cards": [card_to_dict(c, db) for c in cards], "total": total, "limit": limit, "offset": offset}
+
+    # Batch-fetch ref images for the page in one query (avoids N+1)
+    ref_img_ids = {c.ref_img_id for c in cards if c.ref_img_id}
+    img_cache = {}
+    if ref_img_ids:
+        for img in db.query(SectionImage).filter(SectionImage.id.in_(ref_img_ids)).all():
+            img_cache[img.id] = img.data_uri
+
+    return {"cards": [card_to_dict(c, db, img_cache) for c in cards], "total": total, "limit": limit, "offset": offset}
 
 
 @router.patch("/{card_id}")
@@ -241,24 +252,26 @@ def bulk_mark_reviewed(body: BulkReviewRequest, db: Session = Depends(get_db)):
     return {"updated": len(body.card_ids)}
 
 
-@router.post("/bulk-delete", status_code=200)
-def bulk_delete_cards(body: dict, db: Session = Depends(get_db)):
-    card_ids = body.get("card_ids", [])
-    section_id = body.get("section_id")
-    section_ids = body.get("section_ids", [])
-    topic_tree_id = body.get("topic_tree_id")
+class BulkDeleteRequest(BaseModel):
+    card_ids: Optional[list[int]] = None
+    section_id: Optional[int] = None
+    section_ids: Optional[list[int]] = None
+    topic_tree_id: Optional[int] = None
 
+
+@router.post("/bulk-delete", status_code=200)
+def bulk_delete_cards(body: BulkDeleteRequest, db: Session = Depends(get_db)):
     q = db.query(Card)
-    if card_ids:
-        q = q.filter(Card.id.in_(card_ids))
-    elif section_ids:
-        q = q.filter(Card.section_id.in_(section_ids))
-    elif section_id:
-        q = q.filter(Card.section_id == section_id)
-    elif topic_tree_id:
-        q = q.join(Card.section).filter(Section.topic_tree_id == topic_tree_id)
+    if body.card_ids:
+        q = q.filter(Card.id.in_(body.card_ids))
+    elif body.section_ids:
+        q = q.filter(Card.section_id.in_(body.section_ids))
+    elif body.section_id:
+        q = q.filter(Card.section_id == body.section_id)
+    elif body.topic_tree_id:
+        q = q.join(Card.section).filter(Section.topic_tree_id == body.topic_tree_id)
     else:
-        return {"deleted": 0}
+        raise HTTPException(400, "Provide card_ids, section_id, section_ids, or topic_tree_id")
 
     count = q.count()
     q.delete(synchronize_session=False)
@@ -266,38 +279,52 @@ def bulk_delete_cards(body: dict, db: Session = Depends(get_db)):
     return {"deleted": count}
 
 
-@router.post("/bulk-score")
-def bulk_score_cards(body: dict, db: Session = Depends(get_db)):
-    """Score cards for accuracy and EOR yield."""
-    card_ids = body.get("card_ids", [])
-    model_name = body.get("model", DEFAULT_MODEL)
+class BulkScoreRequest(BaseModel):
+    card_ids: list[int]
+    model: str = DEFAULT_MODEL
 
-    if not card_ids:
+
+@router.post("/bulk-score")
+def bulk_score_cards(body: BulkScoreRequest, db: Session = Depends(get_db)):
+    """Score cards for accuracy and EOR yield."""
+    if not body.card_ids:
         raise HTTPException(400, "No card_ids provided")
+    model_name = body.model
 
     from backend.services.scorer import score_cards
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    cards = db.query(Card).filter(Card.id.in_(card_ids)).all()
+    cards = db.query(Card).filter(Card.id.in_(body.card_ids)).all()
 
     # Group by section for curriculum path context
     section_groups = {}
     for c in cards:
         section_groups.setdefault(c.section_id, []).append(c)
 
+    # Batch-fetch sections in one query
+    sections = {
+        s.id: s for s in
+        db.query(Section).filter(Section.id.in_(section_groups.keys())).all()
+    }
+
     total_scored = 0
     total_input = 0
     total_output = 0
+    failed_groups = 0
 
     for section_id, group_cards in section_groups.items():
-        section = db.get(Section, section_id)
+        section = sections.get(section_id)
         path = section.curriculum_topic_path if section else ""
-        cards_for_scoring = [{"id": c.id, "front_text": c.front_text} for c in group_cards]
+        cards_by_id = {c.id: c for c in group_cards}
+        cards_for_scoring = [
+            {"id": c.id, "front_text": c.front_text, "extra": c.extra}
+            for c in group_cards
+        ]
 
         try:
             scores, usage = score_cards(client, cards_for_scoring, path or "", model_name)
             for score in scores:
-                card = db.query(Card).filter(Card.id == score.get("card_id")).first()
+                card = cards_by_id.get(score.get("card_id"))
                 if card:
                     card.accuracy_score = score.get("accuracy")
                     card.accuracy_note = score.get("accuracy_note")
@@ -307,21 +334,21 @@ def bulk_score_cards(body: dict, db: Session = Depends(get_db)):
             total_output += usage.get("output_tokens", 0)
         except Exception:
             logger.exception("Error scoring cards for section %d", section_id)
+            failed_groups += 1
 
     db.commit()
 
-    # Log usage
-    cost = compute_cost(model_name, total_input, total_output)
-    db.add(AIUsageLog(
-        operation="card_scoring",
-        model=model_name,
-        input_tokens=total_input,
-        output_tokens=total_output,
-        cost_usd=cost,
-    ))
-    db.commit()
+    if total_input or total_output:
+        db.add(AIUsageLog(
+            operation="card_scoring",
+            model=model_name,
+            input_tokens=total_input,
+            output_tokens=total_output,
+            cost_usd=compute_cost(model_name, total_input, total_output),
+        ))
+        db.commit()
 
-    return {"scored": total_scored}
+    return {"scored": total_scored, "failed_groups": failed_groups}
 
 
 @router.delete("/{card_id}", status_code=204)

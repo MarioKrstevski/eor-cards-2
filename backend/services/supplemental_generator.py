@@ -3,13 +3,9 @@ import json
 import re
 import logging
 import anthropic
+from backend.services.ai_utils import parse_json_array, response_text, usage_dict, strip_cloze as _strip_cloze
 
 logger = logging.getLogger(__name__)
-
-
-def _strip_cloze(text: str) -> str:
-    """Remove cloze deletion markup, keeping the visible term. {{c1::term}} -> term"""
-    return re.sub(r'\{\{c\d+::(.*?)\}\}', r'\1', text)
 
 
 def generate_supplemental_for_group(
@@ -77,96 +73,58 @@ Output a JSON array with this exact structure:
         ],
     )
 
-    raw = response.content[0].text.strip()
-    usage = {
-        "input_tokens": response.usage.input_tokens,
-        "output_tokens": response.usage.output_tokens,
-        "cache_read_input_tokens": getattr(response.usage, "cache_read_input_tokens", 0) or 0,
-        "cache_creation_input_tokens": getattr(response.usage, "cache_creation_input_tokens", 0) or 0,
-    }
+    raw = response_text(response)
+    usage = usage_dict(response)
 
     results = _parse_json_output(raw, cards)
+
+    # Drop hallucinated/transposed IDs — only update cards actually in this group
+    sent_ids = {c["id"] for c in cards}
+    for r in results:
+        cr_ids = r.get("card_ids") or []
+        valid_ids = [i for i in cr_ids if i in sent_ids]
+        if len(valid_ids) < len(cr_ids):
+            logger.warning(
+                "Condition '%s': dropped %d card ID(s) not in this group",
+                r.get("condition", "?"), len(cr_ids) - len(valid_ids),
+            )
+        r["card_ids"] = valid_ids
+
     return results, usage
 
 
 def _parse_json_output(raw: str, cards: list[dict]) -> list[dict]:
-    """Parse the JSON array from Claude's output."""
-    # Strip markdown code fences if present
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
-        cleaned = re.sub(r'\s*```$', '', cleaned)
+    """Parse the JSON array from Claude's output. Raises ValueError if unparseable."""
+    results = parse_json_array(raw)
+    if results is not None:
+        return results
 
+    # Fallback: fix unescaped newlines inside strings, then re-parse
     try:
-        results = json.loads(cleaned)
-        if isinstance(results, list):
-            return results
-    except json.JSONDecodeError as e:
-        logger.warning("Failed to parse supplemental JSON output: %s", e)
-
-    # Fallback: try to extract JSON array from the text
-    match = re.search(r'\[.*\]', cleaned, re.DOTALL)
-    if match:
-        try:
-            results = json.loads(match.group())
-            if isinstance(results, list):
-                return results
-        except json.JSONDecodeError:
-            pass
-
-    # Fallback 2: try fixing common JSON issues (unescaped newlines in strings)
-    try:
-        # Replace literal newlines inside strings with <br>
-        fixed = re.sub(r'(?<=": ")(.*?)(?="[,\}])', lambda m: m.group(0).replace('\n', '<br>'), cleaned, flags=re.DOTALL)
+        fixed = re.sub(r'(?<=": ")(.*?)(?="[,\}])', lambda m: m.group(0).replace('\n', '<br>'), raw.strip(), flags=re.DOTALL)
         results = json.loads(fixed)
         if isinstance(results, list):
             return results
-    except (json.JSONDecodeError, Exception):
+    except json.JSONDecodeError:
         pass
 
-    # Last resort: fall back to marker-based parsing
-    logger.warning("JSON parse failed, trying marker-based fallback. First 200 chars: %s", cleaned[:200])
-    return _parse_marker_fallback(raw, cards)
-
-
-def _parse_marker_fallback(raw: str, cards: list[dict]) -> list[dict]:
-    """Fall back to ===VIGNETTE=== / ===TEACHING_CASE=== marker parsing."""
-    results = []
-    # Split by ===VIGNETTE=== markers
-    blocks = re.split(r'===VIGNETTE===', raw)
-
-    for block in blocks[1:]:  # skip anything before the first marker
-        vignette = ""
-        teaching_case = ""
-        tc_split = block.split('===TEACHING_CASE===', 1)
+    # Last resort: marker-based parsing — only safe when there is a SINGLE block,
+    # since markers carry no card IDs. With multiple conditions we cannot know
+    # which cards belong to which block; assigning blindly would attach wrong
+    # medical content, so fail loud instead.
+    blocks = re.split(r'===VIGNETTE===', raw)[1:]
+    if len(blocks) == 1:
+        tc_split = blocks[0].split('===TEACHING_CASE===', 1)
         vignette = tc_split[0].strip()
-        if len(tc_split) > 1:
-            teaching_case = tc_split[1].strip()
-            # Stop at next condition block if present
-            next_condition = re.search(r'\n\s*Condition:', teaching_case)
-            if next_condition:
-                teaching_case = teaching_case[:next_condition.start()].strip()
+        teaching_case = tc_split[1].strip() if len(tc_split) > 1 else ""
+        if vignette or teaching_case:
+            logger.warning("JSON parse failed, recovered single condition via markers")
+            return [{
+                "condition": "Parsed",
+                "card_ids": [c["id"] for c in cards],
+                "vignette": vignette,
+                "teaching_case": teaching_case,
+            }]
 
-        # Try to extract card IDs from the text before the vignette
-        results.append({
-            "condition": "Parsed",
-            "card_ids": [c["id"] for c in cards] if not results else [],
-            "vignette": vignette,
-            "teaching_case": teaching_case,
-        })
-
-    if not results:
-        # Nothing parsed at all — assign raw to all cards
-        all_ids = [c["id"] for c in cards]
-        results.append({
-            "condition": "Unknown",
-            "card_ids": all_ids,
-            "vignette": "",
-            "teaching_case": "",
-        })
-
-    # If only one result from markers, assign all card IDs to it
-    if len(results) == 1 and not results[0]["card_ids"]:
-        results[0]["card_ids"] = [c["id"] for c in cards]
-
-    return results
+    logger.error("Supplemental output unparseable. First 200 chars: %.200s", raw)
+    raise ValueError("Could not parse supplemental output — no cards were updated")

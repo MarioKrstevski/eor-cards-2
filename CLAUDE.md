@@ -140,8 +140,8 @@ Edit `backend/config.py` — the `MODELS` dict is the single source of truth:
 ```python
 "claude-opus-4-6": {
     "display": "Claude Opus 4.6",
-    "input_per_1m": 15.0,
-    "output_per_1m": 75.0,
+    "input_per_1m": 5.0,
+    "output_per_1m": 25.0,
 },
 ```
 Only Anthropic models work — the SDK is `anthropic.Anthropic` only.
