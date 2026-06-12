@@ -25,6 +25,7 @@ import {
   startSupplemental,
   getReviewMarkTypes,
   bulkMarkCards,
+  bulkScoreCards,
   createFixBatch,
   getSection,
   uploadSectionImage,
@@ -955,6 +956,20 @@ export default function CardsPanel({
                     card.is_reviewed ? 'Reviewed' : 'Pending'
                   }
                 />
+                {card.accuracy_score != null && (
+                  <span
+                    className={`w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white shrink-0 cursor-help ${
+                      card.accuracy_score >= 5 ? 'bg-green-500' :
+                      card.accuracy_score >= 4 ? 'bg-blue-500' :
+                      card.accuracy_score >= 3 ? 'bg-amber-500' :
+                      card.accuracy_score >= 2 ? 'bg-red-500' :
+                      'bg-red-800'
+                    }`}
+                    title={`Accuracy: ${card.accuracy_score}/5${card.accuracy_note && card.accuracy_note !== 'Accurate' ? ` — ${card.accuracy_note}` : ''}${card.eor_yield ? `\nEOR: ${Object.entries(card.eor_yield).map(([k, v]) => `${k}: ${v}`).join(', ')}` : ''}`}
+                  >
+                    {card.accuracy_score}
+                  </span>
+                )}
                 <span className={`text-xs tabular-nums ${!card.is_reviewed ? 'font-bold' : 'text-gray-400'}`}>
                   {info.getValue()}
                 </span>
@@ -1764,6 +1779,42 @@ export default function CardsPanel({
                     className="w-full text-left px-3 py-1.5 text-xs text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
                   >
                     Gen Vignettes &amp; Cases — all in topic
+                  </button>
+                )}
+                <div className="border-t border-gray-100 my-1" />
+                <button
+                  onClick={async () => {
+                    setShowActionsMenu(false);
+                    if (selectedIds.size === 0) return;
+                    try {
+                      await bulkScoreCards({ card_ids: [...selectedIds], model: selectedModel });
+                      fetchCards(sectionId, topicPath, true, undefined, sectionIds);
+                    } catch { setActionError('Scoring failed'); }
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-teal-700 hover:bg-teal-50"
+                >
+                  Score Cards — selected ({selectedIds.size})
+                </button>
+                {(sectionId || (sectionIds && sectionIds.length > 0)) && (
+                  <button
+                    onClick={async () => {
+                      setShowActionsMenu(false);
+                      try {
+                        const allCards = await getCards({
+                          ...(sectionId ? { section_id: sectionId } : {}),
+                          ...(sectionIds && sectionIds.length > 0 ? { section_ids: sectionIds.join(',') } : {}),
+                          ...(!sectionId && !sectionIds?.length && topicPath ? { topic: topicPath } : {}),
+                          limit: 10000, offset: 0,
+                        });
+                        const allIds = allCards.cards.map(c => c.id);
+                        if (allIds.length === 0) return;
+                        await bulkScoreCards({ card_ids: allIds, model: selectedModel });
+                        fetchCards(sectionId, topicPath, true, undefined, sectionIds);
+                      } catch { setActionError('Scoring failed'); }
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-xs text-teal-700 hover:bg-teal-50"
+                  >
+                    Score Cards — all in topic ({totalCards})
                   </button>
                 )}
                 <div className="border-t border-gray-100 my-1" />

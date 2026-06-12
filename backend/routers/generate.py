@@ -12,6 +12,7 @@ from backend.models import (
     RuleSet, AIUsageLog, TopicTree, Curriculum, utcnow,
 )
 from backend.services.generator import generate_cards_for_section
+from backend.services.scorer import score_cards
 from backend.services.cost_estimator import estimate_cost
 from backend.config import MODELS, DEFAULT_MODEL, ANTHROPIC_API_KEY, compute_cost
 import anthropic
@@ -417,6 +418,36 @@ def _run_generation(
 
                 total_input_tokens += usage["input_tokens"]
                 total_output_tokens += usage["output_tokens"]
+                db.commit()
+
+                # Score newly created/updated cards for this section
+                try:
+                    section_cards = db.query(Card).filter(
+                        Card.section_id == section_data["id"]
+                    ).all()
+                    if section_cards:
+                        cards_for_scoring = [
+                            {"id": c.id, "front_text": c.front_text}
+                            for c in section_cards
+                        ]
+                        scores, score_usage = score_cards(
+                            client,
+                            cards_for_scoring,
+                            section_data.get("curriculum_topic_path", ""),
+                            model,
+                        )
+                        for score in scores:
+                            card = db.query(Card).filter(Card.id == score.get("card_id")).first()
+                            if card:
+                                card.accuracy_score = score.get("accuracy")
+                                card.accuracy_note = score.get("accuracy_note")
+                                card.eor_yield = score.get("eor_yield")
+                        total_input_tokens += score_usage.get("input_tokens", 0)
+                        total_output_tokens += score_usage.get("output_tokens", 0)
+                        db.commit()
+                except Exception:
+                    logger.exception("Error scoring cards for section %d", section_data["id"])
+
                 job.processed_sections += 1
                 db.commit()
 

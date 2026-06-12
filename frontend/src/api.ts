@@ -296,6 +296,11 @@ export async function cancelFixBatch(id: number): Promise<void> {
   await http.post(`/fix-batches/${id}/cancel`);
 }
 
+export async function bulkScoreCards(params: { card_ids: number[]; model: string }): Promise<{ scored: number }> {
+  const res = await http.post<{ scored: number }>('/cards/bulk-score', params);
+  return res.data;
+}
+
 export async function bulkMarkCards(params: {
   card_ids: number[];
   mark_type_id: number | null;

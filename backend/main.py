@@ -87,6 +87,9 @@ def _migrate_db():
             "ALTER TABLE rule_sets ADD COLUMN card_version VARCHAR(10) NOT NULL DEFAULT 'base'",
             "ALTER TABLE section_images ADD COLUMN intended_position VARCHAR(10)",
             "ALTER TABLE sections ADD COLUMN section_status VARCHAR(20) DEFAULT 'normal'",
+            "ALTER TABLE cards ADD COLUMN accuracy_score INTEGER",
+            "ALTER TABLE cards ADD COLUMN accuracy_note TEXT",
+            "ALTER TABLE cards ADD COLUMN eor_yield TEXT",
         ]:
             try:
                 conn.execute(text(col_sql))

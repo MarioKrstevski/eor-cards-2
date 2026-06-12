@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import logging
 import anthropic
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import cast, String
@@ -10,6 +11,8 @@ from backend.db import get_db
 from backend.models import Card, CardStatus, Section, SectionImage, RuleSet, AIUsageLog
 from backend.services.generator import strip_card_html, regenerate_single_card
 from backend.config import ANTHROPIC_API_KEY, DEFAULT_MODEL, compute_cost
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -65,6 +68,9 @@ def card_to_dict(card: Card, db: Session | None = None) -> dict:
         "is_reviewed": card.is_reviewed,
         "review_mark_id": card.review_mark_id if hasattr(card, 'review_mark_id') else None,
         "in_fix_batch": card.in_fix_batch if hasattr(card, 'in_fix_batch') else False,
+        "accuracy_score": card.accuracy_score,
+        "accuracy_note": card.accuracy_note,
+        "eor_yield": card.eor_yield,
         "needs_review": card.needs_review if hasattr(card, 'needs_review') else False,
         "created_at": card.created_at.isoformat() if card.created_at else None,
         "updated_at": card.updated_at.isoformat() if card.updated_at else None,
@@ -258,6 +264,64 @@ def bulk_delete_cards(body: dict, db: Session = Depends(get_db)):
     q.delete(synchronize_session=False)
     db.commit()
     return {"deleted": count}
+
+
+@router.post("/bulk-score")
+def bulk_score_cards(body: dict, db: Session = Depends(get_db)):
+    """Score cards for accuracy and EOR yield."""
+    card_ids = body.get("card_ids", [])
+    model_name = body.get("model", DEFAULT_MODEL)
+
+    if not card_ids:
+        raise HTTPException(400, "No card_ids provided")
+
+    from backend.services.scorer import score_cards
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    cards = db.query(Card).filter(Card.id.in_(card_ids)).all()
+
+    # Group by section for curriculum path context
+    section_groups = {}
+    for c in cards:
+        section_groups.setdefault(c.section_id, []).append(c)
+
+    total_scored = 0
+    total_input = 0
+    total_output = 0
+
+    for section_id, group_cards in section_groups.items():
+        section = db.get(Section, section_id)
+        path = section.curriculum_topic_path if section else ""
+        cards_for_scoring = [{"id": c.id, "front_text": c.front_text} for c in group_cards]
+
+        try:
+            scores, usage = score_cards(client, cards_for_scoring, path or "", model_name)
+            for score in scores:
+                card = db.query(Card).filter(Card.id == score.get("card_id")).first()
+                if card:
+                    card.accuracy_score = score.get("accuracy")
+                    card.accuracy_note = score.get("accuracy_note")
+                    card.eor_yield = score.get("eor_yield")
+                    total_scored += 1
+            total_input += usage.get("input_tokens", 0)
+            total_output += usage.get("output_tokens", 0)
+        except Exception:
+            logger.exception("Error scoring cards for section %d", section_id)
+
+    db.commit()
+
+    # Log usage
+    cost = compute_cost(model_name, total_input, total_output)
+    db.add(AIUsageLog(
+        operation="card_scoring",
+        model=model_name,
+        input_tokens=total_input,
+        output_tokens=total_output,
+        cost_usd=cost,
+    ))
+    db.commit()
+
+    return {"scored": total_scored}
 
 
 @router.delete("/{card_id}", status_code=204)

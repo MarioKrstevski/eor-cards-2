@@ -107,6 +107,9 @@ export interface Card {
   needs_review: boolean;
   is_reviewed: boolean;
   review_mark_id: number | null;
+  accuracy_score: number | null;
+  accuracy_note: string | null;
+  eor_yield: Record<string, string> | null;
   in_fix_batch: boolean;
   created_at: string;
   updated_at: string;
