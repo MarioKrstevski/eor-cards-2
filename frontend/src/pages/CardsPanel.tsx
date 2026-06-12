@@ -959,7 +959,7 @@ export default function CardsPanel({
                 />
                 {card.accuracy_score != null && (
                   <span
-                    className={`w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white shrink-0 ${
+                    className={`w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white shrink-0 cursor-help ${
                       card.accuracy_score >= 5 ? 'bg-green-500' :
                       card.accuracy_score >= 4 ? 'bg-blue-500' :
                       card.accuracy_score >= 3 ? 'bg-amber-500' :
