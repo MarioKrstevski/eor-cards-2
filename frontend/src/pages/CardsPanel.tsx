@@ -726,6 +726,7 @@ export default function CardsPanel({
   const [markFilterId, setMarkFilterId] = useState<number | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showDeleteMenu, setShowDeleteMenu] = useState(false);
+  const [scoring, setScoring] = useState(false);
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const [showFixBatchModal, setShowFixBatchModal] = useState(false);
   const [fixBatchPrompt, setFixBatchPrompt] = useState('');
@@ -1786,10 +1787,11 @@ export default function CardsPanel({
                   onClick={async () => {
                     setShowActionsMenu(false);
                     if (selectedIds.size === 0) return;
+                    setScoring(true);
                     try {
                       await bulkScoreCards({ card_ids: [...selectedIds], model: selectedModel });
                       fetchCards(sectionId, topicPath, true, undefined, sectionIds);
-                    } catch { setActionError('Scoring failed'); }
+                    } catch { setActionError('Scoring failed'); } finally { setScoring(false); }
                   }}
                   className="w-full text-left px-3 py-1.5 text-xs text-teal-700 hover:bg-teal-50"
                 >
@@ -1799,6 +1801,7 @@ export default function CardsPanel({
                   <button
                     onClick={async () => {
                       setShowActionsMenu(false);
+                      setScoring(true);
                       try {
                         const allCards = await getCards({
                           ...(sectionId ? { section_id: sectionId } : {}),
@@ -1810,7 +1813,7 @@ export default function CardsPanel({
                         if (allIds.length === 0) return;
                         await bulkScoreCards({ card_ids: allIds, model: selectedModel });
                         fetchCards(sectionId, topicPath, true, undefined, sectionIds);
-                      } catch { setActionError('Scoring failed'); }
+                      } catch { setActionError('Scoring failed'); } finally { setScoring(false); }
                     }}
                     className="w-full text-left px-3 py-1.5 text-xs text-teal-700 hover:bg-teal-50"
                   >
@@ -1912,13 +1915,13 @@ export default function CardsPanel({
             )}
           </div>
           {/* Activity spinner */}
-          {(jobRunning || bulkRegenProgress) && (
+          {(jobRunning || bulkRegenProgress || scoring) && (
             <div className="flex items-center gap-1.5 ml-2 text-[10px] text-blue-600">
               <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
-              <span>{bulkRegenProgress ? `Regen ${bulkRegenProgress.done}/${bulkRegenProgress.total}` : 'Generating...'}</span>
+              <span>{bulkRegenProgress ? `Regen ${bulkRegenProgress.done}/${bulkRegenProgress.total}` : scoring ? 'Scoring...' : 'Generating...'}</span>
             </div>
           )}
           <button
