@@ -246,6 +246,67 @@ async def upload_section_image(
     }
 
 
+class SectionImageFromUrl(BaseModel):
+    url: str
+
+
+@router.post("/{section_id}/images/from-url")
+def upload_section_image_from_url(section_id: int, body: SectionImageFromUrl, db: Session = Depends(get_db)):
+    """Fetch an image by URL (server-side, no browser CORS) and store it in the
+    section's image library. Used when the user drags an image from another website
+    or app — the browser hands us a URL, not the file bytes."""
+    import base64
+    import httpx
+
+    section = db.get(Section, section_id)
+    if not section:
+        raise HTTPException(404)
+
+    url = (body.url or "").strip()
+    if not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(400, "Only http(s) image URLs are supported")
+
+    try:
+        # A browser-like UA + referer-less request; follow redirects (CDNs love them).
+        with httpx.Client(follow_redirects=True, timeout=15.0) as client:
+            resp = client.get(url, headers={"User-Agent": "Mozilla/5.0 (EOR-Card-Studio image fetch)"})
+        resp.raise_for_status()
+    except Exception as e:  # noqa: BLE001 — surface any fetch failure to the user
+        raise HTTPException(502, f"Could not fetch image: {e}")
+
+    mime = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+    content = resp.content
+    if not mime.startswith("image/"):
+        raise HTTPException(415, f"URL did not return an image (got {mime or 'unknown type'})")
+    if not content:
+        raise HTTPException(502, "Fetched image was empty")
+
+    data_uri = f"data:{mime};base64,{base64.b64encode(content).decode()}"
+
+    max_pos = db.query(func.max(SectionImage.position)).filter_by(section_id=section_id).scalar() or 0
+    img = SectionImage(
+        section_id=section_id,
+        data_uri=data_uri,
+        alt_text_hint=url[:255],
+        position=max_pos + 1,
+        category="unclear",
+    )
+    db.add(img)
+    section.image_count = (section.image_count or 0) + 1
+    db.commit()
+    db.refresh(img)
+
+    return {
+        "id": img.id,
+        "section_id": img.section_id,
+        "data_uri": img.data_uri,
+        "category": img.category,
+        "extracted_text": img.extracted_text,
+        "alt_text_hint": img.alt_text_hint,
+        "position": img.position,
+    }
+
+
 class SectionImageUpdate(BaseModel):
     category: Optional[str] = None
     alt_text_hint: Optional[str] = None

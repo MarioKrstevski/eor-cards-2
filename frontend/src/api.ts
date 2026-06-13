@@ -210,6 +210,16 @@ export async function uploadSectionImage(
   return res.data;
 }
 
+// Fetch an image by URL server-side (no browser CORS). Used when an image is
+// dragged from another website/app — the browser gives a URL, not file bytes.
+export async function uploadSectionImageFromUrl(
+  sectionId: number,
+  url: string,
+): Promise<SectionImage> {
+  const res = await http.post<SectionImage>(`/sections/${sectionId}/images/from-url`, { url });
+  return res.data;
+}
+
 // ─── Review Mark Types ────────────────────────────────────────────────────────
 
 export async function getReviewMarkTypes(): Promise<ReviewMarkType[]> {

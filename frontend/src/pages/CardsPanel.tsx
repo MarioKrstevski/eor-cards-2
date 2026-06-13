@@ -29,6 +29,7 @@ import {
   createFixBatch,
   getSection,
   uploadSectionImage,
+  uploadSectionImageFromUrl,
 } from '../api';
 import type { Card, CardStatus, CostEstimate, ReviewMarkType, SectionImage } from '../types';
 import ConfirmModal from '../components/ConfirmModal';
@@ -500,6 +501,25 @@ function CardTile({
   );
 }
 
+// Pull an http(s) image URL out of a drop's dataTransfer when no File is present
+// (image dragged from a browser/app). Tries uri-list, then <img src> in the HTML
+// payload, then a bare plaintext URL.
+function extractImageUrl(dt: DataTransfer): string | null {
+  const uriList = dt.getData('text/uri-list');
+  if (uriList) {
+    const line = uriList.split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('#'));
+    if (line?.startsWith('http')) return line;
+  }
+  const html = dt.getData('text/html');
+  if (html) {
+    const m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+    if (m?.[1]?.startsWith('http')) return m[1];
+  }
+  const plain = dt.getData('text/plain')?.trim();
+  if (plain?.startsWith('http')) return plain;
+  return null;
+}
+
 // ── Image Picker Cell ────────────────────────────────────────────────────────
 function ImagePickerCell({
   cardId,
@@ -584,6 +604,23 @@ function ImagePickerCell({
     }
   };
 
+  // Attach an image dragged from another website/app, where the browser gives us a
+  // URL instead of file bytes. The backend fetches it server-side (no CORS).
+  const attachUrl = async (url: string, pos: 'front' | 'back') => {
+    setBusy(true);
+    setNote(null);
+    try {
+      const img = await uploadSectionImageFromUrl(sectionId, url);
+      await updateCard(cardId, { ref_img_id: img.id, ref_img_position: pos });
+      setOpen(false);
+      onUpdate();
+    } catch {
+      setNote("Couldn't fetch that image — try saving it and dropping the file");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) await attachFile(file, position);
@@ -593,14 +630,28 @@ function ImagePickerCell({
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const files = Array.from(e.dataTransfer.files);
+    const dt = e.dataTransfer;
+    const files = Array.from(dt.files);
+    // eslint-disable-next-line no-console
+    console.log('[ref-img] DROP fired', {
+      cardId,
+      types: Array.from(dt.types),
+      fileCount: files.length,
+      files: files.map((f) => ({ name: f.name, type: f.type, size: f.size })),
+      uriList: dt.getData('text/uri-list'),
+      plain: dt.getData('text/plain'),
+      html: dt.getData('text/html')?.slice(0, 200),
+    });
     // Prefer an explicit image file; fall back to the first file (some OSes report
     // an empty MIME type) and let attachFile() do the real validation.
     const file = files.find((f) => f.type.startsWith('image/')) || files[0];
     if (file) { attachFile(file, 'front'); return; }
-    // No File means the image was dragged from a browser/website (a URL, not a file
-    // on disk) — the browser won't expose its bytes to us, so it can't be uploaded.
-    setNote('Drag an image FILE from your computer (not from a web page)');
+    // No File means the image was dragged from a browser/website/app — the browser
+    // gives us a URL (text/uri-list, or an <img src> inside text/html) instead of the
+    // bytes. Send that URL to the backend, which fetches it server-side (no CORS).
+    const url = extractImageUrl(dt);
+    if (url) { attachUrl(url, 'front'); return; }
+    setNote('Could not read a dropped image — try saving it and dropping the file');
   };
 
   // Paste an image from the clipboard via the Async Clipboard API (button).
