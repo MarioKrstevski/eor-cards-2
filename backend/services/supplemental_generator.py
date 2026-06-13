@@ -87,7 +87,9 @@ and put the exact card ids you were given (the id: values above) into card_ids."
 
     response = client.messages.create(
         model=model,
-        max_tokens=24000,
+        # 16384 is the ceiling the SDK accepts for non-streaming requests;
+        # anything higher raises "Streaming is required..." before the call.
+        max_tokens=16384,
         temperature=0,
         system=[
             {"type": "text", "text": rules_text, "cache_control": {"type": "ephemeral"}},
