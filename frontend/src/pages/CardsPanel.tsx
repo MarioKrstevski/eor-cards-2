@@ -648,25 +648,28 @@ function ImagePickerCell({
   return (
     <div
       ref={ref}
-      // Fill the whole cell (w/h-full) and eat the td's 6px/10px padding with a
-      // negative margin so the ENTIRE cell is the drop zone, not just the + icon.
-      className={`relative rounded w-full h-full min-h-[40px] flex items-center justify-center ${dragOver ? 'ring-2 ring-blue-400 ring-dashed bg-blue-50' : ''}`}
-      style={{ margin: '-6px -10px', padding: '6px 10px' }}
+      // The td is position:relative with zero padding for this column, so inset-0
+      // makes the ENTIRE cell the drop zone — at full row height, not just a 40px
+      // strip at the top. The image (below) sizes to this box, not a tiny cap.
+      className={`absolute inset-0 rounded flex items-center justify-center ${dragOver ? 'ring-2 ring-inset ring-blue-400 bg-blue-50' : ''}`}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onDragEnter={(e) => { e.preventDefault(); setDragOver(true); }}
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; if (!dragOver) setDragOver(true); }}
-      onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false); }}
       onDrop={handleDrop}
-      title="Drop or paste (Ctrl+V) an image to attach it"
+      title="Click to pick · drop or paste (Ctrl+V) an image to attach it"
     >
-      <button onClick={handleOpen} className="w-full flex items-center justify-center">
+      <div
+        onClick={handleOpen}
+        className="w-full h-full min-h-[40px] flex items-center justify-center cursor-pointer p-1"
+      >
         {currentImg ? (
-          <img src={currentImg} alt="ref" className="max-h-10 rounded cursor-pointer hover:opacity-80" />
+          <img src={currentImg} alt="ref" className="max-h-full max-w-full object-contain rounded hover:opacity-80" />
         ) : (
-          <span className="text-gray-300 hover:text-blue-400 cursor-pointer text-lg">+</span>
+          <span className="text-gray-300 hover:text-blue-400 text-lg">+</span>
         )}
-      </button>
+      </div>
       {busy && (
         <div className="absolute inset-0 flex items-center justify-center bg-white/70 rounded">
           <span className="inline-block w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
@@ -2205,7 +2208,12 @@ export default function CardsPanel({
                         className="border border-gray-100 align-top"
                         style={{
                           width: cell.column.getSize(),
-                          padding: ['select', 'card_number', 'status', 'row_actions'].includes(cell.column.id) ? '6px 8px' : '6px 10px',
+                          // ref_img: zero padding + relative so the picker can fill the
+                          // whole cell via absolute inset-0 (drop zone + image sizing).
+                          padding: cell.column.id === 'ref_img'
+                            ? 0
+                            : ['select', 'card_number', 'status', 'row_actions'].includes(cell.column.id) ? '6px 8px' : '6px 10px',
+                          position: cell.column.id === 'ref_img' ? 'relative' : undefined,
                         }}
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
