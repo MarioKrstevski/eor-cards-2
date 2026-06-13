@@ -36,6 +36,22 @@ def response_text(response) -> str:
     return text.strip()
 
 
+def tool_use_input(response, tool_name: str) -> dict:
+    """Return the input dict from a forced tool call, raising on truncation/absence.
+
+    Used with tool_choice={"type":"tool",...} so the model returns structured
+    data the API guarantees is valid JSON — no hand-written escaping to mangle.
+    """
+    if response.stop_reason == "max_tokens":
+        raise OutputTruncated(
+            "Tool output truncated at max_tokens — refusing partial result"
+        )
+    for block in response.content:
+        if getattr(block, "type", None) == "tool_use" and block.name == tool_name:
+            return block.input
+    raise ValueError(f"Model did not call expected tool '{tool_name}'")
+
+
 def usage_dict(response) -> dict:
     return {
         "input_tokens": response.usage.input_tokens,
