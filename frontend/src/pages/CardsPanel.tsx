@@ -648,11 +648,15 @@ function ImagePickerCell({
   return (
     <div
       ref={ref}
-      className={`relative rounded ${dragOver ? 'ring-2 ring-blue-400 ring-dashed bg-blue-50' : ''}`}
+      // Fill the whole cell (w/h-full) and eat the td's 6px/10px padding with a
+      // negative margin so the ENTIRE cell is the drop zone, not just the + icon.
+      className={`relative rounded w-full h-full min-h-[40px] flex items-center justify-center ${dragOver ? 'ring-2 ring-blue-400 ring-dashed bg-blue-50' : ''}`}
+      style={{ margin: '-6px -10px', padding: '6px 10px' }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      onDragOver={(e) => { e.preventDefault(); if (!dragOver) setDragOver(true); }}
-      onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
+      onDragEnter={(e) => { e.preventDefault(); setDragOver(true); }}
+      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; if (!dragOver) setDragOver(true); }}
+      onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
       onDrop={handleDrop}
       title="Drop or paste (Ctrl+V) an image to attach it"
     >
