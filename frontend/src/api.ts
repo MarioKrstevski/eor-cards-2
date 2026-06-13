@@ -196,9 +196,16 @@ export async function verifySection(id: number): Promise<{ is_valid: boolean; fl
   return res.data;
 }
 
-export async function uploadSectionImage(sectionId: number, file: File): Promise<SectionImage> {
+export async function uploadSectionImage(
+  sectionId: number,
+  file: Blob | File,
+  filename?: string,
+): Promise<SectionImage> {
   const form = new FormData();
-  form.append('file', file);
+  // Clipboard images arrive as a nameless Blob — give the multipart part a
+  // filename so the backend's UploadFile parses it.
+  const name = filename || (file instanceof File ? file.name : 'pasted-image.png');
+  form.append('file', file, name);
   const res = await http.post<SectionImage>(`/sections/${sectionId}/images`, form);
   return res.data;
 }

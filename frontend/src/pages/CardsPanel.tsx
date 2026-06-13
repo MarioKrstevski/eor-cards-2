@@ -520,6 +520,10 @@ function ImagePickerCell({
   const [images, setImages] = useState<SectionImage[]>([]);
   const [loading, setLoading] = useState(false);
   const [position, setPosition] = useState<'front' | 'back'>(currentPosition as 'front' | 'back' || 'front');
+  const [dragOver, setDragOver] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [hovered, setHovered] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -560,19 +564,98 @@ function ImagePickerCell({
     onUpdate();
   };
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Shared: upload a file/blob to the section library, then attach it to this card.
+  const attachFile = async (file: Blob, pos: 'front' | 'back') => {
+    if (file.type && !file.type.startsWith('image/')) {
+      setNote('Not an image');
+      return;
+    }
+    setBusy(true);
+    setNote(null);
     try {
       const img = await uploadSectionImage(sectionId, file);
-      await updateCard(cardId, { ref_img_id: img.id, ref_img_position: position });
+      await updateCard(cardId, { ref_img_id: img.id, ref_img_position: pos });
       setOpen(false);
       onUpdate();
-    } catch { /* ignore */ }
+    } catch {
+      setNote('Upload failed');
+    } finally {
+      setBusy(false);
+    }
   };
 
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) await attachFile(file, position);
+    e.target.value = ''; // allow re-selecting the same file
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = Array.from(e.dataTransfer.files).find((f) => f.type.startsWith('image/'));
+    if (file) attachFile(file, 'front');
+    else setNote('Drop an image file');
+  };
+
+  // Paste an image from the clipboard via the Async Clipboard API (button).
+  const handlePasteButton = async () => {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const type = item.types.find((t) => t.startsWith('image/'));
+        if (type) {
+          const blob = await item.getType(type);
+          await attachFile(blob, position);
+          return;
+        }
+      }
+      setNote('No image in clipboard');
+    } catch {
+      setNote('Press Ctrl+V on the cell instead');
+    }
+  };
+
+  // Ctrl+V while the cell is hovered or its picker is open.
+  useEffect(() => {
+    if (!hovered && !open) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const it of items) {
+        if (it.type.startsWith('image/')) {
+          const file = it.getAsFile();
+          if (file) {
+            e.preventDefault();
+            attachFile(file, open ? position : 'front');
+          }
+          return;
+        }
+      }
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hovered, open, position, sectionId, cardId]);
+
+  // Clear transient note shortly after it appears
+  useEffect(() => {
+    if (!note) return;
+    const t = setTimeout(() => setNote(null), 2500);
+    return () => clearTimeout(t);
+  }, [note]);
+
   return (
-    <div ref={ref} className="relative">
+    <div
+      ref={ref}
+      className={`relative rounded ${dragOver ? 'ring-2 ring-blue-400 ring-dashed bg-blue-50' : ''}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onDragOver={(e) => { e.preventDefault(); if (!dragOver) setDragOver(true); }}
+      onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
+      onDrop={handleDrop}
+      title="Drop or paste (Ctrl+V) an image to attach it"
+    >
       <button onClick={handleOpen} className="w-full flex items-center justify-center">
         {currentImg ? (
           <img src={currentImg} alt="ref" className="max-h-10 rounded cursor-pointer hover:opacity-80" />
@@ -580,6 +663,21 @@ function ImagePickerCell({
           <span className="text-gray-300 hover:text-blue-400 cursor-pointer text-lg">+</span>
         )}
       </button>
+      {busy && (
+        <div className="absolute inset-0 flex items-center justify-center bg-white/70 rounded">
+          <span className="inline-block w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+        </div>
+      )}
+      {dragOver && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <span className="text-[9px] font-medium text-blue-600">Drop image</span>
+        </div>
+      )}
+      {note && !open && (
+        <div className="absolute left-0 top-full mt-0.5 z-50 text-[9px] text-gray-600 bg-white border border-gray-200 rounded px-1.5 py-0.5 shadow whitespace-nowrap">
+          {note}
+        </div>
+      )}
       {open && (
         <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl z-50 p-3 w-64">
           <div className="flex items-center justify-between mb-2">
@@ -646,8 +744,17 @@ function ImagePickerCell({
             <button onClick={() => fileRef.current?.click()} className="px-2 py-1 rounded text-[10px] font-medium bg-gray-50 text-gray-600 hover:bg-gray-100">
               Upload
             </button>
+            <button onClick={handlePasteButton} className="px-2 py-1 rounded text-[10px] font-medium bg-gray-50 text-gray-600 hover:bg-gray-100" title="Paste image from clipboard">
+              Paste
+            </button>
             <input ref={fileRef} type="file" accept="image/*" onChange={handleUpload} className="hidden" />
           </div>
+          <p className="mt-1.5 text-[9px] text-gray-400 leading-tight">
+            Tip: drag an image onto the cell, or press Ctrl+V here, to add it and attach to the front.
+          </p>
+          {note && (
+            <p className="mt-1 text-[9px] text-amber-600">{note}</p>
+          )}
         </div>
       )}
     </div>
