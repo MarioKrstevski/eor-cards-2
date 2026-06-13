@@ -593,9 +593,14 @@ function ImagePickerCell({
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const file = Array.from(e.dataTransfer.files).find((f) => f.type.startsWith('image/'));
-    if (file) attachFile(file, 'front');
-    else setNote('Drop an image file');
+    const files = Array.from(e.dataTransfer.files);
+    // Prefer an explicit image file; fall back to the first file (some OSes report
+    // an empty MIME type) and let attachFile() do the real validation.
+    const file = files.find((f) => f.type.startsWith('image/')) || files[0];
+    if (file) { attachFile(file, 'front'); return; }
+    // No File means the image was dragged from a browser/website (a URL, not a file
+    // on disk) — the browser won't expose its bytes to us, so it can't be uploaded.
+    setNote('Drag an image FILE from your computer (not from a web page)');
   };
 
   // Paste an image from the clipboard via the Async Clipboard API (button).
@@ -1215,7 +1220,10 @@ export default function CardsPanel({
               currentImg={card.ref_img}
               currentImgId={card.ref_img_id}
               currentPosition={card.ref_img_position}
-              onUpdate={() => fetchCards(sectionId, topicPath)}
+              // silent + pass sectionIds: a plain fetchCards(sectionId, topicPath)
+              // wipes the table in topic/multi-section view (sectionId is null), so
+              // attaching an image (paste/drop/library) cleared all cards.
+              onUpdate={() => fetchCards(sectionId, topicPath, true, undefined, sectionIds)}
             />
           );
         },
@@ -1337,7 +1345,7 @@ export default function CardsPanel({
       }),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filteredCards.length, selectedIds, handleCellSelect, handleCellNavigate, handleCellSave, showAnkiFormat, sectionId, topicPath, onReviewChange, fetchCards, markTypes, activeTagSet, activeCardVersion]
+    [filteredCards.length, selectedIds, handleCellSelect, handleCellNavigate, handleCellSave, showAnkiFormat, sectionId, sectionIds, topicPath, onReviewChange, fetchCards, markTypes, activeTagSet, activeCardVersion]
   );
 
   const pageCount = Math.ceil(totalCards / pagination.pageSize);
