@@ -566,15 +566,19 @@ def _run_supplemental(
         cards = db.query(Card).filter(Card.id.in_(card_ids)).all()
 
         condition_groups = {}
+        group_paths = {}  # leaf -> full tag path ("Neurology > Headache Disorders > Headaches")
         for c in cards:
             if not replace_existing and c.vignette and c.teaching_case:
                 continue
-            leaf = ((c.tags or c.tags_mapped) or [])[-1] if (c.tags or c.tags_mapped) else "Unassigned"
+            path = (c.tags or c.tags_mapped) or []
+            leaf = path[-1] if path else "Unassigned"
             condition_groups.setdefault(leaf, []).append({
                 "id": c.id,
                 "card_number": c.card_number,
                 "front_text": c.front_text,
             })
+            if leaf not in group_paths:
+                group_paths[leaf] = " > ".join(path) if path else "Unassigned"
 
         total_input = 0
         total_output = 0
@@ -584,9 +588,10 @@ def _run_supplemental(
         total_cards_updated = 0
 
         def generate_with_retry(condition, group_cards):
+            topic_path = group_paths.get(condition, condition)
             for attempt in range(4):
                 try:
-                    return generate_supplemental_for_group(client, condition, group_cards, rules_text, model)
+                    return generate_supplemental_for_group(client, topic_path, group_cards, rules_text, model)
                 except RETRYABLE_ERRORS as e:
                     if attempt == 3:
                         raise

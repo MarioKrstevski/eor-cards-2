@@ -60,7 +60,8 @@ def generate_supplemental_for_group(
     one vignette + teaching case per condition tagged with the covered card ids.
 
     Args:
-        topic_name: The leaf topic name (e.g., "Prenatal Care/Pregnancy")
+        topic_name: The full curriculum tag path for this group
+            (e.g., "Neurology > Headache Disorders > Headaches")
         cards: List of card dicts with "id", "card_number", and "front_text"
         rules_text: The client's vignette + teaching case rules (content/style only)
         model: Claude model to use
@@ -73,7 +74,9 @@ def generate_supplemental_for_group(
         for c in cards
     )
 
-    card_context = f"""Topic: {topic_name}
+    card_context = f"""Curriculum topic path: {topic_name}
+(The cards below all come from this topic; use the path to understand the clinical domain.)
+
 Cards:
 
 {card_list}
