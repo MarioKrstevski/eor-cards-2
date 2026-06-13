@@ -120,6 +120,12 @@ Tag routing by curriculum version: v1 ("New") cards store tags in `tags_mapped`,
 4. Supplementals (vignettes + teaching cases) generated per condition group
 5. Generation runs in background — survives page close, resumes polling on refresh
 
+### Supplemental Generation (Vignettes + Teaching Cases)
+- Uses a **vignette-type** rule set (`rule_type='vignette'`), NOT the card-generation rule set. `start_supplemental` only honors the passed `rule_set_id` if it points to a vignette rule, else falls back to the **default vignette rule set** (`is_default=True`). The client must keep her current vignette prompt marked as the default vignette rule.
+- Transport is a **forced Anthropic tool call** (`submit_supplementals` in `supplemental_generator.py`) returning `{conditions: [{condition, card_ids, vignette, teaching_case}]}`. The rule set goes in the **system** role and owns content/HTML only; output-format instructions she pastes are inert (the tool owns structure). No hand-written JSON.
+- Flow: pull cards by scope → group by **leaf tag** (= section) → 1 API call per group (3 parallel) → the **AI sub-groups by condition** (a section like "Headaches" can hold Migraine/Tension/etc.) → write the shared V+TC to all of that condition's cards. The full curriculum tag path is sent to guide grouping.
+- A FAILED supplemental job updates 0 cards, so cards keep their PREVIOUS V+TC — stale-looking output after a failed run is leftover data; only judge results after a job reaches `status: done` with `total_cards > 0`.
+
 ### Card Scoring
 - After each section's cards are created, a separate scoring call (same model) rates each card: accuracy 1-5 + per-rotation EOR yield (Gold/Silver/Bronze/Skip)
 - The 7 rotations are PAEA EOR exam categories (not curriculum topics) — the AI only returns rotations relevant to each card
@@ -150,7 +156,8 @@ Tag routing by curriculum version: v1 ("New") cards store tags in `tags_mapped`,
 - Topic path format: `Parent > Child > Leaf` with ` > ` separators
 - AI-returned card IDs (scoring, supplemental) are always validated against the IDs sent — hallucinated IDs are dropped, never written
 - `compute_cost(model, input, output, cache_write, cache_read)` prices cache writes at 1.25x and reads at 0.1x input price
-- Use `ai_utils.py` helpers for new AI calls: `response_text()` (truncation-safe extraction), `usage_dict()`, `parse_json_array()`, `CLOZE_RE`/`strip_cloze()` (handles `{{c1::term::hint}}`)
+- Use `ai_utils.py` helpers for new AI calls: `response_text()` (truncation-safe extraction), `tool_use_input()` (forced tool calls), `usage_dict()`, `parse_json_array()`, `CLOZE_RE`/`strip_cloze()` (handles `{{c1::term::hint}}`)
+- **max_tokens ceiling**: the Anthropic SDK raises `ValueError: "Streaming is required..."` synchronously (before any API call) when `max_tokens` is too high for a non-streaming request. **16384 is the ceiling that works**; higher needs `stream=True`. Symptom of overshooting: instant job failure, `actual_input_tokens: 0`, ~15ms runtime.
 
 ## Adding Models
 Edit `backend/config.py` — the `MODELS` dict is the single source of truth:
@@ -164,6 +171,7 @@ Edit `backend/config.py` — the `MODELS` dict is the single source of truth:
 Only Anthropic models work — the SDK is `anthropic.Anthropic` only.
 
 ## Admin Endpoints
+- `GET /api/version` — running version + exact `RAILWAY_GIT_COMMIT_SHA` + feature flags; cache-proof way to confirm what Railway actually deployed (frontend + backend ship as one container, so the UI version can be browser-cached and misleading)
 - `GET /api/admin/disk-usage` — shows size of each data subdirectory
 - `POST /api/admin/clear-storage` — clears `uploads/` to free disk space
 - Browser console: `fetch('/api/admin/clear-storage', {method: 'POST'}).then(r => r.json()).then(console.log)`
