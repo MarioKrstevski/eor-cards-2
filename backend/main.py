@@ -146,6 +146,25 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="EOR Card Studio v4", lifespan=lifespan)
 
+# Bumped on each deploy so /api/version can confirm what's actually running.
+APP_VERSION = 9
+
+
+@app.get("/api/version")
+def version():
+    """Authoritative, cache-proof check of the running backend.
+
+    `commit` is the exact git SHA Railway deployed (RAILWAY_GIT_COMMIT_SHA),
+    so you can compare it to the commit you pushed. `features` flags code that
+    must be present for the supplemental fix to be live.
+    """
+    return {
+        "version": APP_VERSION,
+        "commit": os.getenv("RAILWAY_GIT_COMMIT_SHA", "local"),
+        "features": ["supplemental-tool-output"],
+    }
+
+
 app.include_router(documents.router, prefix="/api/topic-trees", tags=["documents"])
 app.include_router(sections.router, prefix="/api/sections", tags=["sections"])
 app.include_router(cards.router, prefix="/api/cards", tags=["cards"])
