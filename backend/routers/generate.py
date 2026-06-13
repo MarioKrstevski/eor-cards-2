@@ -150,9 +150,15 @@ def estimate_supplemental(body: SupplementalEstimateRequest, db: Session = Depen
 @router.post("/supplemental/start")
 def start_supplemental(body: SupplementalStartRequest, bg: BackgroundTasks, db: Session = Depends(get_db)):
     """Start combined vignette + teaching case generation, grouped by condition."""
-    rs = db.get(RuleSet, body.rule_set_id)
+    # Supplemental generation MUST use a vignette-type rule set. The frontend
+    # sends the card-generation rule set id, which describes cloze cards, not
+    # vignettes — using it produces generic output. Only honor the passed id if
+    # it actually points to a vignette rule set; otherwise use the default one.
+    rs = db.get(RuleSet, body.rule_set_id) if body.rule_set_id else None
+    if not rs or rs.rule_type != "vignette":
+        rs = db.query(RuleSet).filter_by(rule_type="vignette", is_default=True).first()
     if not rs:
-        raise HTTPException(404, "Rule set not found")
+        raise HTTPException(404, "No vignette rule set found — set one as default")
     if body.card_ids:
         cards = db.query(Card).filter(Card.id.in_(body.card_ids)).all()
     elif body.section_ids:
