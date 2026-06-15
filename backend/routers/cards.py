@@ -341,6 +341,51 @@ def combine_apply(body: CombineApplyRequest, db: Session = Depends(get_db)):
     return card_to_dict(new, db)
 
 
+@router.post("/{card_id}/regenerate-preview")
+def regenerate_card_preview(card_id: int, body: RegenerateCardRequest, db: Session = Depends(get_db)):
+    """Generate a replacement card WITHOUT applying it — returns the proposed
+    front/extra so the reviewer can accept, edit, or retry with a new prompt."""
+    card = db.get(Card, card_id)
+    if not card:
+        raise HTTPException(404)
+    section = db.get(Section, card.section_id)
+    if not section:
+        raise HTTPException(404, "Section not found")
+    rs = db.query(RuleSet).filter_by(rule_type='generation', is_default=True).first()
+    rules = rs.content if rs else "Generate cloze cards. Use {{c1::term}} format."
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    cards_data, _needs_review, usage = regenerate_single_card(
+        client,
+        section_data={
+            "content_text": section.content_text,
+            "heading": section.heading,
+            "curriculum_topic_path": section.curriculum_topic_path,
+        },
+        existing_card_html=card.front_html,
+        rules_text=rules,
+        extra_prompt=body.prompt or None,
+        model=body.model,
+    )
+    if usage:
+        db.add(AIUsageLog(
+            operation="card_regen_preview",
+            model=body.model,
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+            cost_usd=compute_cost(body.model, usage.get("input_tokens", 0), usage.get("output_tokens", 0)),
+            card_id=card_id,
+            section_id=card.section_id,
+        ))
+        db.commit()
+    if not cards_data:
+        raise HTTPException(502, "Regeneration produced no card")
+    return {
+        "front_html": cards_data[0]["front_html"],
+        "extra": cards_data[0].get("extra"),
+        "source_ref": cards_data[0].get("source_ref"),
+    }
+
+
 @router.post("/{card_id}/reject")
 def reject_card(card_id: int, db: Session = Depends(get_db)):
     card = db.get(Card, card_id)

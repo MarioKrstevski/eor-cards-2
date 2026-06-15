@@ -13,6 +13,7 @@ import {
   rejectCard,
   deleteCard,
   regenerateCard,
+  regenerateCardPreview,
   exportCardsUrl,
   deleteSectionImage,
   bulkMarkReviewed,
@@ -1899,6 +1900,42 @@ export default function CardsPanel({
     if (id != null) { try { await cancelFixBatch(id); } catch { /* best-effort */ } }
   }, [splitBatchId]);
 
+  // ── Single-card Recreate via preview→review→accept (like split) ──────────
+  const [regenProposal, setRegenProposal] = useState<{ cardId: number; front_html: string; extra: string | null } | null>(null);
+  const [regenPreviewLoading, setRegenPreviewLoading] = useState(false);
+  const [regenRetryPrompt, setRegenRetryPrompt] = useState('');
+
+  const handleRegenPreview = useCallback(async (cardId: number, prompt: string) => {
+    setRegenPreviewLoading(true);
+    try {
+      const res = await regenerateCardPreview(cardId, { model: selectedModel, prompt: prompt || undefined });
+      setRegenProposal({ cardId, front_html: res.front_html, extra: res.extra ?? null });
+      setShowBulkRegenModal(false);
+    } catch {
+      setActionError('Regenerate failed');
+    } finally {
+      setRegenPreviewLoading(false);
+    }
+  }, [selectedModel]);
+
+  const handleRegenAccept = useCallback(async () => {
+    if (!regenProposal) return;
+    const cur = cards.find(c => c.id === regenProposal.cardId);
+    try {
+      // Snapshot the current card for rollback only now, at accept time.
+      if (cur) setRegenHistory(h => pushSnapshots(h, [{ id: cur.id, front_html: cur.front_html, extra: cur.extra }], Date.now()));
+      await updateCard(regenProposal.cardId, { front_html: regenProposal.front_html, extra: regenProposal.extra ?? '' });
+      setCards(prev => prev.map(c => c.id === regenProposal.cardId ? { ...c, front_html: regenProposal.front_html, extra: regenProposal.extra } as Card : c));
+      setRegenProposal(null);
+      setBulkRegenPrompt('');
+      setSelectedIds(new Set());
+      fetchCards(sectionId, topicPath, true, undefined, sectionIds);
+      onReviewChange?.();
+    } catch {
+      setActionError('Could not apply the regenerated card');
+    }
+  }, [regenProposal, cards, fetchCards, sectionId, topicPath, sectionIds, onReviewChange]);
+
   // ── Combine (N→1) ────────────────────────────────────────────────────────
   const [combineLoading, setCombineLoading] = useState(false);
   const [combineProposal, setCombineProposal] = useState<CombineProposal | null>(null);  // in-place review when set
@@ -2925,6 +2962,59 @@ export default function CardsPanel({
         );
       })()}
 
+      {/* Single-card Recreate review — current vs suggested, with retry */}
+      {regenProposal && (() => {
+        const cur = cards.find(c => c.id === regenProposal.cardId) ?? filteredCards.find(c => c.id === regenProposal.cardId);
+        return (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center" role="dialog" aria-modal="true">
+            <div className="absolute inset-0 bg-black/40" onClick={() => setRegenProposal(null)} />
+            <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[80vw] max-w-[960px] max-h-[82vh] flex flex-col">
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
+                <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">Review regenerated card · double-click to edit</h2>
+                <button onClick={() => setRegenProposal(null)} className="p-1 text-gray-400 hover:text-gray-600 rounded">✕</button>
+              </div>
+              <div className="grid grid-cols-2 gap-3 p-4 overflow-auto">
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase mb-1">Current</p>
+                  {cur ? (
+                    <>
+                      <div className="border border-gray-200 rounded p-2 text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: cur.front_html }} />
+                      {cur.extra && <div className="border border-gray-200 rounded p-2 mt-2 text-xs text-gray-600" dangerouslySetInnerHTML={{ __html: cur.extra }} />}
+                    </>
+                  ) : <p className="text-xs text-gray-400">(card not loaded)</p>}
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold text-green-600 uppercase mb-1">Suggested</p>
+                  <div className="border border-green-200 rounded p-2 bg-green-50/40">
+                    <ProposalEditableField html={regenProposal.front_html} className="text-sm text-gray-800" onSave={(v) => setRegenProposal({ ...regenProposal, front_html: v })} />
+                    <div className="border-t border-green-100 mt-1.5 pt-1.5">
+                      <span className="text-[9px] text-gray-400 uppercase">Extra</span>
+                      <ProposalEditableField html={regenProposal.extra ?? ''} className="text-xs text-gray-600" onSave={(v) => setRegenProposal({ ...regenProposal, extra: v || null })} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="px-4 pb-1">
+                <div className="flex items-center gap-2">
+                  <input
+                    value={regenRetryPrompt}
+                    onChange={(e) => setRegenRetryPrompt(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleRegenPreview(regenProposal.cardId, regenRetryPrompt); } }}
+                    placeholder="Adjust the guidance and retry…"
+                    className="flex-1 text-xs border border-gray-200 rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                  <button onClick={() => handleRegenPreview(regenProposal.cardId, regenRetryPrompt)} disabled={regenPreviewLoading} className="px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 disabled:opacity-50">{regenPreviewLoading ? 'Generating…' : 'Retry'}</button>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-200 bg-gray-50/60">
+                <button onClick={() => setRegenProposal(null)} className="px-3 py-1.5 text-xs font-medium text-gray-600 rounded-lg hover:bg-gray-100">Cancel</button>
+                <button onClick={handleRegenAccept} disabled={!regenProposal.front_html || regenPreviewLoading} className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50">Accept</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {showCreatePresentation && (
         <CreatePresentationModal
           selectedCardIds={[...selectedIds]}
@@ -3093,22 +3183,27 @@ export default function CardsPanel({
                 onClick={() => {
                   if (regenMode === 'split') handleSplitStart();
                   else if (regenMode === 'combine') handleCombineStart();
-                  else handleBulkRegen(bulkRegenPrompt, bulkRegenScope);
+                  else if (bulkRegenScope === 'selected' && selectedIds.size === 1) {
+                    setRegenRetryPrompt(bulkRegenPrompt);
+                    handleRegenPreview([...selectedIds][0], bulkRegenPrompt);
+                  } else handleBulkRegen(bulkRegenPrompt, bulkRegenScope);
                 }}
-                disabled={!!bulkRegenProgress || splitLoading || combineLoading}
+                disabled={!!bulkRegenProgress || splitLoading || combineLoading || regenPreviewLoading}
                 className="px-3 py-1.5 text-xs font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-50"
               >
                 {splitLoading
                   ? 'Splitting…'
                   : combineLoading
                     ? 'Combining…'
-                    : bulkRegenProgress
-                      ? `Working... (${bulkRegenProgress.done}/${bulkRegenProgress.total})`
-                      : regenMode === 'split'
-                        ? 'Split card'
-                        : regenMode === 'combine'
-                          ? 'Combine cards'
-                          : bulkRegenScope === 'all' ? 'Regenerate All' : 'Regenerate'}
+                    : regenPreviewLoading
+                      ? 'Generating…'
+                      : bulkRegenProgress
+                        ? `Working... (${bulkRegenProgress.done}/${bulkRegenProgress.total})`
+                        : regenMode === 'split'
+                          ? 'Split card'
+                          : regenMode === 'combine'
+                            ? 'Combine cards'
+                            : bulkRegenScope === 'all' ? 'Regenerate All' : 'Regenerate'}
               </button>
             </div>
           </div>

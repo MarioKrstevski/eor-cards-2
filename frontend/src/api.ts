@@ -388,6 +388,14 @@ export async function rejectCard(id: number): Promise<Card> {
   return res.data;
 }
 
+export async function regenerateCardPreview(
+  id: number,
+  params: { model: string; prompt?: string }
+): Promise<{ front_html: string; extra: string | null; source_ref: string | null }> {
+  const res = await http.post(`/cards/${id}/regenerate-preview`, params);
+  return res.data;
+}
+
 export async function deleteCard(id: number): Promise<void> {
   await http.delete(`/cards/${id}`);
 }
