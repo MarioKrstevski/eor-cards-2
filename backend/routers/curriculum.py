@@ -150,15 +150,35 @@ def get_coverage(version: str = Query('v1'), db: Session = Depends(get_db)):
         .group_by(Section.curriculum_topic_id)
         .all()
     )
-    return {
-        str(r.curriculum_topic_id): {
+    # Per-topic section counts (independent of cards) for the "all sections done" topic checkmark.
+    sec_rows = (
+        db.query(
+            Section.curriculum_topic_id,
+            func.count(Section.id).label("sections_total"),
+            func.sum(case((Section.is_done == True, 1), else_=0)).label("sections_done"),  # noqa: E712
+        )
+        .filter(Section.curriculum_topic_id.isnot(None))
+        .group_by(Section.curriculum_topic_id)
+        .all()
+    )
+    out: dict[str, dict] = {}
+    for r in rows:
+        out[str(r.curriculum_topic_id)] = {
             "total": r.total,
             "active": r.active,
             "rejected": r.rejected,
             "unreviewed": r.unreviewed,
+            "sections_total": 0,
+            "sections_done": 0,
         }
-        for r in rows
-    }
+    for s in sec_rows:
+        d = out.setdefault(str(s.curriculum_topic_id), {
+            "total": 0, "active": 0, "rejected": 0, "unreviewed": 0,
+            "sections_total": 0, "sections_done": 0,
+        })
+        d["sections_total"] = int(s.sections_total or 0)
+        d["sections_done"] = int(s.sections_done or 0)
+    return out
 
 
 @router.delete("/{node_id}", status_code=204)

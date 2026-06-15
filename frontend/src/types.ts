@@ -22,6 +22,8 @@ export interface TopicCoverageStats {
   active: number;
   rejected: number;
   unreviewed: number;
+  sections_total?: number;
+  sections_done?: number;
 }
 
 export interface TopicTree {
@@ -49,6 +51,7 @@ export interface Section {
   table_count: number;
   flags: string[] | null;
   is_verified: boolean;
+  is_done: boolean;
   section_status: 'normal' | 'green' | 'orange';
   card_count: number;
   sort_order: number;
@@ -203,6 +206,7 @@ export interface CurriculumSection {
   table_count: number;
   flags: string[] | null;
   is_verified: boolean;
+  is_done: boolean;
   section_status: 'normal' | 'green' | 'orange';
   sort_order: number;
   card_count: number;

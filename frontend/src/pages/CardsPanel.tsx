@@ -31,6 +31,9 @@ import {
   getFixBatch,
   confirmFixBatch,
   cancelFixBatch,
+  combinePreview,
+  combineApply,
+  type CombineProposal,
   getSection,
   uploadSectionImage,
   uploadSectionImageFromUrl,
@@ -1852,6 +1855,44 @@ export default function CardsPanel({
     if (id != null) { try { await cancelFixBatch(id); } catch { /* best-effort */ } }
   }, [splitBatchId]);
 
+  // ── Combine (N→1) ────────────────────────────────────────────────────────
+  const [combineLoading, setCombineLoading] = useState(false);
+  const [combineProposal, setCombineProposal] = useState<CombineProposal | null>(null);  // in-place review when set
+
+  const handleCombineStart = useCallback(async () => {
+    if (selectedIds.size < 2) return;
+    setCombineLoading(true);
+    try {
+      const proposal = await combinePreview({ card_ids: [...selectedIds], prompt: bulkRegenPrompt.trim() || undefined, model: selectedModel });
+      setShowBulkRegenModal(false);
+      setCombineProposal(proposal);
+    } catch {
+      setActionError('Combine failed');
+    } finally {
+      setCombineLoading(false);
+    }
+  }, [selectedIds, bulkRegenPrompt, selectedModel]);
+
+  const handleCombineConfirm = useCallback(async () => {
+    if (!combineProposal) return;
+    try {
+      await combineApply({
+        card_ids: combineProposal.source_card_ids,
+        front_html: combineProposal.front_html,
+        extra: combineProposal.extra,
+        tags: combineProposal.tags,
+        keep_original: splitKeepOriginal,
+      });
+      setCombineProposal(null);
+      setBulkRegenPrompt('');
+      setSelectedIds(new Set());
+      fetchCards(sectionId, topicPath, true, undefined, sectionIds);
+      onReviewChange?.();
+    } catch {
+      setActionError('Could not apply combine');
+    }
+  }, [combineProposal, splitKeepOriginal, fetchCards, sectionId, topicPath, sectionIds, onReviewChange]);
+
   const [bulkRegenProgress, setBulkRegenProgress] = useState<{ done: number; total: number } | null>(null);
 
   const [bulkRegenScope, setBulkRegenScope] = useState<'selected' | 'all'>('selected');
@@ -2797,6 +2838,53 @@ export default function CardsPanel({
         );
       })()}
 
+      {/* In-place combine review — N source cards merged into one */}
+      {combineProposal && (() => {
+        const sources = combineProposal.source_card_ids
+          .map(id => cards.find(c => c.id === id) ?? filteredCards.find(c => c.id === id))
+          .filter(Boolean) as Card[];
+        return (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center" role="dialog" aria-modal="true">
+            <div className="absolute inset-0 bg-black/40" onClick={() => setCombineProposal(null)} />
+            <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[80vw] max-w-[960px] max-h-[82vh] flex flex-col">
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
+                <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">Review combine — {combineProposal.source_card_ids.length} → 1</h2>
+                <button onClick={() => setCombineProposal(null)} className="p-1 text-gray-400 hover:text-gray-600 rounded">✕</button>
+              </div>
+              <div className="grid grid-cols-2 gap-3 p-4 overflow-auto">
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase mb-1">Originals {splitKeepOriginal ? '(kept)' : '(will be removed)'}</p>
+                  <div className="flex flex-col gap-2">
+                    {sources.map(c => (
+                      <div key={c.id} className="border border-gray-200 rounded p-2">
+                        <div className="text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: c.front_html }} />
+                        {c.extra && <div className="text-xs text-gray-600 mt-1" dangerouslySetInnerHTML={{ __html: c.extra }} />}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold text-green-600 uppercase mb-1">Combined card</p>
+                  <div className="border border-green-200 rounded p-2 bg-green-50/40">
+                    <div className="text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: combineProposal.front_html }} />
+                    {combineProposal.extra && <div className="text-xs text-gray-600 mt-1" dangerouslySetInnerHTML={{ __html: combineProposal.extra }} />}
+                    {combineProposal.tags?.length ? (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {combineProposal.tags.map((t, j) => <span key={j} className="text-[9px] px-1 py-0.5 rounded bg-gray-100 text-gray-500">{t}</span>)}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-200 bg-gray-50/60">
+                <button onClick={() => setCombineProposal(null)} className="px-3 py-1.5 text-xs font-medium text-gray-600 rounded-lg hover:bg-gray-100">Cancel</button>
+                <button onClick={handleCombineConfirm} disabled={!combineProposal.front_html} className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50">Accept — apply changes</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {showCreatePresentation && (
         <CreatePresentationModal
           selectedCardIds={[...selectedIds]}
@@ -2906,13 +2994,19 @@ export default function CardsPanel({
               ) : (
                 <button disabled title="Select exactly one card to split" className="px-2.5 py-1 text-[11px] font-medium rounded text-gray-300 cursor-not-allowed">Split</button>
               )}
-              {(bulkRegenScope === 'all' || selectedIds.size > 1) && (
-                <button disabled title="Combine N cards into one — coming next" className="px-2.5 py-1 text-[11px] font-medium rounded text-gray-300 cursor-not-allowed">Combine (soon)</button>
+              {bulkRegenScope === 'selected' && selectedIds.size > 1 ? (
+                <button
+                  onClick={() => setRegenMode('combine')}
+                  disabled={!!bulkRegenProgress || combineLoading}
+                  className={`px-2.5 py-1 text-[11px] font-medium rounded ${regenMode === 'combine' ? 'bg-amber-50 text-amber-700' : 'text-gray-500 hover:bg-gray-50'}`}
+                >Combine into one</button>
+              ) : (
+                <button disabled title="Select two or more cards to combine" className="px-2.5 py-1 text-[11px] font-medium rounded text-gray-300 cursor-not-allowed">Combine</button>
               )}
             </div>
-            {regenMode === 'split' && (
+            {(regenMode === 'split' || regenMode === 'combine') && (
               <div className="flex items-center gap-3 mb-3 text-[11px] text-gray-600">
-                <span>Original card after split:</span>
+                <span>Original card{regenMode === 'combine' ? 's' : ''} after this:</span>
                 <label className="flex items-center gap-1 cursor-pointer"><input type="radio" checked={!splitKeepOriginal} onChange={() => setSplitKeepOriginal(false)} />Delete</label>
                 <label className="flex items-center gap-1 cursor-pointer"><input type="radio" checked={splitKeepOriginal} onChange={() => setSplitKeepOriginal(true)} />Keep</label>
               </div>
@@ -2920,17 +3014,21 @@ export default function CardsPanel({
             <p className="text-xs text-gray-500 mb-3">
               {regenMode === 'split'
                 ? `This card will be split into multiple cards using ${selectedModel}; you'll review before anything changes.`
-                : `Cards will be regenerated one by one using ${selectedModel}. You can optionally provide guidance.`}
+                : regenMode === 'combine'
+                  ? `These ${selectedIds.size} cards will be merged into one using ${selectedModel}; you'll review before anything changes.`
+                  : `Cards will be regenerated one by one using ${selectedModel}. You can optionally provide guidance.`}
             </p>
             <textarea
               value={bulkRegenPrompt}
               onChange={(e) => setBulkRegenPrompt(e.target.value)}
               placeholder={regenMode === 'split'
                 ? "How should it be split? e.g. 'one card per organism' or 'separate diagnosis from treatment'…"
-                : "Optional guidance — e.g. 'make cards more specific' or 'focus on diagnostic criteria'..."}
+                : regenMode === 'combine'
+                  ? "How should they be merged? e.g. 'into one summary card', 'keep the key differences'… (optional)"
+                  : "Optional guidance — e.g. 'make cards more specific' or 'focus on diagnostic criteria'..."}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-amber-500 resize-none"
               rows={3}
-              disabled={!!bulkRegenProgress || splitLoading}
+              disabled={!!bulkRegenProgress || splitLoading || combineLoading}
             />
             {bulkRegenProgress && (
               <div className="mt-3">
@@ -2946,23 +3044,31 @@ export default function CardsPanel({
             <div className="mt-4 flex gap-2 justify-end">
               <button
                 onClick={() => { setShowBulkRegenModal(false); setBulkRegenPrompt(''); }}
-                disabled={!!bulkRegenProgress || splitLoading}
+                disabled={!!bulkRegenProgress || splitLoading || combineLoading}
                 className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
-                onClick={() => { if (regenMode === 'split') handleSplitStart(); else handleBulkRegen(bulkRegenPrompt, bulkRegenScope); }}
-                disabled={!!bulkRegenProgress || splitLoading}
+                onClick={() => {
+                  if (regenMode === 'split') handleSplitStart();
+                  else if (regenMode === 'combine') handleCombineStart();
+                  else handleBulkRegen(bulkRegenPrompt, bulkRegenScope);
+                }}
+                disabled={!!bulkRegenProgress || splitLoading || combineLoading}
                 className="px-3 py-1.5 text-xs font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-50"
               >
                 {splitLoading
                   ? 'Splitting…'
-                  : bulkRegenProgress
-                    ? `Working... (${bulkRegenProgress.done}/${bulkRegenProgress.total})`
-                    : regenMode === 'split'
-                      ? 'Split card'
-                      : bulkRegenScope === 'all' ? 'Regenerate All' : 'Regenerate'}
+                  : combineLoading
+                    ? 'Combining…'
+                    : bulkRegenProgress
+                      ? `Working... (${bulkRegenProgress.done}/${bulkRegenProgress.total})`
+                      : regenMode === 'split'
+                        ? 'Split card'
+                        : regenMode === 'combine'
+                          ? 'Combine cards'
+                          : bulkRegenScope === 'all' ? 'Regenerate All' : 'Regenerate'}
               </button>
             </div>
           </div>

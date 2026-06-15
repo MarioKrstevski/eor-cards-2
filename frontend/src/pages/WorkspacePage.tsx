@@ -46,6 +46,7 @@ interface SectionLike {
   card_count: number;
   section_status: 'normal' | 'green' | 'orange';
   is_verified: boolean;
+  is_done: boolean;
   flags: string[] | null;
 }
 
@@ -113,6 +114,12 @@ function SectionTreeGroup<T extends SectionLike>({
     ...n.sections.map(s => s.id),
     ...Array.from(n.children.values()).flatMap(c => collectIds(c)),
   ];
+  const collectSecs = (n: SectionTreeNode<T>): T[] => [
+    ...n.sections,
+    ...Array.from(n.children.values()).flatMap(c => collectSecs(c)),
+  ];
+  const groupSecs = collectSecs(node);
+  const allDone = groupSecs.length > 0 && groupSecs.every(s => s.is_done);
   const totalCards = node.sections.reduce((sum, s) => sum + (s.card_count || 0), 0)
     + Array.from(node.children.values()).reduce((sum, child) => {
       const countAll = (n: SectionTreeNode<T>): number =>
@@ -144,7 +151,14 @@ function SectionTreeGroup<T extends SectionLike>({
               onClick={() => {
                 onSelectGroup?.(collectIds(node));
               }}
-            >{node.label}</span>
+            >
+              {allDone && (
+                <svg className="inline-block h-3 w-3 mr-0.5 -mt-0.5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+              {node.label}
+            </span>
             {totalCards > 0 && <span className="text-[9px] text-gray-400 tabular-nums shrink-0">{totalCards}</span>}
             <button
               onClick={(e) => { e.stopPropagation(); setViewingGroup(true); }}
@@ -212,7 +226,14 @@ function SectionTreeGroup<T extends SectionLike>({
                   section.section_status === 'green' ? 'text-green-600' :
                   section.section_status === 'orange' ? 'text-orange-500' :
                   ''
-                }`}>{section.heading}</span>
+                }`}>
+                  {section.is_done && (
+                    <svg className="inline-block h-3 w-3 mr-0.5 -mt-0.5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                  {section.heading}
+                </span>
                 <span className="text-[9px] text-gray-400 truncate block leading-tight">
                   {renderSubtitle ? renderSubtitle(section) : (section.curriculum_topic_path ?? `${treeName} › ${section.heading}`)}
                 </span>
@@ -606,9 +627,23 @@ interface TopicNodeProps {
   expansion: CurriculumExpansionConfig;
 }
 
+// Roll up section done/total over a topic and all its descendants for the topic ✓.
+function subtreeSectionsDone(node: CurriculumNode, cardCounts: Record<string, TopicCoverageStats>): { total: number; done: number } {
+  const s = cardCounts[String(node.id)];
+  let total = s?.sections_total ?? 0;
+  let done = s?.sections_done ?? 0;
+  for (const ch of node.children) {
+    const r = subtreeSectionsDone(ch, cardCounts);
+    total += r.total; done += r.done;
+  }
+  return { total, done };
+}
+
 function TopicNode({ node, depth, onSelect, selectedId, selectedAncestorIds, cardCounts, expansion }: TopicNodeProps) {
   const [expanded, setExpanded] = useState(false);
   const stats = cardCounts[String(node.id)];
+  const _sd = subtreeSectionsDone(node, cardCounts);
+  const allSectionsDone = _sd.total > 0 && _sd.done === _sd.total;
   const active = stats?.active ?? 0;
   const unreviewed = stats?.unreviewed ?? 0;
   const reviewed = active - unreviewed;
@@ -640,7 +675,14 @@ function TopicNode({ node, depth, onSelect, selectedId, selectedAncestorIds, car
           <span className="w-3 shrink-0" />
         )}
         <span className={`text-[9px] font-bold w-4 text-center rounded shrink-0 py-px ${levelBadge}`}>{node.level + 1}</span>
-        <span className={`flex-1 text-xs truncate ${isSelected ? 'font-semibold' : 'font-medium'} ${active === 0 && !isSelected && !isAncestor ? 'text-gray-400' : ''}`}>{node.name}</span>
+        <span className={`flex-1 text-xs truncate ${isSelected ? 'font-semibold' : 'font-medium'} ${active === 0 && !isSelected && !isAncestor ? 'text-gray-400' : ''}`}>
+          {allSectionsDone && (
+            <svg className="inline-block h-3 w-3 mr-0.5 -mt-0.5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+          {node.name}
+        </span>
         {active > 0 && (
           <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 font-semibold tabular-nums ${isSelected ? 'bg-blue-200 text-blue-800' : unreviewed === 0 ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
             {reviewed}/{active}

@@ -159,7 +159,7 @@ export async function getSection(id: number): Promise<SectionDetail> {
 
 export async function updateSection(
   id: number,
-  params: { heading?: string; curriculum_topic_id?: number | null; curriculum_topic_path?: string | null; is_verified?: boolean; section_status?: string }
+  params: { heading?: string; curriculum_topic_id?: number | null; curriculum_topic_path?: string | null; is_verified?: boolean; is_done?: boolean; section_status?: string }
 ): Promise<Section> {
   const res = await http.patch<Section>(`/sections/${id}`, params);
   return res.data;
@@ -312,6 +312,23 @@ export async function confirmFixBatch(
 
 export async function cancelFixBatch(id: number): Promise<void> {
   await http.post(`/fix-batches/${id}/cancel`);
+}
+
+export interface CombineProposal {
+  front_html: string;
+  extra: string | null;
+  tags: string[];
+  source_card_ids: number[];
+}
+
+export async function combinePreview(params: { card_ids: number[]; prompt?: string; model: string }): Promise<CombineProposal> {
+  const res = await http.post<CombineProposal>('/cards/combine-preview', params);
+  return res.data;
+}
+
+export async function combineApply(params: { card_ids: number[]; front_html: string; extra: string | null; tags: string[]; keep_original: boolean }): Promise<Card> {
+  const res = await http.post<Card>('/cards/combine-apply', params);
+  return res.data;
 }
 
 export async function bulkScoreCards(params: { card_ids: number[]; model: string }): Promise<{ scored: number }> {

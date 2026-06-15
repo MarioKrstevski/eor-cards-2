@@ -95,6 +95,17 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
     }
   }, [sectionId, loadSection]);
 
+  const handleToggleDone = useCallback(async () => {
+    if (!section) return;
+    const next = !section.is_done;
+    setSection({ ...section, is_done: next });  // optimistic
+    try {
+      await updateSection(sectionId, { is_done: next });
+    } catch {
+      setSection({ ...section, is_done: !next });  // revert on failure
+    }
+  }, [section, sectionId]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="bg-white rounded-2xl shadow-2xl w-[90vw] max-w-5xl h-[85vh] flex flex-col overflow-hidden">
@@ -127,6 +138,19 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
               className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors duration-150"
             >
               {verifying ? 'Verifying...' : 'Verify Section'}
+            </button>
+          )}
+
+          {section && (
+            <button
+              onClick={handleToggleDone}
+              title="Reviewer went through all cards and locked them in (reversible)"
+              className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors duration-150 ${section.is_done ? 'text-white bg-emerald-600 hover:bg-emerald-700' : 'text-gray-600 bg-white border border-gray-200 hover:bg-gray-50'}`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              {section.is_done ? 'Section done' : 'Mark section done'}
             </button>
           )}
 

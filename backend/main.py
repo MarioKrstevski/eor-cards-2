@@ -87,6 +87,7 @@ def _migrate_db():
             "ALTER TABLE rule_sets ADD COLUMN card_version VARCHAR(10) NOT NULL DEFAULT 'base'",
             "ALTER TABLE section_images ADD COLUMN intended_position VARCHAR(10)",
             "ALTER TABLE sections ADD COLUMN section_status VARCHAR(20) DEFAULT 'normal'",
+            "ALTER TABLE sections ADD COLUMN is_done BOOLEAN NOT NULL DEFAULT 0",
             "ALTER TABLE cards ADD COLUMN accuracy_score INTEGER",
             "ALTER TABLE cards ADD COLUMN accuracy_note TEXT",
             "ALTER TABLE cards ADD COLUMN eor_yield TEXT",
@@ -200,7 +201,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="EOR Card Studio v4", lifespan=lifespan)
 
 # Bumped on each deploy so /api/version can confirm what's actually running.
-APP_VERSION = 22
+APP_VERSION = 23
 
 
 @app.get("/api/version")

@@ -19,6 +19,7 @@ class SectionUpdate(BaseModel):
     curriculum_topic_id: Optional[int] = None
     curriculum_topic_path: Optional[str] = None
     is_verified: Optional[bool] = None
+    is_done: Optional[bool] = None
     flags: Optional[list] = None
     section_status: Optional[str] = None
 
@@ -38,6 +39,7 @@ def section_to_dict(s: Section) -> dict:
         "table_count": s.table_count,
         "flags": s.flags,
         "is_verified": s.is_verified,
+        "is_done": s.is_done,
         "sort_order": s.sort_order,
         "section_status": s.section_status,
         "card_count": len(s.cards) if s.cards else 0,
@@ -100,6 +102,7 @@ def get_sections_by_curriculum(
             "table_count": s.table_count,
             "flags": s.flags,
             "is_verified": s.is_verified,
+            "is_done": s.is_done,
             "sort_order": s.sort_order,
             "section_status": s.section_status,
             "card_count": len(s.cards) if s.cards else 0,
@@ -133,6 +136,8 @@ def update_section(section_id: int, body: SectionUpdate, db: Session = Depends(g
         section.curriculum_topic_path = body.curriculum_topic_path
     if body.is_verified is not None:
         section.is_verified = body.is_verified
+    if body.is_done is not None:
+        section.is_done = body.is_done
     if body.flags is not None:
         section.flags = body.flags
     if body.section_status is not None:

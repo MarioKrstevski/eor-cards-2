@@ -10,7 +10,8 @@ from typing import Optional
 from backend.db import get_db
 from backend.models import Card, CardStatus, Section, SectionImage, RuleSet, AIUsageLog
 from backend.services.generator import strip_card_html, regenerate_single_card
-from backend.config import ANTHROPIC_API_KEY, DEFAULT_MODEL, compute_cost
+from backend.services.ai_utils import response_text
+from backend.config import ANTHROPIC_API_KEY, DEFAULT_MODEL, compute_cost, resolve_model, effort_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +224,105 @@ def regenerate_card(card_id: int, body: RegenerateCardRequest, db: Session = Dep
         db.commit()
     db.refresh(card)
     return card_to_dict(card, db)
+
+
+class CombinePreviewRequest(BaseModel):
+    card_ids: list[int]
+    prompt: Optional[str] = None
+    model: str = DEFAULT_MODEL
+
+
+class CombineApplyRequest(BaseModel):
+    card_ids: list[int]
+    front_html: str
+    extra: Optional[str] = None
+    tags: list[str] = []
+    keep_original: bool = False
+
+
+_COMBINE_SYSTEM = (
+    "You merge several Anki cloze flashcards covering related material into ONE consolidated cloze card. "
+    "Keep the medically important facts, remove redundancy, and keep it answerable for a PA EOR exam. "
+    "Use cloze deletions of the form {{c1::answer}} (always c1). Use <b>...</b> for bold — never markdown. "
+    'Return ONLY JSON: {"front_html": "...", "extra": "... or null", "tags": ["..."]}.'
+)
+
+
+@router.post("/combine-preview")
+def combine_preview(body: CombinePreviewRequest, db: Session = Depends(get_db)):
+    """Propose a single card that merges the given cards (not persisted)."""
+    cards = db.query(Card).filter(Card.id.in_(body.card_ids)).all()
+    if len(cards) < 2:
+        raise HTTPException(400, "Select at least two cards to combine")
+    lines = []
+    for i, c in enumerate(cards, 1):
+        tags = (c.tags or c.tags_mapped) or []
+        lines.append(f"Card {i}:\n  front: {c.front_text}\n  extra: {c.extra or '(none)'}\n  tags: {', '.join(tags)}")
+    guidance = (body.prompt or "").strip() or "Combine them sensibly into one focused card."
+    user = (
+        "Combine the following flashcards into a single consolidated cloze card. "
+        f"Goal/guidance: {guidance}\n\n" + "\n\n".join(lines) +
+        "\n\nReturn the combined card as JSON only."
+    )
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    resp = client.messages.create(
+        model=resolve_model(body.model)[0],
+        **effort_kwargs(body.model),
+        max_tokens=2048,
+        temperature=0,
+        system=_COMBINE_SYSTEM,
+        messages=[{"role": "user", "content": user}],
+    )
+    raw = response_text(resp)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        s, e = raw.find("{"), raw.rfind("}") + 1
+        if s >= 0 and e > s:
+            data = json.loads(raw[s:e])
+        else:
+            raise HTTPException(502, "Could not parse the combined card")
+    u = resp.usage
+    db.add(AIUsageLog(
+        operation="combine",
+        model=body.model,
+        input_tokens=u.input_tokens,
+        output_tokens=u.output_tokens,
+        cost_usd=compute_cost(body.model, u.input_tokens, u.output_tokens),
+    ))
+    db.commit()
+    return {
+        "front_html": data.get("front_html", ""),
+        "extra": data.get("extra") or None,
+        "tags": data.get("tags") or ((cards[0].tags or cards[0].tags_mapped) or []),
+        "source_card_ids": [c.id for c in cards],
+    }
+
+
+@router.post("/combine-apply")
+def combine_apply(body: CombineApplyRequest, db: Session = Depends(get_db)):
+    """Create the combined card; reject the originals unless keep_original."""
+    cards = db.query(Card).filter(Card.id.in_(body.card_ids)).all()
+    if not cards:
+        raise HTTPException(400, "No cards found")
+    new = Card(
+        section_id=cards[0].section_id,
+        card_number=cards[0].card_number,
+        front_html=body.front_html,
+        front_text=strip_card_html(body.front_html),
+        tags=body.tags or ((cards[0].tags or cards[0].tags_mapped) or []),
+        extra=body.extra or None,
+        status=CardStatus.active,
+        is_reviewed=True,
+    )
+    db.add(new)
+    if not body.keep_original:
+        for c in cards:
+            c.status = CardStatus.rejected
+            c.is_reviewed = True
+    db.commit()
+    db.refresh(new)
+    return card_to_dict(new, db)
 
 
 @router.post("/{card_id}/reject")

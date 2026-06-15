@@ -79,6 +79,7 @@ class Section(Base):
     table_count: Mapped[int] = mapped_column(Integer, default=0)
     flags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_done: Mapped[bool] = mapped_column(Boolean, default=False)  # reviewer locked in all cards for this section
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     section_status: Mapped[str] = mapped_column(String(20), default="normal")  # normal, green, orange
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
