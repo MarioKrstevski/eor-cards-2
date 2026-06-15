@@ -108,6 +108,58 @@ def _migrate_db():
                 pass
 
 
+def _backfill_new_curriculum_surgery():
+    """The 'New' (v1) curriculum was missing the Surgery topic that exists in
+    'Current' (v2). Surgery is part of the new curriculum too — it just had no
+    updates, so it never surfaced as an updated topic. Copy the full Surgery
+    subtree from v2 -> v1 if it's absent. Idempotent; copies from whatever DB
+    it runs in (so on Railway it pulls that instance's live Current Surgery)."""
+    import logging
+    from sqlalchemy import func
+    from backend.models import Curriculum
+
+    db = SessionLocal()
+    try:
+        if db.query(Curriculum).filter_by(version="v1", level=0, name="Surgery").first():
+            return  # already present
+        root = db.query(Curriculum).filter_by(version="v2", level=0, name="Surgery").first()
+        if not root:
+            return  # nothing to copy
+
+        subtree = [root] + (
+            db.query(Curriculum)
+            .filter(Curriculum.version == "v2", Curriculum.path.like(root.path + " > %"))
+            .all()
+        )
+        subtree.sort(key=lambda c: (c.level, c.sort_order))  # parents before children
+
+        # Append Surgery after the existing v1 top-level topics.
+        max_top = db.query(func.max(Curriculum.sort_order)).filter_by(version="v1", level=0).scalar() or 0
+
+        id_map: dict[int, int] = {}  # old v2 id -> new v1 id
+        for c in subtree:
+            node = Curriculum(
+                parent_id=None if c.parent_id is None else id_map[c.parent_id],
+                name=c.name,
+                level=c.level,
+                path=c.path,  # path carries no version component — identical across versions
+                sort_order=(max_top + 1) if c.level == 0 else c.sort_order,
+                version="v1",
+            )
+            db.add(node)
+            db.flush()
+            id_map[c.id] = node.id
+        db.commit()
+        logging.getLogger(__name__).info(
+            "Backfilled Surgery into New (v1) curriculum: %d nodes", len(subtree)
+        )
+    except Exception:
+        db.rollback()
+        logging.getLogger(__name__).exception("Surgery backfill into v1 failed")
+    finally:
+        db.close()
+
+
 def _sweep_orphaned_jobs():
     """Mark jobs left running/pending by a previous process as failed.
 
@@ -140,6 +192,7 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     _migrate_db()
     seed_data()
+    _backfill_new_curriculum_surgery()
     _sweep_orphaned_jobs()
     yield
 
