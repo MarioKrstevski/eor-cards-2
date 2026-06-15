@@ -77,9 +77,12 @@ interface EditableCellProps {
   onNavigate: (dir: 'up' | 'down' | 'left' | 'right') => void;
   multiline?: boolean;
   renderDisplay?: (val: string) => React.ReactNode;
+  // When provided, double-click / Enter opens the big editor modal instead of
+  // the inline textarea (keeps the cell readable for long card/vignette text).
+  onRequestEdit?: () => void;
 }
 
-function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, renderDisplay }: EditableCellProps) {
+function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, renderDisplay, onRequestEdit }: EditableCellProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [localVal, setLocalVal] = useState(value);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -95,7 +98,8 @@ function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, 
     if (isEditing && taRef.current) autoResize(taRef.current);
   }, [isEditing, localVal]);
 
-  function startEdit() { setLocalVal(value); setIsEditing(true); }
+  // Route editing to the big modal when a handler is wired; otherwise edit inline.
+  function startEdit() { if (onRequestEdit) { onRequestEdit(); return; } setLocalVal(value); setIsEditing(true); }
   function save() { setIsEditing(false); if (localVal !== value) onSave(localVal); }
   function cancel() { setIsEditing(false); setLocalVal(value); }
 
@@ -149,6 +153,125 @@ function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, 
           ? <span className="text-sm text-gray-700">{value}</span>
           : <span className="text-gray-300 text-xs">—</span>
       )}
+    </div>
+  );
+}
+
+// ── BigEditModal — large popup editor for long text fields ───────────────────
+type CardVersion = 'base' | 'v1' | 'v2' | 'v3';
+const EDIT_TABS: { key: string; label: string }[] = [
+  { key: 'front_html', label: 'Card Text' },
+  { key: 'extra', label: 'Extra' },
+  { key: 'vignette', label: 'Vignette' },
+  { key: 'teaching_case', label: 'Teaching Case' },
+];
+
+function frontFieldFor(v: CardVersion): string {
+  return v === 'v1' ? 'front_html_v1' : v === 'v2' ? 'front_html_v2' : v === 'v3' ? 'front_html_v3' : 'front_html';
+}
+function getFieldValue(card: Card, key: string, ver: CardVersion): string {
+  if (key === 'front_html') return (((card as any)[frontFieldFor(ver)] ?? card.front_html) ?? '') as string;
+  return (((card as any)[key]) ?? '') as string;
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function fieldPatch(key: string, val: string, ver: CardVersion): any {
+  if (key === 'front_html') return { [frontFieldFor(ver)]: val };
+  return { [key]: val || null };  // extra/vignette/teaching_case null out when blank
+}
+
+interface BigEditModalProps {
+  cards: Card[];
+  cardId: number;
+  field: string;
+  activeCardVersion: CardVersion;
+  enableCardNav: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onSave: (id: number, patch: any) => void;
+  onClose: () => void;
+}
+
+function BigEditModal({ cards, cardId: startId, field: startField, activeCardVersion, enableCardNav, onSave, onClose }: BigEditModalProps) {
+  const [cardId, setCardId] = useState(startId);
+  const [fieldKey, setFieldKey] = useState(startField);
+  const [draft, setDraft] = useState('');
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  const idx = cards.findIndex((c) => c.id === cardId);
+  const card = idx >= 0 ? cards[idx] : undefined;
+
+  // Reload the draft when the (card, field) target changes — not on background
+  // refreshes, so we never clobber what the user is typing.
+  useEffect(() => {
+    if (card) setDraft(getFieldValue(card, fieldKey, activeCardVersion));
+    requestAnimationFrame(() => taRef.current?.focus());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardId, fieldKey]);
+
+  if (!card) return null;
+
+  function flush() {
+    if (!card) return;
+    const orig = getFieldValue(card, fieldKey, activeCardVersion);
+    if (draft !== orig) onSave(card.id, fieldPatch(fieldKey, draft, activeCardVersion));
+  }
+  function switchField(k: string) { if (k === fieldKey) return; flush(); setFieldKey(k); }
+  function gotoCard(dir: -1 | 1) {
+    const ni = Math.min(cards.length - 1, Math.max(0, idx + dir));
+    if (ni === idx) return;
+    flush();
+    setCardId(cards[ni].id);
+  }
+  function saveClose() { flush(); onClose(); }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center" role="dialog" aria-modal="true">
+      <div className="absolute inset-0 bg-black/30" onClick={saveClose} />
+      <div
+        className="relative bg-white rounded-xl shadow-2xl border border-gray-200 flex flex-col"
+        style={{ width: '82vw', maxWidth: '1100px', height: '78vh' }}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); saveClose(); }
+        }}
+      >
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-gray-200">
+          <div className="flex items-center gap-1">
+            {EDIT_TABS.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => switchField(t.key)}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors duration-150 ${fieldKey === t.key ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            {enableCardNav && (
+              <div className="flex items-center gap-1 text-gray-500">
+                <button onClick={() => gotoCard(-1)} disabled={idx <= 0} title="Save & previous card" className="px-1.5 py-1 rounded hover:bg-gray-100 disabled:opacity-30">◀</button>
+                <span className="text-[11px] tabular-nums">Card #{card.card_number}</span>
+                <button onClick={() => gotoCard(1)} disabled={idx >= cards.length - 1} title="Save & next card" className="px-1.5 py-1 rounded hover:bg-gray-100 disabled:opacity-30">▶</button>
+              </div>
+            )}
+            <button onClick={onClose} className="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-50" title="Cancel (Esc)">✕</button>
+          </div>
+        </div>
+        <textarea
+          ref={taRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          className="flex-1 w-full resize-none px-4 py-3 text-sm leading-relaxed font-mono text-gray-800 outline-none"
+          spellCheck={false}
+        />
+        <div className="flex items-center justify-between px-4 py-2.5 border-t border-gray-200 bg-gray-50/60">
+          <span className="text-[11px] text-gray-400">Click outside or Save keeps changes · Esc cancels · ⌘/Ctrl+Enter saves & closes</span>
+          <div className="flex items-center gap-2">
+            <button onClick={onClose} className="px-3 py-1.5 text-xs font-medium text-gray-600 rounded-lg hover:bg-gray-100">Cancel</button>
+            <button onClick={saveClose} className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">Save &amp; Close</button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -890,6 +1013,9 @@ export default function CardsPanel({
 
   // ── View mode ────────────────────────────────────────────────────────────
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
+  // Big editor modal: opened from a cell double-click (nav: true) or the row
+  // Edit action (nav: false → tabs only, current card).
+  const [bigEdit, setBigEdit] = useState<{ cardId: number; field: string; nav: boolean } | null>(null);
 
   // ── Review marks ─────────────────────────────────────────────────────────
   const [markTypes, setMarkTypes] = useState<ReviewMarkType[]>([]);
@@ -1200,6 +1326,7 @@ export default function CardsPanel({
               }}
               onSelect={handleCellSelect}
               onNavigate={(dir) => handleCellNavigate(row.index, 'front_html', dir)}
+              onRequestEdit={() => setBigEdit({ cardId: card.id, field: 'front_html', nav: true })}
               multiline
               renderDisplay={(v) => (
                 <div className="relative">
@@ -1250,6 +1377,7 @@ export default function CardsPanel({
               onSave={(newVal) => handleCellSave(row.original.id, { extra: newVal || null })}
               onSelect={handleCellSelect}
               onNavigate={(dir) => handleCellNavigate(row.index, 'extra', dir)}
+              onRequestEdit={() => setBigEdit({ cardId: row.original.id, field: 'extra', nav: true })}
               multiline
               renderDisplay={(v) => v
                 ? <div className="text-xs text-gray-600" dangerouslySetInnerHTML={{ __html: v }} />
@@ -1293,6 +1421,7 @@ export default function CardsPanel({
               onSave={(newVal) => handleCellSave(row.original.id, { vignette: newVal || null })}
               onSelect={handleCellSelect}
               onNavigate={(dir) => handleCellNavigate(row.index, 'vignette', dir)}
+              onRequestEdit={() => setBigEdit({ cardId: row.original.id, field: 'vignette', nav: true })}
               multiline
               renderDisplay={(v) => v
                 ? <div className="text-xs text-gray-600 line-clamp-3">{v}</div>
@@ -1316,6 +1445,7 @@ export default function CardsPanel({
               onSave={(newVal) => handleCellSave(row.original.id, { teaching_case: newVal || null })}
               onSelect={handleCellSelect}
               onNavigate={(dir) => handleCellNavigate(row.index, 'teaching_case', dir)}
+              onRequestEdit={() => setBigEdit({ cardId: row.original.id, field: 'teaching_case', nav: true })}
               multiline
               renderDisplay={(v) => v
                 ? <div className="text-xs text-gray-600 line-clamp-3">{v}</div>
@@ -1336,14 +1466,9 @@ export default function CardsPanel({
           return (
             <div className="flex items-center gap-1 opacity-0 group-hover/row:opacity-100 transition-opacity duration-100">
               <button
-                onClick={() => {
-                  setEditingId(card.id);
-                  setEditFrontHtml(card.front_html);
-                  setEditTags(card.tags.join(', '));
-                  setViewMode('cards');
-                }}
+                onClick={() => setBigEdit({ cardId: card.id, field: 'front_html', nav: false })}
                 className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50"
-                title="Edit in card view"
+                title="Edit fields"
               >
                 <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -2351,6 +2476,18 @@ export default function CardsPanel({
         <AnkifyModal
           cards={selectedIds.size > 0 ? cards.filter(c => selectedIds.has(c.id)) : filteredCards}
           onClose={() => setAnkifyOpen(false)}
+        />
+      )}
+
+      {bigEdit && (
+        <BigEditModal
+          cards={filteredCards}
+          cardId={bigEdit.cardId}
+          field={bigEdit.field}
+          activeCardVersion={activeCardVersion}
+          enableCardNav={bigEdit.nav}
+          onSave={handleCellSave}
+          onClose={() => setBigEdit(null)}
         />
       )}
 
