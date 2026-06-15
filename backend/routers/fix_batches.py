@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 class CreateBatchRequest(BaseModel):
-    mark_type_id: int
+    mark_type_id: Optional[int] = None  # None = in-place run on the given card_ids (e.g. regenerate→split), no mark required
     card_ids: list[int]
     prompt: str
     model: str
@@ -23,6 +23,7 @@ class UpdateProposalRequest(BaseModel):
 
 class ConfirmBatchRequest(BaseModel):
     proposal_ids: Optional[list[int]] = None  # None = confirm all resolved
+    keep_original: bool = False  # on split, keep the original card instead of rejecting it
 
 
 class RerunBatchRequest(BaseModel):
@@ -99,18 +100,22 @@ def get_batch(batch_id: int, db: Session = Depends(get_db)):
 
 @router.post("")
 def create_batch(body: CreateBatchRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    # Validate mark type
-    mark_type = db.get(ReviewMarkType, body.mark_type_id)
-    if not mark_type:
-        raise HTTPException(404, "Mark type not found")
-
-    # Validate cards exist and have this mark type
-    cards = db.query(Card).filter(
-        Card.id.in_(body.card_ids),
-        Card.review_mark_id == body.mark_type_id,
-    ).all()
-    if not cards:
-        raise HTTPException(422, "No valid cards found with this mark type")
+    if body.mark_type_id is not None:
+        # Mark-driven flow: validate the mark and only take cards carrying it.
+        mark_type = db.get(ReviewMarkType, body.mark_type_id)
+        if not mark_type:
+            raise HTTPException(404, "Mark type not found")
+        cards = db.query(Card).filter(
+            Card.id.in_(body.card_ids),
+            Card.review_mark_id == body.mark_type_id,
+        ).all()
+        if not cards:
+            raise HTTPException(422, "No valid cards found with this mark type")
+    else:
+        # In-place flow (regenerate → split / combine): run on the given cards directly.
+        cards = db.query(Card).filter(Card.id.in_(body.card_ids)).all()
+        if not cards:
+            raise HTTPException(422, "No valid cards found")
 
     card_ids = [c.id for c in cards]
 
@@ -254,7 +259,7 @@ def confirm_batch(batch_id: int, body: ConfirmBatchRequest, db: Session = Depend
             card.in_fix_batch = False
 
         elif action == "split":
-            # Create new cards from new_cards_json, mark original as rejected
+            # Create new cards from new_cards_json; reject the original unless keep_original.
             if proposal.new_cards_json:
                 for nc in proposal.new_cards_json:
                     new_card = Card(
@@ -268,7 +273,8 @@ def confirm_batch(batch_id: int, body: ConfirmBatchRequest, db: Session = Depend
                         is_reviewed=True,
                     )
                     db.add(new_card)
-            card.status = CardStatus.rejected
+            if not body.keep_original:
+                card.status = CardStatus.rejected
             card.is_reviewed = True
             card.review_mark_id = None
             card.in_fix_batch = False

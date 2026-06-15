@@ -261,7 +261,7 @@ export async function getFixBatch(id: number): Promise<FixBatch> {
 }
 
 export async function createFixBatch(params: {
-  mark_type_id: number;
+  mark_type_id?: number | null;  // omit for the in-place regenerate→split flow
   card_ids: number[];
   prompt: string;
   model: string;
@@ -300,11 +300,12 @@ export async function updateFixProposalContent(
 
 export async function confirmFixBatch(
   id: number,
-  proposalIds?: number[]
+  proposalIds?: number[],
+  keepOriginal?: boolean
 ): Promise<{ confirmed: number; batch_status: string }> {
   const res = await http.post<{ confirmed: number; batch_status: string }>(
     `/fix-batches/${id}/confirm`,
-    { proposal_ids: proposalIds ?? null }
+    { proposal_ids: proposalIds ?? null, keep_original: keepOriginal ?? false }
   );
   return res.data;
 }

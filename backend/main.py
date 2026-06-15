@@ -200,7 +200,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="EOR Card Studio v4", lifespan=lifespan)
 
 # Bumped on each deploy so /api/version can confirm what's actually running.
-APP_VERSION = 21
+APP_VERSION = 22
 
 
 @app.get("/api/version")

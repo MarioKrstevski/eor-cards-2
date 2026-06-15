@@ -28,11 +28,14 @@ import {
   bulkMarkCards,
   bulkScoreCards,
   createFixBatch,
+  getFixBatch,
+  confirmFixBatch,
+  cancelFixBatch,
   getSection,
   uploadSectionImage,
   uploadSectionImageFromUrl,
 } from '../api';
-import type { Card, CardStatus, CostEstimate, ReviewMarkType, SectionImage } from '../types';
+import type { Card, CardStatus, CostEstimate, ReviewMarkType, SectionImage, FixProposal } from '../types';
 import { loadRegenHistory, pushSnapshots, rollbackToIndex, type RegenHistory } from '../regenHistory';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
@@ -1782,6 +1785,73 @@ export default function CardsPanel({
 
   const [showBulkRegenModal, setShowBulkRegenModal] = useState(false);
   const [bulkRegenPrompt, setBulkRegenPrompt] = useState('');
+  // Regenerate-modal mode: recreate (1:1, today) | split (1→N) | combine (N→1, Phase B).
+  const [regenMode, setRegenMode] = useState<'recreate' | 'split' | 'combine'>('recreate');
+  const [splitKeepOriginal, setSplitKeepOriginal] = useState(false);  // default: delete (reject) original
+  const [splitLoading, setSplitLoading] = useState(false);
+  const [splitBatchId, setSplitBatchId] = useState<number | null>(null);
+  const [splitProposal, setSplitProposal] = useState<FixProposal | null>(null);  // in-place review modal when set
+  const splitPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => { if (splitPollRef.current) clearInterval(splitPollRef.current); }, []);
+  useEffect(() => { if (showBulkRegenModal) setRegenMode('recreate'); }, [showBulkRegenModal]);
+
+  // Kick off a split as an unmarked, in-place fix batch on the single selected card.
+  const handleSplitStart = useCallback(async () => {
+    if (selectedIds.size !== 1) return;
+    const cardId = [...selectedIds][0];
+    const guidance = bulkRegenPrompt.trim() || 'Use your judgment to divide the content sensibly.';
+    const prompt =
+      'Split this single flashcard into 2 or more separate, focused cloze cards. ' +
+      'Use action "split" and return the resulting cards in new_cards (each with its own front_html, extra, and tags). ' +
+      "Distribute the original card's additional context (extra) appropriately across the new cards. Guidance: " +
+      guidance;
+    setSplitLoading(true);
+    try {
+      const { batch_id } = await createFixBatch({ card_ids: [cardId], prompt, model: selectedModel });
+      setSplitBatchId(batch_id);
+      splitPollRef.current = setInterval(async () => {
+        try {
+          const batch = await getFixBatch(batch_id);
+          if (batch.status === 'done') {
+            clearInterval(splitPollRef.current!); splitPollRef.current = null;
+            setSplitLoading(false);
+            const prop = batch.proposals?.[0] ?? null;
+            setShowBulkRegenModal(false);
+            if (prop) setSplitProposal(prop);
+            else setActionError('Split produced no proposal');
+          }
+        } catch {
+          clearInterval(splitPollRef.current!); splitPollRef.current = null;
+          setSplitLoading(false); setActionError('Split failed');
+        }
+      }, 1500);
+    } catch {
+      setSplitLoading(false); setActionError('Split failed');
+    }
+  }, [selectedIds, bulkRegenPrompt, selectedModel]);
+
+  const handleSplitConfirm = useCallback(async () => {
+    if (splitBatchId == null) return;
+    try {
+      await confirmFixBatch(splitBatchId, undefined, splitKeepOriginal);
+      setSplitProposal(null);
+      setSplitBatchId(null);
+      setBulkRegenPrompt('');
+      setSelectedIds(new Set());
+      fetchCards(sectionId, topicPath, true, undefined, sectionIds);
+      onReviewChange?.();
+    } catch {
+      setActionError('Could not apply split');
+    }
+  }, [splitBatchId, splitKeepOriginal, fetchCards, sectionId, topicPath, sectionIds, onReviewChange]);
+
+  const handleSplitCancel = useCallback(async () => {
+    const id = splitBatchId;
+    setSplitProposal(null);
+    setSplitBatchId(null);
+    if (id != null) { try { await cancelFixBatch(id); } catch { /* best-effort */ } }
+  }, [splitBatchId]);
+
   const [bulkRegenProgress, setBulkRegenProgress] = useState<{ done: number; total: number } | null>(null);
 
   const [bulkRegenScope, setBulkRegenScope] = useState<'selected' | 'all'>('selected');
@@ -2677,6 +2747,56 @@ export default function CardsPanel({
         );
       })()}
 
+      {/* In-place split review — proposed new cards from a regenerate→split */}
+      {splitProposal && (() => {
+        const orig = cards.find(c => c.id === splitProposal.original_card_id) ?? filteredCards.find(c => c.id === splitProposal.original_card_id);
+        const newCards = splitProposal.new_cards_json ?? [];
+        return (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center" role="dialog" aria-modal="true">
+            <div className="absolute inset-0 bg-black/40" onClick={handleSplitCancel} />
+            <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[80vw] max-w-[960px] max-h-[82vh] flex flex-col">
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
+                <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">Review split — {newCards.length} new card{newCards.length !== 1 ? 's' : ''}</h2>
+                <button onClick={handleSplitCancel} className="p-1 text-gray-400 hover:text-gray-600 rounded">✕</button>
+              </div>
+              <div className="grid grid-cols-2 gap-3 p-4 overflow-auto">
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase mb-1">Original {splitKeepOriginal ? '(kept)' : '(will be removed)'}</p>
+                  {orig ? (
+                    <>
+                      <div className="border border-gray-200 rounded p-2 text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: orig.front_html }} />
+                      {orig.extra && <div className="border border-gray-200 rounded p-2 mt-2 text-xs text-gray-600" dangerouslySetInnerHTML={{ __html: orig.extra }} />}
+                    </>
+                  ) : <p className="text-xs text-gray-400">(card not loaded)</p>}
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold text-green-600 uppercase mb-1">New cards</p>
+                  <div className="flex flex-col gap-2">
+                    {newCards.length === 0 ? (
+                      <p className="text-xs text-gray-400">No new cards proposed.</p>
+                    ) : newCards.map((nc, i) => (
+                      <div key={i} className="border border-green-200 rounded p-2 bg-green-50/40">
+                        <div className="text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: nc.front_html }} />
+                        {nc.extra && <div className="text-xs text-gray-600 mt-1" dangerouslySetInnerHTML={{ __html: nc.extra }} />}
+                        {nc.tags?.length ? (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {nc.tags.map((t, j) => <span key={j} className="text-[9px] px-1 py-0.5 rounded bg-gray-100 text-gray-500">{t}</span>)}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-200 bg-gray-50/60">
+                <button onClick={handleSplitCancel} className="px-3 py-1.5 text-xs font-medium text-gray-600 rounded-lg hover:bg-gray-100">Cancel</button>
+                <button onClick={handleSplitConfirm} disabled={newCards.length === 0} className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50">Accept — apply changes</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {showCreatePresentation && (
         <CreatePresentationModal
           selectedCardIds={[...selectedIds]}
@@ -2770,14 +2890,47 @@ export default function CardsPanel({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => { if (!bulkRegenProgress) setShowBulkRegenModal(false); }}>
           <div className="bg-white rounded-xl shadow-2xl w-[420px] p-5" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-sm font-semibold text-gray-800 mb-3">Regenerate {bulkRegenScope === 'all' ? `all ${totalCards}` : selectedIds.size} cards</h3>
-            <p className="text-xs text-gray-500 mb-3">Cards will be regenerated one by one using {selectedModel}. You can optionally provide guidance.</p>
+            {/* Mode: Recreate (1:1) · Split (1→N, single card) · Combine (N→1, coming next) */}
+            <div className="flex items-center gap-1 mb-3 border border-gray-200 rounded-lg p-0.5 w-fit">
+              <button
+                onClick={() => setRegenMode('recreate')}
+                disabled={!!bulkRegenProgress || splitLoading}
+                className={`px-2.5 py-1 text-[11px] font-medium rounded ${regenMode === 'recreate' ? 'bg-amber-50 text-amber-700' : 'text-gray-500 hover:bg-gray-50'}`}
+              >Recreate</button>
+              {bulkRegenScope === 'selected' && selectedIds.size === 1 ? (
+                <button
+                  onClick={() => setRegenMode('split')}
+                  disabled={!!bulkRegenProgress || splitLoading}
+                  className={`px-2.5 py-1 text-[11px] font-medium rounded ${regenMode === 'split' ? 'bg-amber-50 text-amber-700' : 'text-gray-500 hover:bg-gray-50'}`}
+                >Split into multiple</button>
+              ) : (
+                <button disabled title="Select exactly one card to split" className="px-2.5 py-1 text-[11px] font-medium rounded text-gray-300 cursor-not-allowed">Split</button>
+              )}
+              {(bulkRegenScope === 'all' || selectedIds.size > 1) && (
+                <button disabled title="Combine N cards into one — coming next" className="px-2.5 py-1 text-[11px] font-medium rounded text-gray-300 cursor-not-allowed">Combine (soon)</button>
+              )}
+            </div>
+            {regenMode === 'split' && (
+              <div className="flex items-center gap-3 mb-3 text-[11px] text-gray-600">
+                <span>Original card after split:</span>
+                <label className="flex items-center gap-1 cursor-pointer"><input type="radio" checked={!splitKeepOriginal} onChange={() => setSplitKeepOriginal(false)} />Delete</label>
+                <label className="flex items-center gap-1 cursor-pointer"><input type="radio" checked={splitKeepOriginal} onChange={() => setSplitKeepOriginal(true)} />Keep</label>
+              </div>
+            )}
+            <p className="text-xs text-gray-500 mb-3">
+              {regenMode === 'split'
+                ? `This card will be split into multiple cards using ${selectedModel}; you'll review before anything changes.`
+                : `Cards will be regenerated one by one using ${selectedModel}. You can optionally provide guidance.`}
+            </p>
             <textarea
               value={bulkRegenPrompt}
               onChange={(e) => setBulkRegenPrompt(e.target.value)}
-              placeholder="Optional guidance — e.g. 'make cards more specific' or 'focus on diagnostic criteria'..."
+              placeholder={regenMode === 'split'
+                ? "How should it be split? e.g. 'one card per organism' or 'separate diagnosis from treatment'…"
+                : "Optional guidance — e.g. 'make cards more specific' or 'focus on diagnostic criteria'..."}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-amber-500 resize-none"
               rows={3}
-              disabled={!!bulkRegenProgress}
+              disabled={!!bulkRegenProgress || splitLoading}
             />
             {bulkRegenProgress && (
               <div className="mt-3">
@@ -2793,17 +2946,23 @@ export default function CardsPanel({
             <div className="mt-4 flex gap-2 justify-end">
               <button
                 onClick={() => { setShowBulkRegenModal(false); setBulkRegenPrompt(''); }}
-                disabled={!!bulkRegenProgress}
+                disabled={!!bulkRegenProgress || splitLoading}
                 className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
-                onClick={() => handleBulkRegen(bulkRegenPrompt, bulkRegenScope)}
-                disabled={!!bulkRegenProgress}
+                onClick={() => { if (regenMode === 'split') handleSplitStart(); else handleBulkRegen(bulkRegenPrompt, bulkRegenScope); }}
+                disabled={!!bulkRegenProgress || splitLoading}
                 className="px-3 py-1.5 text-xs font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-50"
               >
-                {bulkRegenProgress ? `Working... (${bulkRegenProgress.done}/${bulkRegenProgress.total})` : 'Regenerate All'}
+                {splitLoading
+                  ? 'Splitting…'
+                  : bulkRegenProgress
+                    ? `Working... (${bulkRegenProgress.done}/${bulkRegenProgress.total})`
+                    : regenMode === 'split'
+                      ? 'Split card'
+                      : bulkRegenScope === 'all' ? 'Regenerate All' : 'Regenerate'}
               </button>
             </div>
           </div>
