@@ -8,6 +8,8 @@ import json
 import logging
 from typing import Optional
 
+from backend.config import resolve_model, effort_kwargs
+
 logger = logging.getLogger(__name__)
 
 # Max paragraphs to send for analysis — beyond this we risk token limits
@@ -160,7 +162,8 @@ Paragraphs:
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     response = client.messages.create(
-        model=model,
+        model=resolve_model(model)[0],
+        **effort_kwargs(model),
         max_tokens=2048,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import logging
 import anthropic
-from backend.config import DEFAULT_MODEL
+from backend.config import DEFAULT_MODEL, resolve_model, effort_kwargs
 from backend.services.ai_utils import CLOZE_RE, response_text, usage_dict
 
 logger = logging.getLogger(__name__)
@@ -191,7 +191,8 @@ def regenerate_single_card(
     chunk_prompt += "\nGenerate ONE improved replacement card. Output exactly:\n1|cloze card text|additional context (optional)|source:P1-P3"
 
     response = client.messages.create(
-        model=model,
+        model=resolve_model(model)[0],
+        **effort_kwargs(model),
         max_tokens=1024,
         temperature=0,
         system=[{
@@ -246,7 +247,8 @@ def generate_cards_for_section(
     total_usage = None
     for max_tokens in (8192, 16384):
         response = client.messages.create(
-            model=model,
+            model=resolve_model(model)[0],
+            **effort_kwargs(model),
             max_tokens=max_tokens,
             temperature=0,
             system=[{

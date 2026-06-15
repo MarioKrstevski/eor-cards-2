@@ -2,6 +2,7 @@
 import logging
 import anthropic
 from backend.services.ai_utils import parse_json_array, response_text, usage_dict
+from backend.config import resolve_model, effort_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,8 @@ Return a JSON array only. One object per card, same order. No text outside the J
 [{{"card_id": 123, "accuracy": 5, "accuracy_note": "Accurate", "eor_yield": {{"Internal Medicine": "Gold"}}}}]"""
 
     response = client.messages.create(
-        model=model,
+        model=resolve_model(model)[0],
+        **effort_kwargs(model),
         max_tokens=8192,
         temperature=0,
         system=SCORING_SYSTEM_PROMPT,

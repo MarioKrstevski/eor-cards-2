@@ -2,7 +2,7 @@
 import time
 import logging
 import anthropic
-from backend.config import DEFAULT_PROCESSING_MODEL
+from backend.config import DEFAULT_PROCESSING_MODEL, resolve_model, effort_kwargs
 from backend.services.ai_utils import RETRYABLE_ERRORS, response_text
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,8 @@ Example: N3|EXPANDED|E1"""
     for attempt in range(4):
         try:
             response = client.messages.create(
-                model=model,
+                model=resolve_model(model)[0],
+                **effort_kwargs(model),
                 max_tokens=4096,
                 temperature=0,
                 messages=[{"role": "user", "content": prompt}],

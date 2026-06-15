@@ -15,7 +15,7 @@ from backend.services.generator import generate_cards_for_section
 from backend.services.scorer import score_cards
 from backend.services.cost_estimator import estimate_cost, estimate_supplemental_cost
 from backend.services.ai_utils import RETRYABLE_ERRORS
-from backend.config import MODELS, DEFAULT_MODEL, ANTHROPIC_API_KEY, compute_cost
+from backend.config import MODELS, DEFAULT_MODEL, ANTHROPIC_API_KEY, compute_cost, model_choices
 import anthropic
 
 logger = logging.getLogger(__name__)
@@ -68,11 +68,7 @@ def _get_sections(topic_tree_id: Optional[int], section_ids: Optional[list[int]]
 
 @router.get("/models")
 def list_models():
-    return [
-        {"id": k, "display": v["display"],
-         "input_per_1m": v["input_per_1m"], "output_per_1m": v["output_per_1m"]}
-        for k, v in MODELS.items()
-    ]
+    return model_choices()
 
 
 @router.post("/estimate")

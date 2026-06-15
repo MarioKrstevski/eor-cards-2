@@ -22,11 +22,11 @@ interface Settings {
 }
 
 const defaults: Settings = {
-  selectedModel: 'claude-sonnet-4-6',
+  selectedModel: 'claude-sonnet-4-6:medium',
   setSelectedModel: () => {},
-  vignetteModel: 'claude-sonnet-4-6',
+  vignetteModel: 'claude-sonnet-4-6:medium',
   setVignetteModel: () => {},
-  teachingCaseModel: 'claude-sonnet-4-6',
+  teachingCaseModel: 'claude-sonnet-4-6:medium',
   setTeachingCaseModel: () => {},
   selectedRuleSetId: null,
   setSelectedRuleSetId: () => {},
@@ -44,15 +44,25 @@ const defaults: Settings = {
 
 export const SettingsContext = createContext<Settings>(defaults);
 
+// Effort is now baked into the model selection (e.g. "claude-sonnet-4-6:medium").
+// Upgrade legacy bare values stored before the effort dropdown existed so they
+// match a dropdown option and stop running at the implicit high-effort default.
+function loadModel(key: string): string {
+  const v = localStorage.getItem(key);
+  if (!v) return 'claude-sonnet-4-6:medium';
+  if (v === 'claude-sonnet-4-6') return 'claude-sonnet-4-6:medium';
+  return v;
+}
+
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [selectedModel, setSelectedModelState] = useState<string>(
-    () => localStorage.getItem('settings_model') || 'claude-sonnet-4-6'
+    () => loadModel('settings_model')
   );
   const [vignetteModel, setVignetteModelState] = useState<string>(
-    () => localStorage.getItem('settings_vignette_model') || 'claude-sonnet-4-6'
+    () => loadModel('settings_vignette_model')
   );
   const [teachingCaseModel, setTeachingCaseModelState] = useState<string>(
-    () => localStorage.getItem('settings_teaching_case_model') || 'claude-sonnet-4-6'
+    () => loadModel('settings_teaching_case_model')
   );
   const [selectedRuleSetId, setSelectedRuleSetIdState] = useState<number | null>(() => {
     const v = localStorage.getItem('settings_ruleset');

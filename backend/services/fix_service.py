@@ -3,7 +3,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from backend.db import SessionLocal
 from backend.models import Card, FixBatch, FixProposal, ReviewMarkType, Section, AIUsageLog, utcnow
-from backend.config import ANTHROPIC_API_KEY, compute_cost
+from backend.config import ANTHROPIC_API_KEY, compute_cost, resolve_model, effort_kwargs
 import anthropic
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,8 @@ Section: {section_heading}
 Respond with JSON only."""
 
         response = client.messages.create(
-            model=model,
+            model=resolve_model(model)[0],
+            **effort_kwargs(model),
             max_tokens=1500,
             temperature=0,
             system=SYSTEM_PROMPT,

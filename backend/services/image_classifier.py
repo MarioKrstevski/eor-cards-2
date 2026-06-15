@@ -2,7 +2,7 @@
 from __future__ import annotations
 import logging
 import anthropic
-from backend.config import DEFAULT_PROCESSING_MODEL
+from backend.config import DEFAULT_PROCESSING_MODEL, resolve_model, effort_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,8 @@ EXTRACTED_TEXT: <text or NONE>"""
 
     try:
         response = client.messages.create(
-            model=model,
+            model=resolve_model(model)[0],
+            **effort_kwargs(model),
             max_tokens=2048,
             temperature=0,
             messages=[{

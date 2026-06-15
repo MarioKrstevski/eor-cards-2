@@ -2,6 +2,7 @@
 import logging
 import anthropic
 from backend.services.ai_utils import tool_use_input, usage_dict, strip_cloze as _strip_cloze
+from backend.config import resolve_model, effort_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,8 @@ For each condition, fill the vignette and teaching_case following ALL the rules 
 and put the exact card ids you were given (the id: values above) into card_ids."""
 
     response = client.messages.create(
-        model=model,
+        model=resolve_model(model)[0],
+        **effort_kwargs(model),
         # 16384 is the ceiling the SDK accepts for non-streaming requests;
         # anything higher raises "Streaming is required..." before the call.
         max_tokens=16384,

@@ -1,4 +1,10 @@
-from backend.config import MODELS, DEFAULT_MODEL, AVG_OUTPUT_TOKENS_PER_SECTION
+from backend.config import MODELS, DEFAULT_MODEL, AVG_OUTPUT_TOKENS_PER_SECTION, resolve_model
+
+
+def _pricing(model: str) -> dict:
+    """Pricing for a model selection (bare id or 'model:effort'), with a safe fallback."""
+    return MODELS.get(resolve_model(model)[0]) or MODELS[resolve_model(DEFAULT_MODEL)[0]]
+
 
 # Fixed per-section prompt overhead: ANCHOR_INSTRUCTION (~400 tokens) +
 # paragraph numbering + heading tree + scoring pass input (card texts re-sent)
@@ -19,7 +25,7 @@ def estimate_cost(sections: list[dict], rules_text: str, model: str = DEFAULT_MO
     Accounts for prompt caching: the system prompt (rules) is written once at a
     1.25x premium, then read at 0.1x for every subsequent section.
     """
-    pricing = MODELS.get(model, MODELS[DEFAULT_MODEL])
+    pricing = _pricing(model)
     rules_tokens = count_tokens(rules_text)
 
     total_input = 0
@@ -53,7 +59,7 @@ def estimate_supplemental_cost(groups: dict, rules_text: str, model: str) -> dic
     groups maps condition name -> list of cards (each with front_text).
     The rules prompt is sent (cached) per group; every card's text is included.
     """
-    pricing = MODELS.get(model, MODELS[DEFAULT_MODEL])
+    pricing = _pricing(model)
     rules_tokens = count_tokens(rules_text)
     n = max(len(groups), 1)
 
