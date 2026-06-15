@@ -1839,7 +1839,10 @@ export default function CardsPanel({
     const prompt =
       'Split this single flashcard into 2 or more separate, focused cloze cards. ' +
       'Use action "split" and return the resulting cards in new_cards (each with its own front_html, extra, and tags). ' +
-      "Distribute the original card's additional context (extra) appropriately across the new cards. Guidance: " +
+      "Distribute the original card's additional context (extra) appropriately across the new cards. " +
+      'These cards come from one card and are closely related, so give each new card an "extra" that includes the connecting context — ' +
+      'briefly reference the related concept(s) covered by the sibling card(s) so each card still stands on its own and the link between them is preserved. ' +
+      'Guidance: ' +
       guidance;
     setSplitLoading(true);
     try {
