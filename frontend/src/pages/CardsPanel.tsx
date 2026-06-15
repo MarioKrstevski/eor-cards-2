@@ -31,6 +31,7 @@ import {
   getFixBatch,
   confirmFixBatch,
   cancelFixBatch,
+  updateFixProposalContent,
   combinePreview,
   combineApply,
   type CombineProposal,
@@ -302,6 +303,35 @@ function BigEditModal({ cards, cardId: startId, field: startField, activeCardVer
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Double-click-to-edit field used inside the split/combine review modals.
+function ProposalEditableField({ html, onSave, className }: { html: string; onSave: (v: string) => void; className?: string }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(html);
+  useEffect(() => { setVal(html); }, [html]);
+  if (editing) {
+    return (
+      <textarea
+        autoFocus
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onBlur={() => { setEditing(false); if (val !== html) onSave(val); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); setEditing(false); setVal(html); }
+          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); setEditing(false); if (val !== html) onSave(val); }
+        }}
+        className="w-full min-h-[90px] text-sm border border-blue-400 rounded p-2 outline-none resize-y font-mono leading-relaxed"
+      />
+    );
+  }
+  return (
+    <div onDoubleClick={() => { setVal(html); setEditing(true); }} title="Double-click to edit" className={`cursor-text ${className ?? ''}`}>
+      {html
+        ? <span dangerouslySetInnerHTML={{ __html: html }} />
+        : <span className="text-gray-300 italic">— double-click to add —</span>}
     </div>
   );
 }
@@ -1794,6 +1824,8 @@ export default function CardsPanel({
   const [splitLoading, setSplitLoading] = useState(false);
   const [splitBatchId, setSplitBatchId] = useState<number | null>(null);
   const [splitProposal, setSplitProposal] = useState<FixProposal | null>(null);  // in-place review modal when set
+  // Editable copy of the split's proposed new cards (front/extra), persisted on accept.
+  const [splitCards, setSplitCards] = useState<Array<{ front_html: string; extra: string | null; tags: string[] }>>([]);
   const splitPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => () => { if (splitPollRef.current) clearInterval(splitPollRef.current); }, []);
   useEffect(() => { if (showBulkRegenModal) setRegenMode('recreate'); }, [showBulkRegenModal]);
@@ -1820,7 +1852,7 @@ export default function CardsPanel({
             setSplitLoading(false);
             const prop = batch.proposals?.[0] ?? null;
             setShowBulkRegenModal(false);
-            if (prop) setSplitProposal(prop);
+            if (prop) { setSplitProposal(prop); setSplitCards(prop.new_cards_json ?? []); }
             else setActionError('Split produced no proposal');
           }
         } catch {
@@ -1837,6 +1869,10 @@ export default function CardsPanel({
     if (splitBatchId == null) return;
     const originalId = splitProposal?.original_card_id;
     try {
+      // Persist any edits to the proposed new cards before applying.
+      if (splitProposal) {
+        await updateFixProposalContent(splitBatchId, splitProposal.id, { new_cards_json: splitCards });
+      }
       // Confirm with keep_original=true so it only creates the new cards; if the
       // user chose "delete", hard-delete the original so it actually disappears
       // (a soft reject would still show under the default "All statuses" view).
@@ -1853,11 +1889,12 @@ export default function CardsPanel({
     } catch {
       setActionError('Could not apply split');
     }
-  }, [splitBatchId, splitProposal, splitKeepOriginal, fetchCards, sectionId, topicPath, sectionIds, onReviewChange]);
+  }, [splitBatchId, splitProposal, splitCards, splitKeepOriginal, fetchCards, sectionId, topicPath, sectionIds, onReviewChange]);
 
   const handleSplitCancel = useCallback(async () => {
     const id = splitBatchId;
     setSplitProposal(null);
+    setSplitCards([]);
     setSplitBatchId(null);
     if (id != null) { try { await cancelFixBatch(id); } catch { /* best-effort */ } }
   }, [splitBatchId]);
@@ -1889,6 +1926,7 @@ export default function CardsPanel({
         extra: combineProposal.extra,
         tags: combineProposal.tags,
         keep_original: splitKeepOriginal,
+        model: selectedModel,
       });
       setCombineProposal(null);
       setBulkRegenPrompt('');
@@ -1898,7 +1936,7 @@ export default function CardsPanel({
     } catch {
       setActionError('Could not apply combine');
     }
-  }, [combineProposal, splitKeepOriginal, fetchCards, sectionId, topicPath, sectionIds, onReviewChange]);
+  }, [combineProposal, splitKeepOriginal, selectedModel, fetchCards, sectionId, topicPath, sectionIds, onReviewChange]);
 
   const [bulkRegenProgress, setBulkRegenProgress] = useState<{ done: number; total: number } | null>(null);
 
@@ -2798,13 +2836,12 @@ export default function CardsPanel({
       {/* In-place split review — proposed new cards from a regenerate→split */}
       {splitProposal && (() => {
         const orig = cards.find(c => c.id === splitProposal.original_card_id) ?? filteredCards.find(c => c.id === splitProposal.original_card_id);
-        const newCards = splitProposal.new_cards_json ?? [];
         return (
           <div className="fixed inset-0 z-[70] flex items-center justify-center" role="dialog" aria-modal="true">
             <div className="absolute inset-0 bg-black/40" onClick={handleSplitCancel} />
             <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[80vw] max-w-[960px] max-h-[82vh] flex flex-col">
               <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
-                <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">Review split — {newCards.length} new card{newCards.length !== 1 ? 's' : ''}</h2>
+                <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">Review split — {splitCards.length} new card{splitCards.length !== 1 ? 's' : ''} · double-click to edit</h2>
                 <button onClick={handleSplitCancel} className="p-1 text-gray-400 hover:text-gray-600 rounded">✕</button>
               </div>
               <div className="grid grid-cols-2 gap-3 p-4 overflow-auto">
@@ -2818,19 +2855,17 @@ export default function CardsPanel({
                   ) : <p className="text-xs text-gray-400">(card not loaded)</p>}
                 </div>
                 <div>
-                  <p className="text-[10px] font-semibold text-green-600 uppercase mb-1">New cards</p>
+                  <p className="text-[10px] font-semibold text-green-600 uppercase mb-1">New cards (tags &amp; V/TC inherited from the original)</p>
                   <div className="flex flex-col gap-2">
-                    {newCards.length === 0 ? (
+                    {splitCards.length === 0 ? (
                       <p className="text-xs text-gray-400">No new cards proposed.</p>
-                    ) : newCards.map((nc, i) => (
+                    ) : splitCards.map((nc, i) => (
                       <div key={i} className="border border-green-200 rounded p-2 bg-green-50/40">
-                        <div className="text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: nc.front_html }} />
-                        {nc.extra && <div className="text-xs text-gray-600 mt-1" dangerouslySetInnerHTML={{ __html: nc.extra }} />}
-                        {nc.tags?.length ? (
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {nc.tags.map((t, j) => <span key={j} className="text-[9px] px-1 py-0.5 rounded bg-gray-100 text-gray-500">{t}</span>)}
-                          </div>
-                        ) : null}
+                        <ProposalEditableField html={nc.front_html} className="text-sm text-gray-800" onSave={(v) => setSplitCards(prev => prev.map((c, idx) => idx === i ? { ...c, front_html: v } : c))} />
+                        <div className="border-t border-green-100 mt-1.5 pt-1.5">
+                          <span className="text-[9px] text-gray-400 uppercase">Extra</span>
+                          <ProposalEditableField html={nc.extra ?? ''} className="text-xs text-gray-600" onSave={(v) => setSplitCards(prev => prev.map((c, idx) => idx === i ? { ...c, extra: v || null } : c))} />
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -2838,7 +2873,7 @@ export default function CardsPanel({
               </div>
               <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-200 bg-gray-50/60">
                 <button onClick={handleSplitCancel} className="px-3 py-1.5 text-xs font-medium text-gray-600 rounded-lg hover:bg-gray-100">Cancel</button>
-                <button onClick={handleSplitConfirm} disabled={newCards.length === 0} className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50">Accept — apply changes</button>
+                <button onClick={handleSplitConfirm} disabled={splitCards.length === 0} className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50">Accept — apply changes</button>
               </div>
             </div>
           </div>
@@ -2871,15 +2906,13 @@ export default function CardsPanel({
                   </div>
                 </div>
                 <div>
-                  <p className="text-[10px] font-semibold text-green-600 uppercase mb-1">Combined card</p>
+                  <p className="text-[10px] font-semibold text-green-600 uppercase mb-1">Combined card · double-click to edit</p>
                   <div className="border border-green-200 rounded p-2 bg-green-50/40">
-                    <div className="text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: combineProposal.front_html }} />
-                    {combineProposal.extra && <div className="text-xs text-gray-600 mt-1" dangerouslySetInnerHTML={{ __html: combineProposal.extra }} />}
-                    {combineProposal.tags?.length ? (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {combineProposal.tags.map((t, j) => <span key={j} className="text-[9px] px-1 py-0.5 rounded bg-gray-100 text-gray-500">{t}</span>)}
-                      </div>
-                    ) : null}
+                    <ProposalEditableField html={combineProposal.front_html} className="text-sm text-gray-800" onSave={(v) => setCombineProposal({ ...combineProposal, front_html: v })} />
+                    <div className="border-t border-green-100 mt-1.5 pt-1.5">
+                      <span className="text-[9px] text-gray-400 uppercase">Extra</span>
+                      <ProposalEditableField html={combineProposal.extra ?? ''} className="text-xs text-gray-600" onSave={(v) => setCombineProposal({ ...combineProposal, extra: v || null })} />
+                    </div>
                   </div>
                 </div>
               </div>

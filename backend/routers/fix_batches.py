@@ -3,9 +3,12 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel
 from typing import Optional
+import anthropic
 from backend.db import get_db
-from backend.models import Card, FixBatch, FixProposal, ReviewMarkType, CardStatus, utcnow
+from backend.models import Card, FixBatch, FixProposal, ReviewMarkType, CardStatus, Section, utcnow
 from backend.services.fix_service import run_fix_batch
+from backend.services.card_ops import assign_note_ids, score_new_cards
+from backend.config import ANTHROPIC_API_KEY
 
 router = APIRouter()
 
@@ -228,6 +231,7 @@ def confirm_batch(batch_id: int, body: ConfirmBatchRequest, db: Session = Depend
         proposals = [p for p in proposals if p.id in set(body.proposal_ids)]
 
     confirmed_card_ids = set()
+    created_cards: list[Card] = []
 
     for proposal in proposals:
         card = proposal.original_card
@@ -260,6 +264,7 @@ def confirm_batch(batch_id: int, body: ConfirmBatchRequest, db: Session = Depend
 
         elif action == "split":
             # Create new cards from new_cards_json; reject the original unless keep_original.
+            # New cards inherit the original's tags and vignette/teaching case.
             if proposal.new_cards_json:
                 for nc in proposal.new_cards_json:
                     new_card = Card(
@@ -267,12 +272,16 @@ def confirm_batch(batch_id: int, body: ConfirmBatchRequest, db: Session = Depend
                         card_number=card.card_number,
                         front_html=nc.get("front_html", ""),
                         front_text=re.sub(r'<[^>]+>', '', nc.get("front_html", "")),
-                        tags=nc.get("tags", card.tags),
+                        tags=card.tags,
+                        tags_mapped=card.tags_mapped,
                         extra=nc.get("extra") or None,
+                        vignette=card.vignette,
+                        teaching_case=card.teaching_case,
                         status=CardStatus.active,
                         is_reviewed=True,
                     )
                     db.add(new_card)
+                    created_cards.append(new_card)
             if not body.keep_original:
                 card.status = CardStatus.rejected
             card.is_reviewed = True
@@ -288,6 +297,16 @@ def confirm_batch(batch_id: int, body: ConfirmBatchRequest, db: Session = Depend
         batch.status = "confirmed"
 
     db.commit()
+
+    # Mint unique note ids + run an accuracy/EOR-yield score pass on split outputs.
+    if created_cards:
+        db.flush()
+        assign_note_ids(created_cards)
+        sec = db.get(Section, created_cards[0].section_id)
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        score_new_cards(db, client, created_cards, sec.curriculum_topic_path if sec else "", batch.model)
+        db.commit()
+
     return {"confirmed": len(confirmed_card_ids), "batch_status": batch.status}
 
 

@@ -326,7 +326,7 @@ export async function combinePreview(params: { card_ids: number[]; prompt?: stri
   return res.data;
 }
 
-export async function combineApply(params: { card_ids: number[]; front_html: string; extra: string | null; tags: string[]; keep_original: boolean }): Promise<Card> {
+export async function combineApply(params: { card_ids: number[]; front_html: string; extra: string | null; tags: string[]; keep_original: boolean; model: string }): Promise<Card> {
   const res = await http.post<Card>('/cards/combine-apply', params);
   return res.data;
 }

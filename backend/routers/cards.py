@@ -11,6 +11,7 @@ from backend.db import get_db
 from backend.models import Card, CardStatus, Section, SectionImage, RuleSet, AIUsageLog
 from backend.services.generator import strip_card_html, regenerate_single_card
 from backend.services.ai_utils import response_text
+from backend.services.card_ops import assign_note_ids, score_new_cards
 from backend.config import ANTHROPIC_API_KEY, DEFAULT_MODEL, compute_cost, resolve_model, effort_kwargs
 
 logger = logging.getLogger(__name__)
@@ -238,6 +239,7 @@ class CombineApplyRequest(BaseModel):
     extra: Optional[str] = None
     tags: list[str] = []
     keep_original: bool = False
+    model: str = DEFAULT_MODEL
 
 
 _COMBINE_SYSTEM = (
@@ -294,7 +296,8 @@ def combine_preview(body: CombinePreviewRequest, db: Session = Depends(get_db)):
     return {
         "front_html": data.get("front_html", ""),
         "extra": data.get("extra") or None,
-        "tags": data.get("tags") or ((cards[0].tags or cards[0].tags_mapped) or []),
+        # Inherit the source tags (ignore AI-suggested tags) — combined card stays in place.
+        "tags": (cards[0].tags or cards[0].tags_mapped) or [],
         "source_card_ids": [c.id for c in cards],
     }
 
@@ -305,17 +308,25 @@ def combine_apply(body: CombineApplyRequest, db: Session = Depends(get_db)):
     cards = db.query(Card).filter(Card.id.in_(body.card_ids)).all()
     if not cards:
         raise HTTPException(400, "No cards found")
+    src = cards[0]
+    # Inherit tags + the first available vignette / teaching case from the sources.
+    vignette = next((c.vignette for c in cards if c.vignette), None)
+    teaching_case = next((c.teaching_case for c in cards if c.teaching_case), None)
     new = Card(
-        section_id=cards[0].section_id,
-        card_number=cards[0].card_number,
+        section_id=src.section_id,
+        card_number=src.card_number,
         front_html=body.front_html,
         front_text=strip_card_html(body.front_html),
-        tags=body.tags or ((cards[0].tags or cards[0].tags_mapped) or []),
+        tags=src.tags,
+        tags_mapped=src.tags_mapped,
         extra=body.extra or None,
+        vignette=vignette,
+        teaching_case=teaching_case,
         status=CardStatus.active,
         is_reviewed=True,
     )
     db.add(new)
+    assign_note_ids([new])
     if not body.keep_original:
         # Hard-delete the originals so they actually disappear (reject would keep
         # them visible under the default "All statuses" view).
@@ -323,6 +334,10 @@ def combine_apply(body: CombineApplyRequest, db: Session = Depends(get_db)):
             db.delete(c)
     db.commit()
     db.refresh(new)
+    # Accuracy + EOR-yield score pass on the combined card (best-effort).
+    sec = db.get(Section, new.section_id)
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    score_new_cards(db, client, [new], sec.curriculum_topic_path if sec else "", body.model)
     return card_to_dict(new, db)
 
 
