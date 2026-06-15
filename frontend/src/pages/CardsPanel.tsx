@@ -33,6 +33,7 @@ import {
   uploadSectionImageFromUrl,
 } from '../api';
 import type { Card, CardStatus, CostEstimate, ReviewMarkType, SectionImage } from '../types';
+import { loadRegenHistory, pushSnapshots, rollbackToIndex, type RegenHistory } from '../regenHistory';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
 import AnkifyModal from '../components/AnkifyModal';
@@ -1027,6 +1028,10 @@ export default function CardsPanel({
 
   // ── Per-card regenerate ──────────────────────────────────────────────────
   const [regenLoading, setRegenLoading] = useState(false);
+  // Browser-only undo history for regenerations (Card Text + Extra). See regenHistory.ts.
+  const [regenHistory, setRegenHistory] = useState<RegenHistory>(() => loadRegenHistory());
+  const [historyForCard, setHistoryForCard] = useState<number | null>(null);      // open the version list for this card
+  const [rollbackTarget, setRollbackTarget] = useState<{ cardId: number; index: number } | null>(null);  // before/after confirm
 
   // ── Delete confirmation ──────────────────────────────────────────────────
   const [confirmDeleteCardId, setConfirmDeleteCardId] = useState<number | null>(null);
@@ -1354,19 +1359,35 @@ export default function CardsPanel({
               onSelect={handleCellSelect}
               onNavigate={(dir) => handleCellNavigate(row.index, 'front_html', dir)}
               multiline
-              renderDisplay={(v) => (
-                <div className="relative">
-                  {isVersionMissing && (
-                    <span className="absolute top-0 right-0 text-[9px] px-1 py-0.5 rounded bg-gray-100 text-gray-400">base</span>
-                  )}
-                  <div
-                    className="text-sm leading-relaxed text-gray-800"
-                    dangerouslySetInnerHTML={{
-                      __html: showAnkiFormat ? renderClozeHtml(v) : v,
-                    }}
-                  />
-                </div>
-              )}
+              renderDisplay={(v) => {
+                const histCount = regenHistory[card.id]?.length ?? 0;
+                return (
+                  <div className="relative">
+                    {isVersionMissing && (
+                      <span className={`absolute top-0 ${histCount > 0 ? 'right-9' : 'right-0'} text-[9px] px-1 py-0.5 rounded bg-gray-100 text-gray-400`}>base</span>
+                    )}
+                    {histCount > 0 && (
+                      <button
+                        onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setHistoryForCard(card.id); }}
+                        title={`${histCount} previous version${histCount > 1 ? 's' : ''} — roll back`}
+                        className="absolute top-0 right-0 z-10 flex items-center gap-0.5 text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 hover:bg-amber-200"
+                      >
+                        <svg className="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a4 4 0 110 8H9m-6-8l4-4m-4 4l4 4" />
+                        </svg>
+                        {histCount}
+                      </button>
+                    )}
+                    <div
+                      className="text-sm leading-relaxed text-gray-800"
+                      dangerouslySetInnerHTML={{
+                        __html: showAnkiFormat ? renderClozeHtml(v) : v,
+                      }}
+                    />
+                  </div>
+                );
+              }}
             />
           );
         },
@@ -1544,7 +1565,7 @@ export default function CardsPanel({
       }),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filteredCards.length, selectedIds, handleCellSelect, handleCellNavigate, handleCellSave, showAnkiFormat, sectionId, sectionIds, topicPath, onReviewChange, fetchCards, markTypes, activeTagSet, activeCardVersion]
+    [filteredCards.length, selectedIds, handleCellSelect, handleCellNavigate, handleCellSave, showAnkiFormat, sectionId, sectionIds, topicPath, onReviewChange, fetchCards, markTypes, activeTagSet, activeCardVersion, regenHistory]
   );
 
   const pageCount = Math.ceil(totalCards / pagination.pageSize);
@@ -1731,6 +1752,8 @@ export default function CardsPanel({
   const handleRegen = useCallback(async (id: number, prompt: string) => {
     setRegenLoading(true);
     try {
+      const prev = cards.find(c => c.id === id);
+      if (prev) setRegenHistory(h => pushSnapshots(h, [{ id, front_html: prev.front_html, extra: prev.extra }], Date.now()));
       await regenerateCard(id, { model: selectedModel, prompt: prompt || undefined });
       fetchCards(sectionId, topicPath, true);
       refreshUsage?.();
@@ -1739,7 +1762,23 @@ export default function CardsPanel({
     } finally {
       setRegenLoading(false);
     }
-  }, [selectedModel, fetchCards, sectionId, topicPath, refreshUsage]);
+  }, [cards, selectedModel, fetchCards, sectionId, topicPath, refreshUsage]);
+
+  // Apply a snapshot back onto the card (Card Text + Extra) and prune it + newer.
+  const handleRollback = useCallback(async (cardId: number, index: number) => {
+    const snap = regenHistory[cardId]?.[index];
+    if (!snap) return;
+    try {
+      await updateCard(cardId, { front_html: snap.front_html, extra: snap.extra });
+      setCards(prev => prev.map(c => c.id === cardId ? { ...c, front_html: snap.front_html, extra: snap.extra } as Card : c));
+      const { history } = rollbackToIndex(regenHistory, cardId, index);
+      setRegenHistory(history);
+      setRollbackTarget(null);
+      setHistoryForCard(null);
+    } catch {
+      setActionError('Rollback failed');
+    }
+  }, [regenHistory]);
 
   const [showBulkRegenModal, setShowBulkRegenModal] = useState(false);
   const [bulkRegenPrompt, setBulkRegenPrompt] = useState('');
@@ -1757,12 +1796,17 @@ export default function CardsPanel({
         else if (sectionIds && sectionIds.length > 0) allParams.section_ids = sectionIds.join(',');
         const resp = await getCards(allParams);
         ids = resp.cards.map(c => c.id);
+        // snapshot from the freshly-fetched full card objects
+        setRegenHistory(h => pushSnapshots(h, resp.cards.map(c => ({ id: c.id, front_html: c.front_html, extra: c.extra })), Date.now()));
       } catch {
         setActionError('Failed to fetch all cards');
         return;
       }
     } else {
       ids = [...selectedIds];
+      // snapshot the selected cards' current Card Text + Extra before they're overwritten
+      const snaps = cards.filter(c => selectedIds.has(c.id)).map(c => ({ id: c.id, front_html: c.front_html, extra: c.extra }));
+      if (snaps.length) setRegenHistory(h => pushSnapshots(h, snaps, Date.now()));
     }
     if (ids.length === 0) return;
     setBulkRegenProgress({ done: 0, total: ids.length });
@@ -1782,7 +1826,7 @@ export default function CardsPanel({
       setActionError('Bulk regeneration failed');
       setBulkRegenProgress(null);
     }
-  }, [selectedIds, selectedModel, sectionId, sectionIds, fetchCards, topicPath, refreshUsage, onReviewChange]);
+  }, [cards, selectedIds, selectedModel, sectionId, sectionIds, fetchCards, topicPath, refreshUsage, onReviewChange]);
 
   // ── Bulk actions ─────────────────────────────────────────────────────────
 
@@ -2564,6 +2608,74 @@ export default function CardsPanel({
           onClose={() => setBigEdit(null)}
         />
       )}
+
+      {/* Regeneration history — list of saved previous versions for one card */}
+      {historyForCard != null && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setHistoryForCard(null)} />
+          <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[440px] max-h-[70vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
+              <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">Regeneration history</h2>
+              <button onClick={() => setHistoryForCard(null)} className="p-1 text-gray-400 hover:text-gray-600 rounded">✕</button>
+            </div>
+            <div className="overflow-auto p-2">
+              {(regenHistory[historyForCard] ?? []).length === 0 ? (
+                <p className="text-xs text-gray-400 px-2 py-3">No saved versions.</p>
+              ) : (
+                [...(regenHistory[historyForCard] ?? []).keys()].reverse().map((idx) => {
+                  const s = regenHistory[historyForCard]![idx];
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => setRollbackTarget({ cardId: historyForCard, index: idx })}
+                      className="w-full text-left px-2 py-2 rounded hover:bg-amber-50 border-b border-gray-50 last:border-0"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-medium text-gray-700">Version {idx + 1}</span>
+                        <span className="text-[10px] text-gray-400">{new Date(s.ts).toLocaleString()}</span>
+                      </div>
+                      <div className="text-[11px] text-gray-500 line-clamp-2 mt-0.5" dangerouslySetInnerHTML={{ __html: s.front_html }} />
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Before/after confirm before a rollback actually applies */}
+      {rollbackTarget && (() => {
+        const cur = cards.find(c => c.id === rollbackTarget.cardId) ?? filteredCards.find(c => c.id === rollbackTarget.cardId);
+        const snap = regenHistory[rollbackTarget.cardId]?.[rollbackTarget.index];
+        if (!cur || !snap) return null;
+        return (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center" role="dialog" aria-modal="true">
+            <div className="absolute inset-0 bg-black/40" onClick={() => setRollbackTarget(null)} />
+            <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[80vw] max-w-[900px] max-h-[80vh] flex flex-col">
+              <div className="px-4 py-2.5 border-b border-gray-200">
+                <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">Roll back this card?</h2>
+              </div>
+              <div className="grid grid-cols-2 gap-3 p-4 overflow-auto">
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase mb-1">Current</p>
+                  <div className="border border-gray-200 rounded p-2 text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: cur.front_html }} />
+                  {cur.extra && <div className="border border-gray-200 rounded p-2 mt-2 text-xs text-gray-600" dangerouslySetInnerHTML={{ __html: cur.extra }} />}
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold text-amber-600 uppercase mb-1">Restore — Version {rollbackTarget.index + 1}</p>
+                  <div className="border border-amber-200 rounded p-2 text-sm text-gray-800 bg-amber-50/40" dangerouslySetInnerHTML={{ __html: snap.front_html }} />
+                  {snap.extra && <div className="border border-amber-200 rounded p-2 mt-2 text-xs text-gray-600 bg-amber-50/40" dangerouslySetInnerHTML={{ __html: snap.extra }} />}
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-200 bg-gray-50/60">
+                <button onClick={() => setRollbackTarget(null)} className="px-3 py-1.5 text-xs font-medium text-gray-600 rounded-lg hover:bg-gray-100">Cancel</button>
+                <button onClick={() => handleRollback(rollbackTarget.cardId, rollbackTarget.index)} className="px-3 py-1.5 text-xs font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700">Restore this version</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {showCreatePresentation && (
         <CreatePresentationModal
