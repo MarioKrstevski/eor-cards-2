@@ -77,47 +77,62 @@ interface EditableCellProps {
   onNavigate: (dir: 'up' | 'down' | 'left' | 'right') => void;
   multiline?: boolean;
   renderDisplay?: (val: string) => React.ReactNode;
-  // When provided, double-click / Enter opens the big editor modal instead of
-  // the inline textarea (keeps the cell readable for long card/vignette text).
-  onRequestEdit?: () => void;
 }
 
-function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, renderDisplay, onRequestEdit }: EditableCellProps) {
+function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, renderDisplay }: EditableCellProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [localVal, setLocalVal] = useState(value);
+  // Anchor (viewport coords) for the floating multiline edit box, captured when
+  // editing starts so the box escapes the narrow column / cell clipping.
+  const [box, setBox] = useState<{ left: number; top: number; width: number } | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const cellRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { setLocalVal(value); }, [value]);
 
-  function autoResize(el: HTMLTextAreaElement) {
-    el.style.height = 'auto';
-    el.style.height = el.scrollHeight + 'px';
+  const BOX_W = 540;   // comfortable editing width
+  const BOX_H = 240;   // fixed height with internal scroll — no more runaway tallness
+
+  function startEdit() {
+    setLocalVal(value);
+    if (multiline) {
+      const r = cellRef.current?.getBoundingClientRect();
+      if (r) {
+        const width = Math.min(Math.max(r.width, BOX_W), window.innerWidth - 24);
+        const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+        const top = Math.max(8, Math.min(r.top - 2, window.innerHeight - BOX_H - 8));
+        setBox({ left, top, width });
+      }
+    }
+    setIsEditing(true);
   }
-
-  useEffect(() => {
-    if (isEditing && taRef.current) autoResize(taRef.current);
-  }, [isEditing, localVal]);
-
-  // Route editing to the big modal when a handler is wired; otherwise edit inline.
-  function startEdit() { if (onRequestEdit) { onRequestEdit(); return; } setLocalVal(value); setIsEditing(true); }
   function save() { setIsEditing(false); if (localVal !== value) onSave(localVal); }
   function cancel() { setIsEditing(false); setLocalVal(value); }
 
+  if (isEditing && multiline) {
+    return (
+      <>
+        {/* keep the row height stable while the editor floats above */}
+        <div className="min-h-[1.5em]" />
+        <textarea
+          ref={taRef}
+          className="fixed z-50 bg-white border border-blue-400 rounded-lg shadow-2xl p-3 text-sm leading-relaxed outline-none resize overflow-auto"
+          style={{ left: box?.left ?? 0, top: box?.top ?? 0, width: box?.width ?? BOX_W, height: BOX_H }}
+          value={localVal}
+          onChange={(e) => setLocalVal(e.target.value)}
+          onBlur={save}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+            if (e.key === 'Tab') { e.preventDefault(); save(); }
+          }}
+          autoFocus
+        />
+      </>
+    );
+  }
+
   if (isEditing) {
-    return multiline ? (
-      <textarea
-        ref={taRef}
-        className="w-full text-sm bg-white border-0 outline-none p-0 leading-relaxed resize-none"
-        value={localVal}
-        onChange={(e) => { setLocalVal(e.target.value); autoResize(e.target); }}
-        onBlur={save}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-          if (e.key === 'Tab') { e.preventDefault(); save(); }
-        }}
-        autoFocus
-      />
-    ) : (
+    return (
       <input
         type="text"
         className="w-full text-sm bg-white border-0 outline-none p-0 leading-relaxed"
@@ -135,6 +150,7 @@ function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, 
 
   return (
     <div
+      ref={cellRef}
       data-cell-id={cellId}
       tabIndex={0}
       className="cursor-default outline-none w-full h-full min-h-[1.5em]"
@@ -1326,7 +1342,6 @@ export default function CardsPanel({
               }}
               onSelect={handleCellSelect}
               onNavigate={(dir) => handleCellNavigate(row.index, 'front_html', dir)}
-              onRequestEdit={() => setBigEdit({ cardId: card.id, field: 'front_html', nav: true })}
               multiline
               renderDisplay={(v) => (
                 <div className="relative">
@@ -1377,7 +1392,6 @@ export default function CardsPanel({
               onSave={(newVal) => handleCellSave(row.original.id, { extra: newVal || null })}
               onSelect={handleCellSelect}
               onNavigate={(dir) => handleCellNavigate(row.index, 'extra', dir)}
-              onRequestEdit={() => setBigEdit({ cardId: row.original.id, field: 'extra', nav: true })}
               multiline
               renderDisplay={(v) => v
                 ? <div className="text-xs text-gray-600" dangerouslySetInnerHTML={{ __html: v }} />
@@ -1421,7 +1435,6 @@ export default function CardsPanel({
               onSave={(newVal) => handleCellSave(row.original.id, { vignette: newVal || null })}
               onSelect={handleCellSelect}
               onNavigate={(dir) => handleCellNavigate(row.index, 'vignette', dir)}
-              onRequestEdit={() => setBigEdit({ cardId: row.original.id, field: 'vignette', nav: true })}
               multiline
               renderDisplay={(v) => v
                 ? <div className="text-xs text-gray-600 line-clamp-3">{v}</div>
@@ -1445,7 +1458,6 @@ export default function CardsPanel({
               onSave={(newVal) => handleCellSave(row.original.id, { teaching_case: newVal || null })}
               onSelect={handleCellSelect}
               onNavigate={(dir) => handleCellNavigate(row.index, 'teaching_case', dir)}
-              onRequestEdit={() => setBigEdit({ cardId: row.original.id, field: 'teaching_case', nav: true })}
               multiline
               renderDisplay={(v) => v
                 ? <div className="text-xs text-gray-600 line-clamp-3">{v}</div>
