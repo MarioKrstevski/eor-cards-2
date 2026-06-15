@@ -1835,8 +1835,15 @@ export default function CardsPanel({
 
   const handleSplitConfirm = useCallback(async () => {
     if (splitBatchId == null) return;
+    const originalId = splitProposal?.original_card_id;
     try {
-      await confirmFixBatch(splitBatchId, undefined, splitKeepOriginal);
+      // Confirm with keep_original=true so it only creates the new cards; if the
+      // user chose "delete", hard-delete the original so it actually disappears
+      // (a soft reject would still show under the default "All statuses" view).
+      await confirmFixBatch(splitBatchId, undefined, true);
+      if (!splitKeepOriginal && originalId != null) {
+        await bulkDeleteCards({ card_ids: [originalId] });
+      }
       setSplitProposal(null);
       setSplitBatchId(null);
       setBulkRegenPrompt('');
@@ -1846,7 +1853,7 @@ export default function CardsPanel({
     } catch {
       setActionError('Could not apply split');
     }
-  }, [splitBatchId, splitKeepOriginal, fetchCards, sectionId, topicPath, sectionIds, onReviewChange]);
+  }, [splitBatchId, splitProposal, splitKeepOriginal, fetchCards, sectionId, topicPath, sectionIds, onReviewChange]);
 
   const handleSplitCancel = useCallback(async () => {
     const id = splitBatchId;

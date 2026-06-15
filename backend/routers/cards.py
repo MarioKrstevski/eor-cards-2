@@ -317,9 +317,10 @@ def combine_apply(body: CombineApplyRequest, db: Session = Depends(get_db)):
     )
     db.add(new)
     if not body.keep_original:
+        # Hard-delete the originals so they actually disappear (reject would keep
+        # them visible under the default "All statuses" view).
         for c in cards:
-            c.status = CardStatus.rejected
-            c.is_reviewed = True
+            db.delete(c)
     db.commit()
     db.refresh(new)
     return card_to_dict(new, db)
