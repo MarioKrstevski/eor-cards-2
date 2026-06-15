@@ -98,9 +98,12 @@ function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, 
     if (multiline) {
       const r = cellRef.current?.getBoundingClientRect();
       if (r) {
+        // Keep clear of the screen edges: ≥100px from the right, ≥50px from
+        // the bottom. The box is fixed-height with overflow-auto, so longer
+        // content scrolls inside rather than growing.
         const width = Math.min(Math.max(r.width, BOX_W), window.innerWidth - 24);
-        const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
-        const top = Math.max(8, Math.min(r.top - 2, window.innerHeight - BOX_H - 8));
+        const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 100));
+        const top = Math.max(8, Math.min(r.top - 2, window.innerHeight - BOX_H - 50));
         setBox({ left, top, width });
       }
     }
