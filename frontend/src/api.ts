@@ -443,7 +443,7 @@ export async function startSupplemental(params: {
   card_ids?: number[];
   section_id?: number;
   section_ids?: number[];
-  rule_set_id: number;
+  rule_set_id?: number;  // omit → backend uses the default vignette rule set
   model: string;
   replace_existing?: boolean;
 }): Promise<{ job_id: number }> {

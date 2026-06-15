@@ -12,6 +12,7 @@ import {
   getSectionsByCurriculum,
   estimateCost,
   startGeneration,
+  startSupplemental,
   getGenerationJob,
   getSection,
   createCurriculumNode,
@@ -430,8 +431,14 @@ function CurriculumActionBar({
   const [generating, setGenerating] = useState(false);
   const [jobProgress, setJobProgress] = useState<{ processed: number; total: number } | null>(null);
   const [showSections, setShowSections] = useState(false);
+  const [genVTC, setGenVTC] = useState(false);
+  const [vtcProgress, setVtcProgress] = useState<{ processed: number; total: number } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+  const vtcPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    if (vtcPollRef.current) clearInterval(vtcPollRef.current);
+  }, []);
 
   // Reset state when expanded path changes
   useEffect(() => { setEstimate(null); setJobProgress(null); setShowSections(false); }, [expandedPath]);
@@ -467,6 +474,34 @@ function CurriculumActionBar({
         } catch { clearInterval(pollRef.current!); pollRef.current = null; setGenerating(false); }
       }, 1500);
     } catch { setGenerating(false); }
+  };
+
+  // Generate vignettes + teaching cases for every card in these sections that
+  // doesn't already have them (replace_existing: false → skips cards that have
+  // both, so a second click only fills in the gaps). Saves select-all + Actions.
+  const handleGenVTC = async () => {
+    if (!selectedModel || sectionIds.length === 0 || genVTC) return;
+    setGenVTC(true);
+    setVtcProgress(null);
+    try {
+      const { job_id } = await startSupplemental({
+        section_ids: sectionIds,
+        model: selectedModel,
+        replace_existing: false,
+      });
+      vtcPollRef.current = setInterval(async () => {
+        try {
+          const job = await getGenerationJob(job_id);
+          setVtcProgress({ processed: job.processed_sections, total: job.total_sections });
+          if (job.status === 'done' || job.status === 'failed') {
+            clearInterval(vtcPollRef.current!); vtcPollRef.current = null;
+            setGenVTC(false);
+            onGenerationDone();
+            refreshUsage();
+          }
+        } catch { clearInterval(vtcPollRef.current!); vtcPollRef.current = null; setGenVTC(false); }
+      }, 1500);
+    } catch { setGenVTC(false); }
   };
 
   if (loading) {
@@ -512,6 +547,16 @@ function CurriculumActionBar({
             {generating
               ? (jobProgress ? `${jobProgress.processed}/${jobProgress.total}` : 'Starting…')
               : 'Generate'}
+          </button>
+          <button
+            onClick={handleGenVTC}
+            disabled={genVTC || !selectedModel || sectionIds.length === 0}
+            title="Generate vignettes + teaching cases for cards in these sections that don't have them yet"
+            className="px-1.5 py-0.5 text-[10px] font-medium text-white bg-violet-600 rounded hover:bg-violet-700 disabled:opacity-50"
+          >
+            {genVTC
+              ? (vtcProgress ? `V+TC ${vtcProgress.processed}/${vtcProgress.total}` : 'V+TC…')
+              : 'Gen V+TC'}
           </button>
           <button
             onClick={() => setShowSections(v => !v)}

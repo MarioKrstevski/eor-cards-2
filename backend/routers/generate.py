@@ -47,7 +47,7 @@ class SupplementalStartRequest(BaseModel):
     card_ids: Optional[list[int]] = None
     section_id: Optional[int] = None
     section_ids: Optional[list[int]] = None
-    rule_set_id: int
+    rule_set_id: Optional[int] = None  # omit/None → use the default vignette rule set
     model: str
     replace_existing: bool = False
 
@@ -182,7 +182,7 @@ def start_supplemental(body: SupplementalStartRequest, bg: BackgroundTasks, db: 
         topic_tree_id=tt_id,
         job_type="supplemental",
         scope="selected",
-        rule_set_id=body.rule_set_id,
+        rule_set_id=rs.id,  # the resolved vignette rule actually used (valid FK)
         model=body.model,
         status=JobStatus.pending,
         total_sections=len(groups),

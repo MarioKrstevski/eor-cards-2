@@ -24,6 +24,7 @@ import {
   getActiveJobs,
   startSupplemental,
   getReviewMarkTypes,
+  createReviewMarkType,
   bulkMarkCards,
   bulkScoreCards,
   createFixBatch,
@@ -50,6 +51,9 @@ interface CardsPanelProps {
 }
 
 const columnHelper = createColumnHelper<Card>();
+
+// Quick-pick palette for creating a review mark inline from the Actions menu.
+const MARK_COLORS = ['#6b7280', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'];
 
 // ── Cloze rendering utility ────────────────────────────────────────────────────
 function renderClozeHtml(html: string): string {
@@ -1039,6 +1043,10 @@ export default function CardsPanel({
   // ── Review marks ─────────────────────────────────────────────────────────
   const [markTypes, setMarkTypes] = useState<ReviewMarkType[]>([]);
   const [markFilterId, setMarkFilterId] = useState<number | null>(null);
+  // Inline "new mark" creator inside the Actions menu (avoids a trip to Library).
+  const [showNewMark, setShowNewMark] = useState(false);
+  const [newMarkName, setNewMarkName] = useState('');
+  const [newMarkColor, setNewMarkColor] = useState(MARK_COLORS[0]);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showDeleteMenu, setShowDeleteMenu] = useState(false);
   const [scoring, setScoring] = useState(false);
@@ -1812,6 +1820,22 @@ export default function CardsPanel({
     }
   }, [selectedIds, fetchCards, sectionId, sectionIds, topicTreeId, topicPath, onReviewChange]);
 
+  const handleCreateMark = useCallback(async () => {
+    const name = newMarkName.trim();
+    if (!name) return;
+    try {
+      await createReviewMarkType({ name, color: newMarkColor, sort_order: markTypes.length });
+      const fresh = await getReviewMarkTypes();
+      setMarkTypes(fresh);
+      setNewMarkName('');
+      setNewMarkColor(MARK_COLORS[0]);
+      setShowNewMark(false);
+      // Menu stays open so the new mark is right there to click and apply.
+    } catch {
+      setActionError('Could not create mark');
+    }
+  }, [newMarkName, newMarkColor, markTypes.length]);
+
   const handleBulkMark = useCallback(async (markTypeId: number | null) => {
     if (selectedIds.size === 0) return;
     const cardIds = [...selectedIds];
@@ -2147,18 +2171,53 @@ export default function CardsPanel({
                   </button>
                 )}
                 <div className="border-t border-gray-100 my-1" />
+                <p className="px-3 py-1 text-[9px] font-semibold text-gray-400 uppercase tracking-wide">Mark as</p>
+                {markTypes.map(m => (
+                  <button key={m.id} onClick={() => { setShowActionsMenu(false); handleBulkMark(m.id); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 text-left">
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
+                    {m.name}
+                  </button>
+                ))}
+                {markTypes.length > 0 && (
+                  <button onClick={() => { setShowActionsMenu(false); handleBulkMark(null); }} className="w-full px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50 text-left">
+                    Clear mark
+                  </button>
+                )}
+                {/* Inline "new mark" creator — no round-trip to Library > Marks */}
+                {showNewMark ? (
+                  <div className="px-3 py-2 flex flex-col gap-1.5" onMouseDown={(e) => e.stopPropagation()}>
+                    <input
+                      autoFocus
+                      value={newMarkName}
+                      onChange={(e) => setNewMarkName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); handleCreateMark(); }
+                        if (e.key === 'Escape') { setShowNewMark(false); setNewMarkName(''); }
+                      }}
+                      placeholder="New mark name…"
+                      className="w-full text-xs border border-gray-200 rounded px-2 py-1 outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <div className="flex items-center gap-1">
+                      {MARK_COLORS.map((col) => (
+                        <button
+                          key={col}
+                          onClick={() => setNewMarkColor(col)}
+                          className={`w-4 h-4 rounded-full ${newMarkColor === col ? 'ring-2 ring-offset-1 ring-gray-400' : ''}`}
+                          style={{ backgroundColor: col }}
+                          title={col}
+                        />
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2 pt-0.5">
+                      <button onClick={handleCreateMark} disabled={!newMarkName.trim()} className="px-2 py-0.5 text-[11px] font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50">Create</button>
+                      <button onClick={() => { setShowNewMark(false); setNewMarkName(''); }} className="px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-100 rounded">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={() => setShowNewMark(true)} className="w-full text-left px-3 py-1.5 text-xs text-blue-700 hover:bg-blue-50">+ New mark…</button>
+                )}
                 {markTypes.length > 0 && (
                   <>
-                    <p className="px-3 py-1 text-[9px] font-semibold text-gray-400 uppercase tracking-wide">Mark as</p>
-                    {markTypes.map(m => (
-                      <button key={m.id} onClick={() => { setShowActionsMenu(false); handleBulkMark(m.id); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 text-left">
-                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
-                        {m.name}
-                      </button>
-                    ))}
-                    <button onClick={() => { setShowActionsMenu(false); handleBulkMark(null); }} className="w-full px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50 text-left">
-                      Clear mark
-                    </button>
                     <div className="border-t border-gray-100 my-1" />
                     <button
                       onClick={() => { setShowActionsMenu(false); setFixBatchMarkId(markFilterId ?? (markTypes[0]?.id ?? null)); setFixBatchPrompt(''); setShowFixBatchModal(true); }}
