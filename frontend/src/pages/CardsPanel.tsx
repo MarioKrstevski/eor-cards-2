@@ -1052,7 +1052,9 @@ export default function CardsPanel({
   const [cardsLoading, setCardsLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
-  const [statusFilter, setStatusFilter] = useState<'all' | CardStatus>('all');
+  // Default to 'active' so rejected (soft-deleted) cards don't linger in the
+  // view looking "not deleted". They stay recoverable via the filter dropdown.
+  const [statusFilter, setStatusFilter] = useState<'all' | CardStatus>('active');
 
   // ── Search + display mode ────────────────────────────────────────────────
   const [searchQ, setSearchQ] = useState('');
@@ -1258,6 +1260,30 @@ export default function CardsPanel({
     fetchCards(sectionId, topicPath, true, pagination.pageIndex, sectionIds);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pagination.pageIndex]);
+
+  // Self-heal stale views: when the tab/window regains focus, silently refetch
+  // so a second user's edits/deletions show up without a manual reload. Skip
+  // while an inline edit is in progress so we don't clobber unsaved text.
+  useEffect(() => {
+    const refresh = () => {
+      const el = document.activeElement as HTMLElement | null;
+      const tag = el?.tagName;
+      const isEditing =
+        editingId != null || tag === 'INPUT' || tag === 'TEXTAREA' || !!el?.isContentEditable;
+      if (isEditing) return;
+      fetchCards(sectionId, topicPath, true, pagination.pageIndex, sectionIds);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sectionId, topicPath, sectionIds, pagination.pageIndex, editingId, fetchCards]);
 
   // Persist column sizing
   useEffect(() => {
