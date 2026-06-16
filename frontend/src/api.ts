@@ -435,6 +435,7 @@ export async function addManualCards(params: {
   cards?: { front_html: string; extra?: string | null; tags?: string[] }[];
   raw_text?: string;
   model: string;
+  format?: 'pipe';
 }): Promise<{ created: Card[] }> {
   const res = await http.post<{ created: Card[] }>('/cards/manual', params);
   return res.data;

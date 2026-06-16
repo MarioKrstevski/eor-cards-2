@@ -1128,6 +1128,7 @@ export default function CardsPanel({
   const [debugSelected, setDebugSelected] = useState<Set<string>>(new Set());
   const [debugResponses, setDebugResponses] = useState<Record<string, { loading: boolean; result?: DebugRunResult; error?: string }>>({});
   const [activeDebugTab, setActiveDebugTab] = useState<string | null>(null);
+  const [debugApply, setDebugApply] = useState<Record<string, { loading: boolean; applied?: number; error?: string }>>({});
 
   // ── Add manual card(s) ────────────────────────────────────────────────────
   const [showAddCards, setShowAddCards] = useState(false);
@@ -1759,6 +1760,7 @@ export default function CardsPanel({
     setInspectPrompt(null);
     setDebugResponses({});
     setActiveDebugTab(null);
+    setDebugApply({});
     try {
       const res = await debugPromptSection(sectionId, { rule_set_id: selectedRuleSetId ?? undefined });
       setInspectPrompt(res);
@@ -1794,6 +1796,28 @@ export default function CardsPanel({
     }));
     refreshUsage?.();
   }, [sectionId, debugSelected, selectedRuleSetId, refreshUsage]);
+
+  // Apply a model's debug response as real cards. The response is already in our
+  // number|card|extra format, so we parse it with the real card parser (no Haiku).
+  const handleApplyDebug = useCallback(async (modelId: string) => {
+    if (!sectionId) return;
+    const resp = debugResponses[modelId]?.result;
+    if (!resp || !resp.raw_response.trim()) return;
+    setDebugApply(prev => ({ ...prev, [modelId]: { loading: true } }));
+    try {
+      const { created } = await addManualCards({
+        section_id: sectionId,
+        raw_text: resp.raw_response,
+        format: 'pipe',
+        model: modelId,
+      });
+      setDebugApply(prev => ({ ...prev, [modelId]: { loading: false, applied: created.length } }));
+      await fetchCards(sectionId, topicPath, true, undefined, sectionIds);
+      onReviewChange?.();
+    } catch (err: unknown) {
+      setDebugApply(prev => ({ ...prev, [modelId]: { loading: false, error: err instanceof Error ? err.message : 'Apply failed' } }));
+    }
+  }, [sectionId, debugResponses, fetchCards, topicPath, sectionIds, onReviewChange]);
 
   // Manual refresh of the card list (so a second user's edits show without a full reload).
   const handleManualRefresh = useCallback(async () => {
@@ -3068,6 +3092,22 @@ export default function CardsPanel({
                             >
                               Copy
                             </button>
+                          )}
+                          {r.result && (
+                            <button
+                              onClick={() => handleApplyDebug(dm.id)}
+                              disabled={debugApply[dm.id]?.loading}
+                              className="px-2 py-0.5 text-[11px] font-medium text-white bg-violet-700 rounded hover:bg-violet-800 disabled:opacity-50"
+                              title="Create these cards in the section (parsed from this response)"
+                            >
+                              {debugApply[dm.id]?.loading ? 'Applying…' : 'Apply cards'}
+                            </button>
+                          )}
+                          {debugApply[dm.id]?.applied != null && (
+                            <span className="text-[11px] text-green-600">✓ {debugApply[dm.id]!.applied} added</span>
+                          )}
+                          {debugApply[dm.id]?.error && (
+                            <span className="text-[11px] text-red-600">{debugApply[dm.id]!.error}</span>
                           )}
                         </div>
                         {r.loading ? (

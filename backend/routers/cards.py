@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from typing import Optional
 from backend.db import get_db
 from backend.models import Card, CardStatus, Section, SectionImage, RuleSet, AIUsageLog, Curriculum
-from backend.services.generator import strip_card_html, regenerate_single_card
+from backend.services.generator import strip_card_html, regenerate_single_card, parse_card_output
 from backend.services.ai_utils import response_text
 from backend.services.card_ops import assign_note_ids, score_new_cards
 from backend.services.manual_card_parser import parse_pasted_cards
@@ -525,8 +525,9 @@ class ManualCardInput(BaseModel):
 class AddManualCardsRequest(BaseModel):
     section_id: int
     cards: Optional[list[ManualCardInput]] = None  # structured single/multi entry
-    raw_text: Optional[str] = None                 # pasted blob → parsed by Haiku
-    model: str = DEFAULT_MODEL                      # only used to parse raw_text
+    raw_text: Optional[str] = None                 # pasted blob
+    model: str = DEFAULT_MODEL                      # only used to parse raw_text (haiku)
+    format: Optional[str] = None                   # 'pipe' → parse with the real card parser; else Haiku
 
 
 @router.post("/manual")
@@ -560,9 +561,23 @@ def add_manual_cards(body: AddManualCardsRequest, db: Session = Depends(get_db))
 
     parse_usage = None
     if body.raw_text and body.raw_text.strip():
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        parsed, parse_usage = parse_pasted_cards(client, body.raw_text, body.model)
-        to_create.extend(parsed)
+        if body.format == "pipe":
+            # The text is already in our number|card|extra output format (e.g. an
+            # Inspect debug response) — parse it with the real generation parser.
+            parsed_cards, _needs_review = parse_card_output(body.raw_text)
+            for pc in parsed_cards:
+                to_create.append({
+                    "front_html": pc["front_html"],
+                    "front_text": pc.get("front_text"),
+                    "extra": pc.get("extra"),
+                    "tags": [],
+                    "source_ref": pc.get("source_ref"),
+                    "needs_review": pc.get("needs_review", False),
+                })
+        else:
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            parsed, parse_usage = parse_pasted_cards(client, body.raw_text, body.model)
+            to_create.extend(parsed)
 
     if not to_create:
         raise HTTPException(422, "No cards to add (provide cards and/or raw_text)")
@@ -579,9 +594,10 @@ def add_manual_cards(body: AddManualCardsRequest, db: Session = Depends(get_db))
             section_id=section.id,
             card_number=start_num + i + 1,
             front_html=cd["front_html"],
-            front_text=strip_card_html(cd["front_html"]),
+            front_text=cd.get("front_text") or strip_card_html(cd["front_html"]),
             extra=cd.get("extra"),
             source_ref=cd.get("source_ref"),
+            needs_review=cd.get("needs_review", False),
             manually_added=True,
             status=CardStatus.active,
         )
