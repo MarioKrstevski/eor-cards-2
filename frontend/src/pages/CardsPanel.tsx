@@ -39,11 +39,14 @@ import {
   getSection,
   uploadSectionImage,
   uploadSectionImageFromUrl,
-  debugGenerateSection,
+  debugPromptSection,
+  debugRunSection,
+  getModels,
   addManualCards,
-  type DebugGenerateResult,
+  type DebugPromptResult,
+  type DebugRunResult,
 } from '../api';
-import type { Card, CardStatus, CostEstimate, ReviewMarkType, SectionImage, FixProposal } from '../types';
+import type { Card, CardStatus, CostEstimate, ReviewMarkType, SectionImage, FixProposal, Model } from '../types';
 import { loadRegenHistory, pushSnapshots, rollbackToIndex, type RegenHistory } from '../regenHistory';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
@@ -1119,8 +1122,11 @@ export default function CardsPanel({
 
   // ── Inspect prompt (debug single section's generation, dry-run) ───────────
   const [inspectLoading, setInspectLoading] = useState(false);
-  const [inspectResult, setInspectResult] = useState<DebugGenerateResult | null>(null);
+  const [inspectPrompt, setInspectPrompt] = useState<DebugPromptResult | null>(null);
   const [inspectError, setInspectError] = useState<string | null>(null);
+  const [debugModels, setDebugModels] = useState<Model[]>([]);
+  const [debugSelected, setDebugSelected] = useState<Set<string>>(new Set());
+  const [debugResponses, setDebugResponses] = useState<Record<string, { loading: boolean; result?: DebugRunResult; error?: string }>>({});
 
   // ── Add manual card(s) ────────────────────────────────────────────────────
   const [showAddCards, setShowAddCards] = useState(false);
@@ -1744,28 +1750,47 @@ export default function CardsPanel({
     }
   }, [selectedRuleSetId, selectedModel, sectionId, sectionIds, topicTreeId, topicPath, fetchCards, onReviewChange, refreshUsage]);
 
-  // Inspect the exact prompt + raw response for a single section (dry-run, no save).
+  // Step 1: instantly pull the exact prompt (no API call, no cost).
   const handleInspectPrompt = useCallback(async () => {
-    if (!sectionId || !selectedModel) return;
+    if (!sectionId) return;
     setInspectLoading(true);
     setInspectError(null);
-    setInspectResult(null);
+    setInspectPrompt(null);
+    setDebugResponses({});
     try {
-      const res = await debugGenerateSection(sectionId, {
-        model: selectedModel,
-        rule_set_id: selectedRuleSetId ?? undefined,
-      });
-      setInspectResult(res);
-      // Also log the raw response so it can be diffed in devtools.
-      // eslint-disable-next-line no-console
-      console.log('[generate-debug] section:', res.section_heading, '\n--- SYSTEM ---\n', res.system, '\n--- USER ---\n', res.user, '\n--- RAW RESPONSE ---\n', res.raw_response);
-      refreshUsage?.();
+      const res = await debugPromptSection(sectionId, { rule_set_id: selectedRuleSetId ?? undefined });
+      setInspectPrompt(res);
+      // Default-select the current model; load the model list if needed.
+      setDebugSelected(new Set(selectedModel ? [selectedModel] : []));
+      if (debugModels.length === 0) {
+        getModels().then(setDebugModels).catch(() => {});
+      }
     } catch (err: unknown) {
       setInspectError(err instanceof Error ? err.message : 'Inspect failed');
     } finally {
       setInspectLoading(false);
     }
-  }, [sectionId, selectedModel, selectedRuleSetId, refreshUsage]);
+  }, [sectionId, selectedRuleSetId, selectedModel, debugModels.length]);
+
+  // Step 2: run the prompt against each selected model in parallel (dry-run).
+  const handleGenerateResponses = useCallback(async () => {
+    if (!sectionId || debugSelected.size === 0) return;
+    const models = Array.from(debugSelected);
+    setDebugResponses(prev => {
+      const next = { ...prev };
+      models.forEach(m => { next[m] = { loading: true }; });
+      return next;
+    });
+    await Promise.all(models.map(async (m) => {
+      try {
+        const result = await debugRunSection(sectionId, { model: m, rule_set_id: selectedRuleSetId ?? undefined });
+        setDebugResponses(prev => ({ ...prev, [m]: { loading: false, result } }));
+      } catch (err: unknown) {
+        setDebugResponses(prev => ({ ...prev, [m]: { loading: false, error: err instanceof Error ? err.message : 'Run failed' } }));
+      }
+    }));
+    refreshUsage?.();
+  }, [sectionId, debugSelected, selectedRuleSetId, refreshUsage]);
 
   // Manual refresh of the card list (so a second user's edits show without a full reload).
   const handleManualRefresh = useCallback(async () => {
@@ -2947,49 +2972,101 @@ export default function CardsPanel({
         />
       )}
 
-      {/* Inspect prompt + raw response (debug, dry-run) */}
-      {inspectResult && (
+      {/* Inspect prompt (instant) → run response(s) per model on demand */}
+      {inspectPrompt && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setInspectResult(null)} />
-          <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[820px] max-w-[94vw] max-h-[88vh] flex flex-col">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setInspectPrompt(null)} />
+          <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[920px] max-w-[95vw] max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
               <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">
-                Prompt &amp; response · {inspectResult.section_heading}
+                Prompt &amp; response · {inspectPrompt.section_heading}
               </h2>
-              <span className="text-[11px] text-gray-500">
-                {inspectResult.model} · {inspectResult.usage.input_tokens.toLocaleString()} in / {inspectResult.usage.output_tokens.toLocaleString()} out · ${inspectResult.cost_usd.toFixed(4)}
-                {inspectResult.stop_reason === 'max_tokens' && <span className="text-red-600"> · TRUNCATED</span>}
-              </span>
+              <button onClick={() => setInspectPrompt(null)} className="text-gray-400 hover:text-gray-700 text-sm">✕</button>
             </div>
             <div className="flex-1 overflow-auto p-4 space-y-4">
               <div>
                 <div className="text-[11px] font-semibold text-gray-500 uppercase mb-1">System prompt</div>
-                <pre className="text-[11px] whitespace-pre-wrap break-words bg-gray-50 border border-gray-200 rounded-lg p-2 max-h-48 overflow-auto font-mono">{inspectResult.system}</pre>
+                <pre className="text-[11px] whitespace-pre-wrap break-words bg-gray-50 border border-gray-200 rounded-lg p-2 max-h-48 overflow-auto font-mono">{inspectPrompt.system}</pre>
               </div>
               <div>
                 <div className="text-[11px] font-semibold text-gray-500 uppercase mb-1">User message</div>
-                <pre className="text-[11px] whitespace-pre-wrap break-words bg-gray-50 border border-gray-200 rounded-lg p-2 max-h-48 overflow-auto font-mono">{inspectResult.user}</pre>
+                <pre className="text-[11px] whitespace-pre-wrap break-words bg-gray-50 border border-gray-200 rounded-lg p-2 max-h-48 overflow-auto font-mono">{inspectPrompt.user}</pre>
               </div>
-              <div>
-                <div className="text-[11px] font-semibold text-gray-500 uppercase mb-1">Raw response (cards Claude returned)</div>
-                <pre className="text-[11px] whitespace-pre-wrap break-words bg-blue-50 border border-blue-200 rounded-lg p-2 max-h-64 overflow-auto font-mono">{inspectResult.raw_response}</pre>
+
+              {/* Model picker + run */}
+              <div className="border-t border-gray-200 pt-3">
+                <div className="text-[11px] font-semibold text-gray-500 uppercase mb-2">Run response on these models</div>
+                <div className="flex flex-wrap items-center gap-3 mb-2">
+                  {debugModels.map((m) => (
+                    <label key={m.id} className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={debugSelected.has(m.id)}
+                        onChange={(e) => setDebugSelected(prev => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(m.id); else next.delete(m.id);
+                          return next;
+                        })}
+                      />
+                      {m.display}
+                    </label>
+                  ))}
+                  {debugModels.length === 0 && <span className="text-[11px] text-gray-400">Loading models…</span>}
+                </div>
+                <button
+                  onClick={handleGenerateResponses}
+                  disabled={debugSelected.size === 0 || Object.values(debugResponses).some(r => r.loading)}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 disabled:opacity-50"
+                >
+                  {Object.values(debugResponses).some(r => r.loading) ? 'Running…' : `Generate response${debugSelected.size > 1 ? 's' : ''} (${debugSelected.size})`}
+                </button>
               </div>
+
+              {/* Per-model responses */}
+              {Array.from(debugSelected).filter(m => debugResponses[m]).map((m) => {
+                const r = debugResponses[m];
+                const label = debugModels.find(dm => dm.id === m)?.display ?? m;
+                return (
+                  <div key={m}>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-[11px] font-semibold text-gray-700 uppercase">{label}</div>
+                      <div className="flex items-center gap-2">
+                        {r.result && (
+                          <span className="text-[11px] text-gray-500">
+                            {r.result.usage.input_tokens.toLocaleString()} in / {r.result.usage.output_tokens.toLocaleString()} out · ${r.result.cost_usd.toFixed(4)}
+                            {r.result.stop_reason === 'max_tokens' && <span className="text-red-600"> · TRUNCATED</span>}
+                          </span>
+                        )}
+                        {r.result && (
+                          <button
+                            onClick={() => navigator.clipboard.writeText(r.result!.raw_response)}
+                            className="px-2 py-0.5 text-[11px] font-medium text-blue-700 border border-blue-200 rounded hover:bg-blue-50"
+                          >
+                            Copy
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    {r.loading ? (
+                      <div className="text-[11px] text-gray-400 bg-gray-50 border border-gray-200 rounded-lg p-2">Running…</div>
+                    ) : r.error ? (
+                      <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">{r.error}</div>
+                    ) : (
+                      <pre className="text-[11px] whitespace-pre-wrap break-words bg-blue-50 border border-blue-200 rounded-lg p-2 max-h-64 overflow-auto font-mono">{r.result?.raw_response}</pre>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-200">
               <button
-                onClick={() => navigator.clipboard.writeText(`SYSTEM:\n${inspectResult.system}\n\nUSER:\n${inspectResult.user}`)}
+                onClick={() => navigator.clipboard.writeText(`SYSTEM:\n${inspectPrompt.system}\n\nUSER:\n${inspectPrompt.user}`)}
                 className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
               >
                 Copy prompt
               </button>
               <button
-                onClick={() => navigator.clipboard.writeText(inspectResult.raw_response)}
-                className="px-3 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800"
-              >
-                Copy response
-              </button>
-              <button
-                onClick={() => setInspectResult(null)}
+                onClick={() => setInspectPrompt(null)}
                 className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg"
               >
                 Close

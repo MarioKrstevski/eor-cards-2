@@ -400,22 +400,33 @@ export async function deleteCard(id: number): Promise<void> {
   await http.delete(`/cards/${id}`);
 }
 
-export interface DebugGenerateResult {
+export interface DebugPromptResult {
   section_heading: string;
-  model: string;
   system: string;
   user: string;
+}
+
+export interface DebugRunResult {
+  model: string;
   raw_response: string;
   stop_reason: string | null;
   usage: { input_tokens: number; output_tokens: number; [k: string]: number };
   cost_usd: number;
 }
 
-export async function debugGenerateSection(
+export async function debugPromptSection(
+  sectionId: number,
+  params: { rule_set_id?: number | null } = {}
+): Promise<DebugPromptResult> {
+  const res = await http.post<DebugPromptResult>(`/generate/section/${sectionId}/debug-prompt`, params);
+  return res.data;
+}
+
+export async function debugRunSection(
   sectionId: number,
   params: { model: string; rule_set_id?: number | null }
-): Promise<DebugGenerateResult> {
-  const res = await http.post<DebugGenerateResult>(`/generate/section/${sectionId}/debug`, params);
+): Promise<DebugRunResult> {
+  const res = await http.post<DebugRunResult>(`/generate/section/${sectionId}/debug-run`, params);
   return res.data;
 }
 

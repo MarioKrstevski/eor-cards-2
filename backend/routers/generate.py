@@ -54,27 +54,24 @@ class SupplementalStartRequest(BaseModel):
     replace_existing: bool = False
 
 
-class DebugGenerateRequest(BaseModel):
-    model: str = DEFAULT_MODEL
+class DebugPromptRequest(BaseModel):
     rule_set_id: Optional[int] = None  # omit → default generation rule set
 
 
-@router.post("/section/{section_id}/debug")
-def debug_generate_section(section_id: int, body: DebugGenerateRequest, db: Session = Depends(get_db)):
-    """Dry-run a single section's generation: return the EXACT prompt we send to
-    Claude plus the raw response, without saving any cards. For comparing the
-    app's output against a manual Claude-chat workflow. Cost is still logged so
-    the usage total (and the cost flash) reflect the real API spend."""
-    section = db.get(Section, section_id)
-    if not section:
-        raise HTTPException(404, "Section not found")
+class DebugRunRequest(BaseModel):
+    model: str = DEFAULT_MODEL
+    rule_set_id: Optional[int] = None
 
-    rs = db.get(RuleSet, body.rule_set_id) if body.rule_set_id else None
+
+def _debug_rules_text(rule_set_id: Optional[int], db: Session) -> str:
+    rs = db.get(RuleSet, rule_set_id) if rule_set_id else None
     if not rs or rs.rule_type != "generation":
         rs = db.query(RuleSet).filter_by(rule_type="generation", is_default=True).first()
-    rules_text = rs.content if rs else "Generate cloze cards. Use {{c1::term}} format."
+    return rs.content if rs else "Generate cloze cards. Use {{c1::term}} format."
 
-    section_data = {
+
+def _debug_section_data(section: Section) -> dict:
+    return {
         "id": section.id,
         "content_text": section.content_text,
         "content_html": section.content_html,
@@ -82,7 +79,31 @@ def debug_generate_section(section_id: int, body: DebugGenerateRequest, db: Sess
         "heading_tree": section.heading_tree,
         "curriculum_topic_path": section.curriculum_topic_path,
     }
-    system_text, user_text = build_generation_prompt(section_data, rules_text)
+
+
+@router.post("/section/{section_id}/debug-prompt")
+def debug_prompt(section_id: int, body: DebugPromptRequest, db: Session = Depends(get_db)):
+    """Return the EXACT prompt we'd send to Claude for this section — no API
+    call, no cost, instant. The prompt is identical across models, so the model
+    is only needed for the separate run step."""
+    section = db.get(Section, section_id)
+    if not section:
+        raise HTTPException(404, "Section not found")
+    rules_text = _debug_rules_text(body.rule_set_id, db)
+    system_text, user_text = build_generation_prompt(_debug_section_data(section), rules_text)
+    return {"section_heading": section.heading, "system": system_text, "user": user_text}
+
+
+@router.post("/section/{section_id}/debug-run")
+def debug_run(section_id: int, body: DebugRunRequest, db: Session = Depends(get_db)):
+    """Run the generation prompt against ONE model and return the raw response,
+    without saving cards. Call once per model to compare outputs. Cost is logged
+    so the usage total stays accurate."""
+    section = db.get(Section, section_id)
+    if not section:
+        raise HTTPException(404, "Section not found")
+    rules_text = _debug_rules_text(body.rule_set_id, db)
+    system_text, user_text = build_generation_prompt(_debug_section_data(section), rules_text)
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     response = client.messages.create(
@@ -102,7 +123,6 @@ def debug_generate_section(section_id: int, body: DebugGenerateRequest, db: Sess
         usage.get("cache_creation_input_tokens", 0),
         usage.get("cache_read_input_tokens", 0),
     )
-    # Log spend so the running cost total stays accurate (debug runs cost money).
     db.add(AIUsageLog(
         operation="generate_debug",
         model=body.model,
@@ -117,10 +137,7 @@ def debug_generate_section(section_id: int, body: DebugGenerateRequest, db: Sess
     db.commit()
 
     return {
-        "section_heading": section.heading,
         "model": body.model,
-        "system": system_text,
-        "user": user_text,
         "raw_response": raw,
         "stop_reason": response.stop_reason,
         "usage": usage,
