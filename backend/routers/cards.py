@@ -669,6 +669,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
     validated = 0
     fixed = 0
     split_count = 0
+    all_new_cards: list = []  # note_ids minted once at the end to avoid same-ms collisions
     with ThreadPoolExecutor(max_workers=3) as ex:
         futures = [ex.submit(worker, cid) for cid in initial]
         for fut in as_completed(futures):
@@ -710,8 +711,8 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                     )
                     db.add(nc)
                     new_cards.append(nc)
-                db.flush()
-                assign_note_ids(new_cards)
+                db.flush()  # so the next split's max(card_number) query sees these
+                all_new_cards.extend(new_cards)
                 split_count += 1
                 validated += len(new_cards)
             else:
@@ -726,6 +727,8 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                     card.correctness_score = passed
                     card.correctness = {"total": total, "rules": res["rules"], "split_suggested": res.get("split_suggested", False)}
                 validated += 1
+    if all_new_cards:
+        assign_note_ids(all_new_cards)  # unique across the whole request
     db.commit()
 
     if total_input or total_output:
