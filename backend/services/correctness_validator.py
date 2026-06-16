@@ -12,7 +12,7 @@ import re
 import anthropic
 
 from backend.config import resolve_model, effort_kwargs
-from backend.services.ai_utils import tool_use_input, usage_dict, strip_cloze
+from backend.services.ai_utils import tool_use_input, usage_dict, strip_cloze, response_text
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +197,48 @@ def summarize(rules: list[dict]) -> tuple[int, int]:
     total = len(rules)
     passed = sum(1 for r in rules if r.get("pass"))
     return passed, total
+
+
+def split_card(
+    client: anthropic.Anthropic,
+    section_data: dict,
+    existing_card_html: str,
+    existing_extra: str | None,
+    rules_text: str,
+    model: str,
+) -> tuple[list[dict], dict]:
+    """Split one overloaded card into multiple focused sibling cards. Returns
+    (cards, usage) where each card is a parsed {front_html, front_text, extra,...}.
+    """
+    from backend.services.generator import ANCHOR_INSTRUCTION, _render_source_text, parse_card_output
+
+    source = _render_source_text(section_data)
+    topic = section_data.get("curriculum_topic_path") or ""
+    topic_line = f"Curriculum context (for reference only): {topic}\n" if topic else ""
+
+    user = (
+        "You are splitting one overloaded flashcard into multiple focused sibling cards.\n\n"
+        f"{topic_line}Section: {section_data.get('heading', '')}\n\n"
+        f"Source text:\n{source}\n\n"
+        f"The existing card to split:\n{existing_card_html}\n"
+        + (f"Existing additional context:\n{existing_extra}\n" if existing_extra else "")
+        + "\nSplit this into 2 or more separate, focused cloze cards, each testing one independently "
+        "testable concept. These cards are closely related siblings, so give each card an additional "
+        "context field that briefly references the related concepts covered by the other sibling cards, "
+        "so each card still stands on its own and the link between them is preserved. "
+        "Output one card per line in the exact format:\n"
+        "number|cloze card text|additional context (optional)"
+    )
+    response = client.messages.create(
+        model=resolve_model(model)[0],
+        **effort_kwargs(model),
+        max_tokens=4096,
+        temperature=0,
+        system=[{"type": "text", "text": ANCHOR_INSTRUCTION + "\n\n" + rules_text, "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": user}],
+    )
+    cards, _needs_review = parse_card_output(response_text(response))
+    return cards, usage_dict(response)
 
 
 def fix_guidance(failed_rules: list[dict]) -> str:

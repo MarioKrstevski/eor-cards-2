@@ -29,6 +29,7 @@ import {
   bulkMarkCards,
   bulkScoreCards,
   validateCards,
+  getValidationRules,
   createFixBatch,
   getFixBatch,
   confirmFixBatch,
@@ -1102,6 +1103,8 @@ export default function CardsPanel({
   const [showDeleteMenu, setShowDeleteMenu] = useState(false);
   const [scoring, setScoring] = useState(false);
   const [validating, setValidating] = useState(false);
+  const [showRulesModal, setShowRulesModal] = useState(false);
+  const [validationRules, setValidationRules] = useState<{ key: string; title: string; criteria: string }[]>([]);
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const [showFixBatchModal, setShowFixBatchModal] = useState(false);
   const [fixBatchPrompt, setFixBatchPrompt] = useState('');
@@ -1405,7 +1408,7 @@ export default function CardsPanel({
                   const title = `Correctness: ${card.correctness_score}/${total}\n${lines.join('\n')}${card.correctness.split_suggested ? '\n⚠ Suggest splitting into sibling cards' : ''}`;
                   return (
                     <span
-                      className={`px-1 h-4 rounded flex items-center justify-center text-[8px] font-bold text-white shrink-0 ${color}`}
+                      className={`min-w-[20px] px-1 py-0.5 rounded-md flex items-center justify-center text-[8px] font-bold text-white shrink-0 leading-none ${color}`}
                       title={title}
                     >
                       {card.correctness_score}/{total}{card.correctness.split_suggested ? ' ⚠' : ''}
@@ -2649,6 +2652,18 @@ export default function CardsPanel({
                     Validate &amp; fix — all in topic ({totalCards})
                   </button>
                 )}
+                <button
+                  onClick={async () => {
+                    setShowActionsMenu(false);
+                    try {
+                      if (validationRules.length === 0) setValidationRules(await getValidationRules());
+                      setShowRulesModal(true);
+                    } catch { setActionError('Could not load rules'); }
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-[11px] text-gray-500 hover:bg-gray-50"
+                >
+                  ⓘ What gets checked?
+                </button>
                 <div className="border-t border-gray-100 my-1" />
                 <p className="px-3 py-1 text-[9px] font-semibold text-gray-400 uppercase tracking-wide">Mark as</p>
                 {markTypes.map(m => (
@@ -3571,6 +3586,28 @@ export default function CardsPanel({
 
       {viewSectionId != null && (
         <SectionViewer sectionId={viewSectionId} onClose={() => setViewSectionId(null)} />
+      )}
+
+      {/* Correctness rules reference */}
+      {showRulesModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowRulesModal(false)} />
+          <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[640px] max-w-[94vw] max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
+              <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">What "Validate" checks ({validationRules.length} rules)</h2>
+              <button onClick={() => setShowRulesModal(false)} className="text-gray-400 hover:text-gray-700 text-sm">✕</button>
+            </div>
+            <div className="flex-1 overflow-auto p-4 space-y-3">
+              {validationRules.map((r, i) => (
+                <div key={r.key}>
+                  <div className="text-xs font-semibold text-gray-800">{i + 1}. {r.title} <span className="text-[10px] font-normal text-gray-400">({r.key})</span></div>
+                  <div className="text-[11px] text-gray-600 mt-0.5">{r.criteria}</div>
+                </div>
+              ))}
+              <p className="text-[11px] text-gray-400 pt-1 border-t border-gray-100">The score badge shows passed/total. A card flagged for splitting (single concept) is auto-split into sibling cards; other failures are auto-fixed in up to 3 retries.</p>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Bulk regenerate modal */}

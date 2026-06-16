@@ -529,14 +529,22 @@ class ValidateRequest(BaseModel):
     auto_fix: bool = True
 
 
+@router.get("/validation-rules")
+def get_validation_rules():
+    """The correctness rules + what each one checks (for the in-app reference)."""
+    from backend.services.correctness_validator import RULES
+    return [{"key": r["key"], "title": r["title"], "criteria": r["criteria"]} for r in RULES]
+
+
 @router.post("/validate")
 def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
     """Grade cards against the correctness rubric and (optionally) auto-fix
-    failing ones in a small regenerate loop. Stores a per-rule scorecard."""
+    failing ones: regenerate single-card issues, or auto-split a card flagged
+    as needing sibling cards (one level deep). Stores a per-rule scorecard."""
     if not body.card_ids:
         raise HTTPException(400, "No card_ids provided")
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    from backend.services.correctness_validator import judge_cards, summarize, fix_guidance
+    from backend.services.correctness_validator import judge_cards, summarize, fix_guidance, split_card, RULE_KEYS
     from backend.services.generator import regenerate_single_card
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -582,67 +590,142 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
         state_by_card[cid] = {"front_html": c.front_html, "extra": c.extra}
 
     def _fixable(result: dict) -> list:
-        # Everything failing except the single-concept rule when a split is suggested
-        # (split changes card count — left for the reviewer, not the auto-fixer).
+        # Everything failing except single-concept when a split is suggested
+        # (that's handled by the split path / capped to avoid re-splitting).
         return [
             r for r in result["rules"]
             if not r["pass"] and not (r["key"] == "single_concept" and result.get("split_suggested"))
         ]
 
-    def fix_worker(cid: int) -> dict:
+    def regen_fix_loop(front_html, extra, section_data, temp_id, initial_result, u):
+        """Judge (if needed) then regenerate up to 3x. Never splits. Mutates u."""
+        result = initial_result
+        if result is None:
+            try:
+                rj, ju = judge_cards(client, [{"id": temp_id, "front_html": front_html, "extra": extra}], body.model)
+                u["input_tokens"] += ju.get("input_tokens", 0)
+                u["output_tokens"] += ju.get("output_tokens", 0)
+                result = rj[0] if rj else None
+            except Exception:
+                logger.exception("Initial judge failed for temp %s", temp_id)
+        for _ in range(3):
+            if not result:
+                break
+            failed = _fixable(result)
+            if not failed:
+                break
+            try:
+                cards_data, _nr, fu = regenerate_single_card(
+                    client, section_data, front_html, rules_text, extra_prompt=fix_guidance(failed), model=body.model
+                )
+                u["input_tokens"] += fu.get("input_tokens", 0)
+                u["output_tokens"] += fu.get("output_tokens", 0)
+                if cards_data:
+                    front_html = cards_data[0]["front_html"]
+                    extra = cards_data[0].get("extra")
+                rj, ju = judge_cards(client, [{"id": temp_id, "front_html": front_html, "extra": extra}], body.model)
+                u["input_tokens"] += ju.get("input_tokens", 0)
+                u["output_tokens"] += ju.get("output_tokens", 0)
+                if rj:
+                    result = rj[0]
+            except Exception:
+                logger.exception("Fix loop failed for temp %s", temp_id)
+                break
+        return front_html, extra, result
+
+    def worker(cid: int) -> dict:
         result = initial[cid]
         front_html = state_by_card[cid]["front_html"]
         extra = state_by_card[cid]["extra"]
         section_data = section_data_by_card[cid]
         u = {"input_tokens": 0, "output_tokens": 0}
-        if body.auto_fix:
-            for _ in range(3):
-                failed = _fixable(result)
-                if not failed:
-                    break
-                guidance = fix_guidance(failed)
-                try:
-                    cards_data, _nr, fu = regenerate_single_card(
-                        client, section_data, front_html, rules_text, extra_prompt=guidance, model=body.model
-                    )
-                    u["input_tokens"] += fu.get("input_tokens", 0)
-                    u["output_tokens"] += fu.get("output_tokens", 0)
-                    if cards_data:
-                        front_html = cards_data[0]["front_html"]
-                        extra = cards_data[0].get("extra")
-                    rj, ju = judge_cards(client, [{"id": cid, "front_html": front_html, "extra": extra}], body.model)
-                    u["input_tokens"] += ju.get("input_tokens", 0)
-                    u["output_tokens"] += ju.get("output_tokens", 0)
-                    if rj:
-                        result = rj[0]
-                except Exception:
-                    logger.exception("Fix loop failed for card %d", cid)
-                    break
-        return {"card_id": cid, "front_html": front_html, "extra": extra, "result": result, "usage": u}
+
+        if not body.auto_fix:
+            return {"card_id": cid, "action": "fix", "front_html": front_html, "extra": extra, "result": result, "usage": u}
+
+        # Split path: card flagged as needing sibling cards.
+        needs_split = result.get("split_suggested") and any(
+            r["key"] == "single_concept" and not r["pass"] for r in result["rules"]
+        )
+        if needs_split:
+            try:
+                siblings_raw, su = split_card(client, section_data, front_html, extra, rules_text, body.model)
+                u["input_tokens"] += su.get("input_tokens", 0)
+                u["output_tokens"] += su.get("output_tokens", 0)
+                valid_sibs = [s for s in siblings_raw if (s.get("front_html") or "").strip()]
+                if len(valid_sibs) >= 2:
+                    processed = []
+                    for i, sib in enumerate(valid_sibs):
+                        fh, ex, sres = regen_fix_loop(sib["front_html"], sib.get("extra"), section_data, i + 1, None, u)
+                        processed.append({"front_html": fh, "extra": ex, "result": sres})
+                    return {"card_id": cid, "action": "split", "siblings": processed, "usage": u}
+            except Exception:
+                logger.exception("Auto-split failed for card %d", cid)
+            # fall through to a normal regenerate if the split didn't yield >=2
+
+        fh, ex, res = regen_fix_loop(front_html, extra, section_data, cid, result, u)
+        return {"card_id": cid, "action": "fix", "front_html": fh, "extra": ex, "result": res, "usage": u}
 
     validated = 0
     fixed = 0
+    split_count = 0
     with ThreadPoolExecutor(max_workers=3) as ex:
-        futures = [ex.submit(fix_worker, cid) for cid in initial]
+        futures = [ex.submit(worker, cid) for cid in initial]
         for fut in as_completed(futures):
             out = fut.result()
-            card = cards_by_id[out["card_id"]]
-            res = out["result"]
             total_input += out["usage"]["input_tokens"]
             total_output += out["usage"]["output_tokens"]
-            if body.auto_fix and out["front_html"] != card.front_html:
-                card.front_html = out["front_html"]
-                card.front_text = strip_card_html(out["front_html"])
-                card.extra = out["extra"]
-                fixed += 1
-            passed, total = summarize(res["rules"])
-            card.correctness_score = passed
-            card.correctness = {
-                "total": total,
-                "rules": res["rules"],
-                "split_suggested": res.get("split_suggested", False),
-            }
-            validated += 1
+            card = cards_by_id[out["card_id"]]
+
+            if out["action"] == "split":
+                sid = card.section_id
+                inh_tags, inh_mapped = card.tags, card.tags_mapped
+                vig, tc = card.vignette, card.teaching_case
+                db.delete(card)  # replace the original with its siblings
+                db.flush()
+                start_num = (
+                    db.query(func.coalesce(func.max(Card.card_number), 0)).filter(Card.section_id == sid).scalar()
+                ) or 0
+                new_cards = []
+                for j, sib in enumerate(out["siblings"]):
+                    res = sib["result"]
+                    if res:
+                        passed, total = summarize(res["rules"])
+                        corr = {"total": total, "rules": res["rules"], "split_suggested": res.get("split_suggested", False)}
+                    else:
+                        passed, corr = None, None
+                    nc = Card(
+                        section_id=sid,
+                        card_number=start_num + 1 + j,
+                        front_html=sib["front_html"],
+                        front_text=strip_card_html(sib["front_html"]),
+                        extra=sib.get("extra"),
+                        tags=inh_tags,
+                        tags_mapped=inh_mapped,
+                        vignette=vig,
+                        teaching_case=tc,
+                        status=CardStatus.active,
+                        correctness_score=passed,
+                        correctness=corr,
+                    )
+                    db.add(nc)
+                    new_cards.append(nc)
+                db.flush()
+                assign_note_ids(new_cards)
+                split_count += 1
+                validated += len(new_cards)
+            else:
+                res = out["result"]
+                if out["front_html"] != card.front_html:
+                    card.front_html = out["front_html"]
+                    card.front_text = strip_card_html(out["front_html"])
+                    card.extra = out["extra"]
+                    fixed += 1
+                if res:
+                    passed, total = summarize(res["rules"])
+                    card.correctness_score = passed
+                    card.correctness = {"total": total, "rules": res["rules"], "split_suggested": res.get("split_suggested", False)}
+                validated += 1
     db.commit()
 
     if total_input or total_output:
@@ -655,7 +738,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
         ))
         db.commit()
 
-    return {"validated": validated, "fixed": fixed}
+    return {"validated": validated, "fixed": fixed, "split": split_count}
 
 
 class ManualCardInput(BaseModel):
