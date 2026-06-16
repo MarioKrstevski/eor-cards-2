@@ -1127,6 +1127,7 @@ export default function CardsPanel({
   const [debugModels, setDebugModels] = useState<Model[]>([]);
   const [debugSelected, setDebugSelected] = useState<Set<string>>(new Set());
   const [debugResponses, setDebugResponses] = useState<Record<string, { loading: boolean; result?: DebugRunResult; error?: string }>>({});
+  const [activeDebugTab, setActiveDebugTab] = useState<string | null>(null);
 
   // ── Add manual card(s) ────────────────────────────────────────────────────
   const [showAddCards, setShowAddCards] = useState(false);
@@ -1757,6 +1758,7 @@ export default function CardsPanel({
     setInspectError(null);
     setInspectPrompt(null);
     setDebugResponses({});
+    setActiveDebugTab(null);
     try {
       const res = await debugPromptSection(sectionId, { rule_set_id: selectedRuleSetId ?? undefined });
       setInspectPrompt(res);
@@ -1781,6 +1783,7 @@ export default function CardsPanel({
       models.forEach(m => { next[m] = { loading: true }; });
       return next;
     });
+    setActiveDebugTab(prev => (prev && models.includes(prev)) ? prev : models[0]);
     await Promise.all(models.map(async (m) => {
       try {
         const result = await debugRunSection(sectionId, { model: m, rule_set_id: selectedRuleSetId ?? undefined });
@@ -3022,41 +3025,63 @@ export default function CardsPanel({
                 </button>
               </div>
 
-              {/* Per-model responses */}
-              {Array.from(debugSelected).filter(m => debugResponses[m]).map((m) => {
-                const r = debugResponses[m];
-                const label = debugModels.find(dm => dm.id === m)?.display ?? m;
-                return (
-                  <div key={m}>
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="text-[11px] font-semibold text-gray-700 uppercase">{label}</div>
-                      <div className="flex items-center gap-2">
-                        {r.result && (
-                          <span className="text-[11px] text-gray-500">
-                            {r.result.usage.input_tokens.toLocaleString()} in / {r.result.usage.output_tokens.toLocaleString()} out · ${r.result.cost_usd.toFixed(4)}
-                            {r.result.stop_reason === 'max_tokens' && <span className="text-red-600"> · TRUNCATED</span>}
-                          </span>
-                        )}
-                        {r.result && (
-                          <button
-                            onClick={() => navigator.clipboard.writeText(r.result!.raw_response)}
-                            className="px-2 py-0.5 text-[11px] font-medium text-blue-700 border border-blue-200 rounded hover:bg-blue-50"
-                          >
-                            Copy
-                          </button>
+              {/* Per-model responses — tabbed so you can switch and compare.
+                  All panes stay mounted (hidden via display) so each tab keeps
+                  its own scroll position when you come back to it. */}
+              {debugModels.some(dm => debugResponses[dm.id]) && (
+                <div>
+                  <div className="flex flex-wrap gap-1 border-b border-gray-200 mb-2">
+                    {debugModels.filter(dm => debugResponses[dm.id]).map((dm) => {
+                      const r = debugResponses[dm.id];
+                      const isActive = activeDebugTab === dm.id;
+                      return (
+                        <button
+                          key={dm.id}
+                          onClick={() => setActiveDebugTab(dm.id)}
+                          className={`px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 -mb-px flex items-center gap-1.5 ${
+                            isActive ? 'border-blue-600 text-blue-700 bg-blue-50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                          }`}
+                        >
+                          {dm.display}
+                          {r.loading && <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />}
+                          {r.error && <span className="text-red-500">!</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {debugModels.filter(dm => debugResponses[dm.id]).map((dm) => {
+                    const r = debugResponses[dm.id];
+                    const isActive = activeDebugTab === dm.id;
+                    return (
+                      <div key={dm.id} style={{ display: isActive ? 'block' : 'none' }}>
+                        <div className="flex items-center justify-end gap-2 mb-1">
+                          {r.result && (
+                            <span className="text-[11px] text-gray-500">
+                              {r.result.usage.input_tokens.toLocaleString()} in / {r.result.usage.output_tokens.toLocaleString()} out · ${r.result.cost_usd.toFixed(4)}
+                              {r.result.stop_reason === 'max_tokens' && <span className="text-red-600"> · TRUNCATED</span>}
+                            </span>
+                          )}
+                          {r.result && (
+                            <button
+                              onClick={() => navigator.clipboard.writeText(r.result!.raw_response)}
+                              className="px-2 py-0.5 text-[11px] font-medium text-blue-700 border border-blue-200 rounded hover:bg-blue-50"
+                            >
+                              Copy
+                            </button>
+                          )}
+                        </div>
+                        {r.loading ? (
+                          <div className="text-[11px] text-gray-400 bg-gray-50 border border-gray-200 rounded-lg p-2">Running…</div>
+                        ) : r.error ? (
+                          <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">{r.error}</div>
+                        ) : (
+                          <pre className="text-[11px] whitespace-pre-wrap break-words bg-blue-50 border border-blue-200 rounded-lg p-2 max-h-80 overflow-auto font-mono">{r.result?.raw_response}</pre>
                         )}
                       </div>
-                    </div>
-                    {r.loading ? (
-                      <div className="text-[11px] text-gray-400 bg-gray-50 border border-gray-200 rounded-lg p-2">Running…</div>
-                    ) : r.error ? (
-                      <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">{r.error}</div>
-                    ) : (
-                      <pre className="text-[11px] whitespace-pre-wrap break-words bg-blue-50 border border-blue-200 rounded-lg p-2 max-h-64 overflow-auto font-mono">{r.result?.raw_response}</pre>
-                    )}
-                  </div>
-                );
-              })}
+                    );
+                  })}
+                </div>
+              )}
             </div>
             <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-200">
               <button
