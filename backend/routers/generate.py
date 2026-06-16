@@ -11,7 +11,9 @@ from backend.models import (
     Section, Card, GenerationJob, JobStatus, CardStatus,
     RuleSet, AIUsageLog, TopicTree, Curriculum, utcnow,
 )
-from backend.services.generator import generate_cards_for_section
+from backend.services.generator import generate_cards_for_section, build_generation_prompt
+from backend.services.ai_utils import response_text, usage_dict
+from backend.config import resolve_model, effort_kwargs
 from backend.services.scorer import score_cards
 from backend.services.cost_estimator import estimate_cost, estimate_supplemental_cost
 from backend.services.ai_utils import RETRYABLE_ERRORS
@@ -50,6 +52,79 @@ class SupplementalStartRequest(BaseModel):
     rule_set_id: Optional[int] = None  # omit/None → use the default vignette rule set
     model: str
     replace_existing: bool = False
+
+
+class DebugGenerateRequest(BaseModel):
+    model: str = DEFAULT_MODEL
+    rule_set_id: Optional[int] = None  # omit → default generation rule set
+
+
+@router.post("/section/{section_id}/debug")
+def debug_generate_section(section_id: int, body: DebugGenerateRequest, db: Session = Depends(get_db)):
+    """Dry-run a single section's generation: return the EXACT prompt we send to
+    Claude plus the raw response, without saving any cards. For comparing the
+    app's output against a manual Claude-chat workflow. Cost is still logged so
+    the usage total (and the cost flash) reflect the real API spend."""
+    section = db.get(Section, section_id)
+    if not section:
+        raise HTTPException(404, "Section not found")
+
+    rs = db.get(RuleSet, body.rule_set_id) if body.rule_set_id else None
+    if not rs or rs.rule_type != "generation":
+        rs = db.query(RuleSet).filter_by(rule_type="generation", is_default=True).first()
+    rules_text = rs.content if rs else "Generate cloze cards. Use {{c1::term}} format."
+
+    section_data = {
+        "id": section.id,
+        "content_text": section.content_text,
+        "heading": section.heading,
+        "heading_tree": section.heading_tree,
+        "curriculum_topic_path": section.curriculum_topic_path,
+    }
+    system_text, user_text = build_generation_prompt(section_data, rules_text)
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    response = client.messages.create(
+        model=resolve_model(body.model)[0],
+        **effort_kwargs(body.model),
+        max_tokens=16384,
+        temperature=0,
+        system=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": user_text}],
+    )
+    raw = response_text(response)
+    usage = usage_dict(response)
+    cost = compute_cost(
+        body.model,
+        usage["input_tokens"],
+        usage["output_tokens"],
+        usage.get("cache_creation_input_tokens", 0),
+        usage.get("cache_read_input_tokens", 0),
+    )
+    # Log spend so the running cost total stays accurate (debug runs cost money).
+    db.add(AIUsageLog(
+        operation="generate_debug",
+        model=body.model,
+        input_tokens=usage["input_tokens"],
+        output_tokens=usage["output_tokens"],
+        cache_write_tokens=usage.get("cache_creation_input_tokens", 0),
+        cache_read_tokens=usage.get("cache_read_input_tokens", 0),
+        cost_usd=cost,
+        topic_tree_id=section.topic_tree_id,
+        section_id=section.id,
+    ))
+    db.commit()
+
+    return {
+        "section_heading": section.heading,
+        "model": body.model,
+        "system": system_text,
+        "user": user_text,
+        "raw_response": raw,
+        "stop_reason": response.stop_reason,
+        "usage": usage,
+        "cost_usd": cost,
+    }
 
 
 def _get_sections(topic_tree_id: Optional[int], section_ids: Optional[list[int]], db: Session) -> list[Section]:

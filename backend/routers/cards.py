@@ -3,15 +3,16 @@ import json
 import logging
 import anthropic
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import cast, String
+from sqlalchemy import cast, String, func
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel
 from typing import Optional
 from backend.db import get_db
-from backend.models import Card, CardStatus, Section, SectionImage, RuleSet, AIUsageLog
+from backend.models import Card, CardStatus, Section, SectionImage, RuleSet, AIUsageLog, Curriculum
 from backend.services.generator import strip_card_html, regenerate_single_card
 from backend.services.ai_utils import response_text
 from backend.services.card_ops import assign_note_ids, score_new_cards
+from backend.services.manual_card_parser import parse_pasted_cards
 from backend.config import ANTHROPIC_API_KEY, DEFAULT_MODEL, compute_cost, resolve_model, effort_kwargs
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,7 @@ def card_to_dict(card: Card, db: Session | None = None, img_cache: dict | None =
         "is_reviewed": card.is_reviewed,
         "review_mark_id": card.review_mark_id if hasattr(card, 'review_mark_id') else None,
         "in_fix_batch": card.in_fix_batch if hasattr(card, 'in_fix_batch') else False,
+        "manually_added": getattr(card, "manually_added", False),
         "accuracy_score": card.accuracy_score,
         "accuracy_note": card.accuracy_note,
         "eor_yield": card.eor_yield,
@@ -510,6 +512,115 @@ def bulk_score_cards(body: BulkScoreRequest, db: Session = Depends(get_db)):
         db.commit()
 
     return {"scored": total_scored, "failed_groups": failed_groups}
+
+
+class ManualCardInput(BaseModel):
+    front_html: str
+    extra: Optional[str] = None
+    tags: Optional[list[str]] = None
+
+
+class AddManualCardsRequest(BaseModel):
+    section_id: int
+    cards: Optional[list[ManualCardInput]] = None  # structured single/multi entry
+    raw_text: Optional[str] = None                 # pasted blob → parsed by Haiku
+    model: str = DEFAULT_MODEL                      # only used to parse raw_text
+
+
+@router.post("/manual")
+def add_manual_cards(body: AddManualCardsRequest, db: Session = Depends(get_db)):
+    """Add hand-written or pasted cards to a section. Pasted text (raw_text) is
+    structured by Haiku verbatim. New cards get unique ids + note_ids and are
+    flagged manually_added. No scoring (run Actions → Score Cards if wanted)."""
+    section = db.get(Section, body.section_id)
+    if not section:
+        raise HTTPException(404, "Section not found")
+
+    # Resolve which tag column this section's curriculum version writes to.
+    cv = None
+    if section.curriculum_topic_id:
+        cur = db.get(Curriculum, section.curriculum_topic_id)
+        cv = cur.version if cur else None
+    section_tags = section.curriculum_topic_path.split(" > ") if section.curriculum_topic_path else []
+
+    # Gather the structured card dicts to create.
+    to_create: list[dict] = []
+    if body.cards:
+        for c in body.cards:
+            if not (c.front_html or "").strip():
+                continue
+            to_create.append({
+                "front_html": c.front_html.strip(),
+                "extra": (c.extra or "").strip() or None,
+                "tags": [t for t in (c.tags or []) if t.strip()],
+                "source_ref": None,
+            })
+
+    parse_usage = None
+    if body.raw_text and body.raw_text.strip():
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        parsed, parse_usage = parse_pasted_cards(client, body.raw_text, body.model)
+        to_create.extend(parsed)
+
+    if not to_create:
+        raise HTTPException(422, "No cards to add (provide cards and/or raw_text)")
+
+    start_num = (
+        db.query(func.coalesce(func.max(Card.card_number), 0))
+        .filter(Card.section_id == section.id)
+        .scalar()
+    ) or 0
+
+    created: list[Card] = []
+    for i, cd in enumerate(to_create):
+        kwargs = dict(
+            section_id=section.id,
+            card_number=start_num + i + 1,
+            front_html=cd["front_html"],
+            front_text=strip_card_html(cd["front_html"]),
+            extra=cd.get("extra"),
+            source_ref=cd.get("source_ref"),
+            manually_added=True,
+            status=CardStatus.active,
+        )
+        # Card-specific tags from the paste win; otherwise inherit the section's.
+        tags = cd.get("tags") or section_tags
+        if cv == "v1":
+            kwargs["tags_mapped"] = tags
+            kwargs["tags"] = []
+        else:
+            kwargs["tags"] = tags
+        card = Card(**kwargs)
+        db.add(card)
+        created.append(card)
+
+    db.flush()
+    assign_note_ids(created)
+    db.commit()
+
+    if parse_usage:
+        db.add(AIUsageLog(
+            operation="manual_card_parse",
+            model=body.model,
+            input_tokens=parse_usage.get("input_tokens", 0),
+            output_tokens=parse_usage.get("output_tokens", 0),
+            cache_write_tokens=parse_usage.get("cache_creation_input_tokens", 0),
+            cache_read_tokens=parse_usage.get("cache_read_input_tokens", 0),
+            cost_usd=compute_cost(
+                body.model,
+                parse_usage.get("input_tokens", 0),
+                parse_usage.get("output_tokens", 0),
+                parse_usage.get("cache_creation_input_tokens", 0),
+                parse_usage.get("cache_read_input_tokens", 0),
+            ),
+            topic_tree_id=section.topic_tree_id,
+            section_id=section.id,
+        ))
+        db.commit()
+
+    for c in created:
+        db.refresh(c)
+    return {"created": [card_to_dict(c, db) for c in created]}
 
 
 @router.delete("/{card_id}", status_code=204)

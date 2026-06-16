@@ -400,6 +400,35 @@ export async function deleteCard(id: number): Promise<void> {
   await http.delete(`/cards/${id}`);
 }
 
+export interface DebugGenerateResult {
+  section_heading: string;
+  model: string;
+  system: string;
+  user: string;
+  raw_response: string;
+  stop_reason: string | null;
+  usage: { input_tokens: number; output_tokens: number; [k: string]: number };
+  cost_usd: number;
+}
+
+export async function debugGenerateSection(
+  sectionId: number,
+  params: { model: string; rule_set_id?: number | null }
+): Promise<DebugGenerateResult> {
+  const res = await http.post<DebugGenerateResult>(`/generate/section/${sectionId}/debug`, params);
+  return res.data;
+}
+
+export async function addManualCards(params: {
+  section_id: number;
+  cards?: { front_html: string; extra?: string | null; tags?: string[] }[];
+  raw_text?: string;
+  model: string;
+}): Promise<{ created: Card[] }> {
+  const res = await http.post<{ created: Card[] }>('/cards/manual', params);
+  return res.data;
+}
+
 export async function regenerateCard(
   id: number,
   params: { model?: string; prompt?: string }

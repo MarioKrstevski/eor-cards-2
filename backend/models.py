@@ -172,6 +172,7 @@ class Card(Base):
     is_reviewed: Mapped[bool] = mapped_column(Boolean, default=False)
     review_mark_id: Mapped[Optional[int]] = mapped_column(ForeignKey("review_mark_types.id"), nullable=True)
     in_fix_batch: Mapped[bool] = mapped_column(Boolean, default=False)
+    manually_added: Mapped[bool] = mapped_column(Boolean, default=False)
     accuracy_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     accuracy_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     eor_yield: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

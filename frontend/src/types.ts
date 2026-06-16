@@ -114,6 +114,7 @@ export interface Card {
   accuracy_note: string | null;
   eor_yield: Record<string, string> | null;
   in_fix_batch: boolean;
+  manually_added?: boolean;
   created_at: string;
   updated_at: string;
   // for display

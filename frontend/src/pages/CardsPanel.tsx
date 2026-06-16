@@ -39,6 +39,9 @@ import {
   getSection,
   uploadSectionImage,
   uploadSectionImageFromUrl,
+  debugGenerateSection,
+  addManualCards,
+  type DebugGenerateResult,
 } from '../api';
 import type { Card, CardStatus, CostEstimate, ReviewMarkType, SectionImage, FixProposal } from '../types';
 import { loadRegenHistory, pushSnapshots, rollbackToIndex, type RegenHistory } from '../regenHistory';
@@ -1114,6 +1117,24 @@ export default function CardsPanel({
   // ── Generate confirm ─────────────────────────────────────────────────────
   const [showGenerateConfirm, setShowGenerateConfirm] = useState(false);
 
+  // ── Inspect prompt (debug single section's generation, dry-run) ───────────
+  const [inspectLoading, setInspectLoading] = useState(false);
+  const [inspectResult, setInspectResult] = useState<DebugGenerateResult | null>(null);
+  const [inspectError, setInspectError] = useState<string | null>(null);
+
+  // ── Add manual card(s) ────────────────────────────────────────────────────
+  const [showAddCards, setShowAddCards] = useState(false);
+  const [addMode, setAddMode] = useState<'single' | 'paste'>('single');
+  const [addFront, setAddFront] = useState('');
+  const [addExtra, setAddExtra] = useState('');
+  const [addTags, setAddTags] = useState('');
+  const [addPaste, setAddPaste] = useState('');
+  const [addLoading, setAddLoading] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+
+  // ── Manual table refresh ──────────────────────────────────────────────────
+  const [refreshing, setRefreshing] = useState(false);
+
   // ── Column sizing ────────────────────────────────────────────────────────
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(() => {
     try {
@@ -1381,6 +1402,14 @@ export default function CardsPanel({
               {card.in_fix_batch && (
                 <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
                   In batch
+                </span>
+              )}
+              {card.manually_added && (
+                <span
+                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-50 text-violet-700 border border-violet-200"
+                  title="Manually added card"
+                >
+                  MA
                 </span>
               )}
             </div>
@@ -1714,6 +1743,74 @@ export default function CardsPanel({
       setJobError(err instanceof Error ? err.message : 'Start failed');
     }
   }, [selectedRuleSetId, selectedModel, sectionId, sectionIds, topicTreeId, topicPath, fetchCards, onReviewChange, refreshUsage]);
+
+  // Inspect the exact prompt + raw response for a single section (dry-run, no save).
+  const handleInspectPrompt = useCallback(async () => {
+    if (!sectionId || !selectedModel) return;
+    setInspectLoading(true);
+    setInspectError(null);
+    setInspectResult(null);
+    try {
+      const res = await debugGenerateSection(sectionId, {
+        model: selectedModel,
+        rule_set_id: selectedRuleSetId ?? undefined,
+      });
+      setInspectResult(res);
+      // Also log the raw response so it can be diffed in devtools.
+      // eslint-disable-next-line no-console
+      console.log('[generate-debug] section:', res.section_heading, '\n--- SYSTEM ---\n', res.system, '\n--- USER ---\n', res.user, '\n--- RAW RESPONSE ---\n', res.raw_response);
+      refreshUsage?.();
+    } catch (err: unknown) {
+      setInspectError(err instanceof Error ? err.message : 'Inspect failed');
+    } finally {
+      setInspectLoading(false);
+    }
+  }, [sectionId, selectedModel, selectedRuleSetId, refreshUsage]);
+
+  // Manual refresh of the card list (so a second user's edits show without a full reload).
+  const handleManualRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await fetchCards(sectionId, topicPath, true, pagination.pageIndex, sectionIds);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchCards, sectionId, topicPath, pagination.pageIndex, sectionIds]);
+
+  // Add manually-written or pasted card(s) to the current single section.
+  const handleAddManualCards = useCallback(async () => {
+    if (!sectionId) return;
+    setAddLoading(true);
+    setAddError(null);
+    try {
+      const payload: Parameters<typeof addManualCards>[0] = {
+        section_id: sectionId,
+        model: selectedModel,
+      };
+      if (addMode === 'single') {
+        if (!addFront.trim()) { setAddError('Card front is required'); setAddLoading(false); return; }
+        payload.cards = [{
+          front_html: addFront.trim(),
+          extra: addExtra.trim() || null,
+          tags: addTags.split(',').map(t => t.trim()).filter(Boolean),
+        }];
+      } else {
+        if (!addPaste.trim()) { setAddError('Paste some card text first'); setAddLoading(false); return; }
+        payload.raw_text = addPaste.trim();
+      }
+      const { created } = await addManualCards(payload);
+      if (!created.length) { setAddError('No cards were created from that input'); setAddLoading(false); return; }
+      setShowAddCards(false);
+      setAddFront(''); setAddExtra(''); setAddTags(''); setAddPaste('');
+      await fetchCards(sectionId, topicPath, true, undefined, sectionIds);
+      onReviewChange?.();
+      refreshUsage?.();
+    } catch (err: unknown) {
+      setAddError(err instanceof Error ? err.message : 'Add failed');
+    } finally {
+      setAddLoading(false);
+    }
+  }, [sectionId, selectedModel, addMode, addFront, addExtra, addTags, addPaste, fetchCards, topicPath, sectionIds, onReviewChange, refreshUsage]);
 
   // Resume polling for active jobs on mount and when topic/section context changes (handles page refresh)
   useEffect(() => {
@@ -2228,6 +2325,16 @@ export default function CardsPanel({
           </button>
         </div>
 
+        {/* Refresh cards from DB (no full page reload) */}
+        <button
+          onClick={handleManualRefresh}
+          disabled={refreshing || cardsLoading}
+          className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors duration-150"
+          title="Refresh cards from the database"
+        >
+          <span className={`inline-block ${refreshing ? 'animate-spin' : ''}`} aria-hidden>↻</span>
+        </button>
+
         {/* Status filter */}
         <select
           value={statusFilter}
@@ -2625,6 +2732,27 @@ export default function CardsPanel({
               ? `Generating… ${jobProgress ? `${jobProgress.processed}/${jobProgress.total}` : ''}`
               : 'Generate Cards'}
           </button>
+          {sectionId && (
+            <button
+              onClick={handleInspectPrompt}
+              disabled={inspectLoading || jobRunning}
+              className="px-2 py-1.5 text-xs font-medium text-blue-700 bg-white border border-blue-200 rounded-lg hover:bg-blue-50 disabled:opacity-50 transition-colors duration-150 flex items-center gap-1"
+              title="Inspect the exact prompt we send to Claude + the raw response (dry-run, nothing saved)"
+            >
+              {inspectLoading ? 'Inspecting…' : (<><span aria-hidden>🔍</span> Inspect prompt</>)}
+            </button>
+          )}
+          {sectionId && (
+            <button
+              onClick={() => { setShowAddCards(true); setAddError(null); }}
+              disabled={jobRunning}
+              className="px-2 py-1.5 text-xs font-medium text-violet-700 bg-white border border-violet-200 rounded-lg hover:bg-violet-50 disabled:opacity-50 transition-colors duration-150"
+              title="Add a card by hand, or paste cards from a Claude-chat session"
+            >
+              + Add card(s)
+            </button>
+          )}
+          {inspectError && <span className="text-xs text-red-600">{inspectError}</span>}
           {jobRunning && activeJobId && (
             <button
               onClick={async () => {
@@ -2817,6 +2945,123 @@ export default function CardsPanel({
           cards={selectedIds.size > 0 ? cards.filter(c => selectedIds.has(c.id)) : filteredCards}
           onClose={() => setAnkifyOpen(false)}
         />
+      )}
+
+      {/* Inspect prompt + raw response (debug, dry-run) */}
+      {inspectResult && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setInspectResult(null)} />
+          <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[820px] max-w-[94vw] max-h-[88vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
+              <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">
+                Prompt &amp; response · {inspectResult.section_heading}
+              </h2>
+              <span className="text-[11px] text-gray-500">
+                {inspectResult.model} · {inspectResult.usage.input_tokens.toLocaleString()} in / {inspectResult.usage.output_tokens.toLocaleString()} out · ${inspectResult.cost_usd.toFixed(4)}
+                {inspectResult.stop_reason === 'max_tokens' && <span className="text-red-600"> · TRUNCATED</span>}
+              </span>
+            </div>
+            <div className="flex-1 overflow-auto p-4 space-y-4">
+              <div>
+                <div className="text-[11px] font-semibold text-gray-500 uppercase mb-1">System prompt</div>
+                <pre className="text-[11px] whitespace-pre-wrap break-words bg-gray-50 border border-gray-200 rounded-lg p-2 max-h-48 overflow-auto font-mono">{inspectResult.system}</pre>
+              </div>
+              <div>
+                <div className="text-[11px] font-semibold text-gray-500 uppercase mb-1">User message</div>
+                <pre className="text-[11px] whitespace-pre-wrap break-words bg-gray-50 border border-gray-200 rounded-lg p-2 max-h-48 overflow-auto font-mono">{inspectResult.user}</pre>
+              </div>
+              <div>
+                <div className="text-[11px] font-semibold text-gray-500 uppercase mb-1">Raw response (cards Claude returned)</div>
+                <pre className="text-[11px] whitespace-pre-wrap break-words bg-blue-50 border border-blue-200 rounded-lg p-2 max-h-64 overflow-auto font-mono">{inspectResult.raw_response}</pre>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-200">
+              <button
+                onClick={() => navigator.clipboard.writeText(`SYSTEM:\n${inspectResult.system}\n\nUSER:\n${inspectResult.user}`)}
+                className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+              >
+                Copy prompt
+              </button>
+              <button
+                onClick={() => navigator.clipboard.writeText(inspectResult.raw_response)}
+                className="px-3 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800"
+              >
+                Copy response
+              </button>
+              <button
+                onClick={() => setInspectResult(null)}
+                className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add manual / pasted card(s) */}
+      {showAddCards && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/40" onClick={() => !addLoading && setShowAddCards(false)} />
+          <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[640px] max-w-[94vw] max-h-[88vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
+              <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">Add card(s) to this section</h2>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setAddMode('single')}
+                  className={`px-2 py-1 text-[11px] font-medium rounded-lg ${addMode === 'single' ? 'bg-violet-100 text-violet-700' : 'text-gray-500 hover:bg-gray-100'}`}
+                >
+                  Single card
+                </button>
+                <button
+                  onClick={() => setAddMode('paste')}
+                  className={`px-2 py-1 text-[11px] font-medium rounded-lg ${addMode === 'paste' ? 'bg-violet-100 text-violet-700' : 'text-gray-500 hover:bg-gray-100'}`}
+                >
+                  Paste from chat
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto p-4 space-y-3">
+              {addMode === 'single' ? (
+                <>
+                  <div>
+                    <label className="text-[11px] font-semibold text-gray-500 uppercase">Card front (use {'{{c1::term}}'} for clozes)</label>
+                    <textarea value={addFront} onChange={(e) => setAddFront(e.target.value)} rows={4}
+                      className="w-full mt-1 text-xs border border-gray-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-violet-500" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-gray-500 uppercase">Extra (optional)</label>
+                    <textarea value={addExtra} onChange={(e) => setAddExtra(e.target.value)} rows={3}
+                      className="w-full mt-1 text-xs border border-gray-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-violet-500" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-gray-500 uppercase">Tags (comma-separated, optional — defaults to section tags)</label>
+                    <input value={addTags} onChange={(e) => setAddTags(e.target.value)}
+                      className="w-full mt-1 text-xs border border-gray-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-violet-500" />
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Paste card(s) — any format</label>
+                  <p className="text-[11px] text-gray-500 mt-0.5">Haiku will split this into cards and route the text into fields verbatim (it won't reword anything). One or many cards.</p>
+                  <textarea value={addPaste} onChange={(e) => setAddPaste(e.target.value)} rows={10}
+                    className="w-full mt-1 text-xs border border-gray-200 rounded-lg p-2 font-mono focus:outline-none focus:ring-2 focus:ring-violet-500" />
+                </div>
+              )}
+              {addError && <div className="text-xs text-red-600">{addError}</div>}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-200">
+              <button onClick={() => setShowAddCards(false)} disabled={addLoading}
+                className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50">
+                Cancel
+              </button>
+              <button onClick={handleAddManualCards} disabled={addLoading}
+                className="px-3 py-1.5 text-xs font-medium text-white bg-violet-700 rounded-lg hover:bg-violet-800 disabled:opacity-50">
+                {addLoading ? (addMode === 'paste' ? 'Parsing…' : 'Adding…') : 'Add card(s)'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {bigEdit && (

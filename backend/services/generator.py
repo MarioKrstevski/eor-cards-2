@@ -210,16 +210,12 @@ def regenerate_single_card(
     return cards, needs_review, usage_dict(response)
 
 
-def generate_cards_for_section(
-    client: anthropic.Anthropic,
-    section_data: dict,
-    rules_text: str,
-    model: str = DEFAULT_MODEL,
-) -> tuple[list[dict], bool, dict]:
-    """Generate cards for a single section using Claude.
+def build_generation_prompt(section_data: dict, rules_text: str) -> tuple[str, str]:
+    """Build the exact (system_text, user_text) sent to Claude for one section.
 
-    section_data should have: content_text, heading, curriculum_topic_path, heading_tree (optional)
-    Returns (cards, needs_review, usage).
+    Single source of truth so the debug/inspect endpoint shows byte-for-byte
+    what the real generation call sends. section_data should have:
+    content_text, heading, curriculum_topic_path, heading_tree (optional).
     """
     topic = section_data.get('curriculum_topic_path') or ''
     topic_line = f"Curriculum context (for reference only): {topic}\n" if topic else ''
@@ -231,7 +227,7 @@ def generate_cards_for_section(
 
     numbered_source = number_paragraphs(section_data.get('content_text', ''))
 
-    chunk_prompt = (
+    user_text = (
         f"Now generate cards from the following study note content.\n\n"
         f"{topic_line}Section: {section_data.get('heading', '')}\n"
         f"{tree_section}\n"
@@ -241,6 +237,22 @@ def generate_cards_for_section(
         f"If you cannot confidently generate quality cards for this content, output NEEDS_REVIEW on its own line at the end.\n"
         f"Remember: ALL clozes on every card use {{{{c1::term}}}} — always c1, regardless of card number."
     )
+    system_text = ANCHOR_INSTRUCTION + "\n\n" + rules_text
+    return system_text, user_text
+
+
+def generate_cards_for_section(
+    client: anthropic.Anthropic,
+    section_data: dict,
+    rules_text: str,
+    model: str = DEFAULT_MODEL,
+) -> tuple[list[dict], bool, dict]:
+    """Generate cards for a single section using Claude.
+
+    section_data should have: content_text, heading, curriculum_topic_path, heading_tree (optional)
+    Returns (cards, needs_review, usage).
+    """
+    system_text, chunk_prompt = build_generation_prompt(section_data, rules_text)
 
     # Retry once with a higher cap if the output hits max_tokens — a truncated
     # response would otherwise silently drop the cards on its final line.
@@ -253,7 +265,7 @@ def generate_cards_for_section(
             temperature=0,
             system=[{
                 "type": "text",
-                "text": ANCHOR_INSTRUCTION + "\n\n" + rules_text,
+                "text": system_text,
                 "cache_control": {"type": "ephemeral"},
             }],
             messages=[{

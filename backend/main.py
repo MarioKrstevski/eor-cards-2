@@ -88,6 +88,7 @@ def _migrate_db():
             "ALTER TABLE section_images ADD COLUMN intended_position VARCHAR(10)",
             "ALTER TABLE sections ADD COLUMN section_status VARCHAR(20) DEFAULT 'normal'",
             "ALTER TABLE sections ADD COLUMN is_done BOOLEAN NOT NULL DEFAULT 0",
+            "ALTER TABLE cards ADD COLUMN manually_added BOOLEAN NOT NULL DEFAULT 0",
             "ALTER TABLE cards ADD COLUMN accuracy_score INTEGER",
             "ALTER TABLE cards ADD COLUMN accuracy_note TEXT",
             "ALTER TABLE cards ADD COLUMN eor_yield TEXT",
@@ -200,8 +201,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="EOR Card Studio v4", lifespan=lifespan)
 
+
+@app.middleware("http")
+async def _no_store_api(request, call_next):
+    """Never let the browser/proxy cache API responses. With two users sharing
+    one instance, a cached GET would show stale data (e.g. a card the other user
+    just deleted). Forces every /api read to come from the DB."""
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return response
+
+
 # Bumped on each deploy so /api/version can confirm what's actually running.
-APP_VERSION = 28
+APP_VERSION = 29
 
 
 @app.get("/api/version")
