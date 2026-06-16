@@ -28,14 +28,15 @@ MODELS = {
 }
 
 # ── Effort ─────────────────────────────────────────────────────────────────
-# Sonnet 4.6 supports the `effort` parameter (low|medium|high); higher effort
-# means more internal deliberation → slower + more tokens. Haiku 4.5 does NOT
-# support effort and errors if it's passed, so it gets no effort variants.
+# Sonnet 4.6 supports the `effort` parameter (low|medium|high|max); higher
+# effort means more internal deliberation → slower + more tokens. `max` is
+# valid on Sonnet 4.6 (and Opus 4.6+). Haiku 4.5 does NOT support effort and
+# errors if it's passed, so it gets no effort variants.
 # A model selection is encoded as "<model_id>:<effort>" (e.g.
 # "claude-sonnet-4-6:medium"). Bare model ids (no suffix) resolve to no effort
 # override, which is the model's own default.
 EFFORT_CAPABLE = {"claude-sonnet-4-6"}
-EFFORT_LEVELS = ["low", "medium", "high"]
+EFFORT_LEVELS = ["low", "medium", "high", "max"]
 
 
 def resolve_model(selection: str) -> tuple[str, str | None]:
