@@ -336,6 +336,11 @@ export async function bulkScoreCards(params: { card_ids: number[]; model: string
   return res.data;
 }
 
+export async function validateCards(params: { card_ids: number[]; model: string; auto_fix?: boolean }): Promise<{ validated: number; fixed: number }> {
+  const res = await http.post<{ validated: number; fixed: number }>('/cards/validate', params);
+  return res.data;
+}
+
 export async function bulkMarkCards(params: {
   card_ids: number[];
   mark_type_id: number | null;

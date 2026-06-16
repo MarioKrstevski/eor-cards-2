@@ -113,6 +113,12 @@ export interface Card {
   accuracy_score: number | null;
   accuracy_note: string | null;
   eor_yield: Record<string, string> | null;
+  correctness_score?: number | null;
+  correctness?: {
+    total: number;
+    rules: { key: string; title: string; pass: boolean; reason: string }[];
+    split_suggested: boolean;
+  } | null;
   in_fix_batch: boolean;
   manually_added?: boolean;
   created_at: string;

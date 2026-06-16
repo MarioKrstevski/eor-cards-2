@@ -78,6 +78,8 @@ def card_to_dict(card: Card, db: Session | None = None, img_cache: dict | None =
         "accuracy_score": card.accuracy_score,
         "accuracy_note": card.accuracy_note,
         "eor_yield": card.eor_yield,
+        "correctness_score": getattr(card, "correctness_score", None),
+        "correctness": getattr(card, "correctness", None),
         "needs_review": card.needs_review if hasattr(card, 'needs_review') else False,
         "created_at": card.created_at.isoformat() if card.created_at else None,
         "updated_at": card.updated_at.isoformat() if card.updated_at else None,
@@ -519,6 +521,141 @@ def bulk_score_cards(body: BulkScoreRequest, db: Session = Depends(get_db)):
         db.commit()
 
     return {"scored": total_scored, "failed_groups": failed_groups}
+
+
+class ValidateRequest(BaseModel):
+    card_ids: list[int]
+    model: str = DEFAULT_MODEL
+    auto_fix: bool = True
+
+
+@router.post("/validate")
+def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
+    """Grade cards against the correctness rubric and (optionally) auto-fix
+    failing ones in a small regenerate loop. Stores a per-rule scorecard."""
+    if not body.card_ids:
+        raise HTTPException(400, "No card_ids provided")
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from backend.services.correctness_validator import judge_cards, summarize, fix_guidance
+    from backend.services.generator import regenerate_single_card
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    cards = db.query(Card).filter(Card.id.in_(body.card_ids)).all()
+    cards_by_id = {c.id: c for c in cards}
+
+    section_groups: dict[int, list] = {}
+    for c in cards:
+        section_groups.setdefault(c.section_id, []).append(c)
+    sections = {s.id: s for s in db.query(Section).filter(Section.id.in_(section_groups.keys())).all()}
+
+    rs = db.query(RuleSet).filter_by(rule_type="generation", is_default=True).first()
+    rules_text = rs.content if rs else "Generate cloze cards. Use {{c1::term}} format."
+
+    total_input = 0
+    total_output = 0
+
+    # 1) Batch-judge every card in each section (one call per section).
+    initial: dict[int, dict] = {}
+    for sid, group in section_groups.items():
+        payload = [{"id": c.id, "front_html": c.front_html, "extra": c.extra} for c in group]
+        try:
+            results, usage = judge_cards(client, payload, body.model)
+            total_input += usage.get("input_tokens", 0)
+            total_output += usage.get("output_tokens", 0)
+            for r in results:
+                initial[r["card_id"]] = r
+        except Exception:
+            logger.exception("Validation judge failed for section %d", sid)
+
+    # Plain (thread-safe) snapshots — do NOT touch the ORM/session inside workers.
+    section_data_by_card: dict[int, dict] = {}
+    state_by_card: dict[int, dict] = {}
+    for cid in initial:
+        c = cards_by_id[cid]
+        s = sections.get(c.section_id)
+        section_data_by_card[cid] = {
+            "content_text": s.content_text if s else "",
+            "content_html": s.content_html if s else "",
+            "heading": s.heading if s else "",
+            "curriculum_topic_path": s.curriculum_topic_path if s else "",
+        }
+        state_by_card[cid] = {"front_html": c.front_html, "extra": c.extra}
+
+    def _fixable(result: dict) -> list:
+        # Everything failing except the single-concept rule when a split is suggested
+        # (split changes card count — left for the reviewer, not the auto-fixer).
+        return [
+            r for r in result["rules"]
+            if not r["pass"] and not (r["key"] == "single_concept" and result.get("split_suggested"))
+        ]
+
+    def fix_worker(cid: int) -> dict:
+        result = initial[cid]
+        front_html = state_by_card[cid]["front_html"]
+        extra = state_by_card[cid]["extra"]
+        section_data = section_data_by_card[cid]
+        u = {"input_tokens": 0, "output_tokens": 0}
+        if body.auto_fix:
+            for _ in range(3):
+                failed = _fixable(result)
+                if not failed:
+                    break
+                guidance = fix_guidance(failed)
+                try:
+                    cards_data, _nr, fu = regenerate_single_card(
+                        client, section_data, front_html, rules_text, extra_prompt=guidance, model=body.model
+                    )
+                    u["input_tokens"] += fu.get("input_tokens", 0)
+                    u["output_tokens"] += fu.get("output_tokens", 0)
+                    if cards_data:
+                        front_html = cards_data[0]["front_html"]
+                        extra = cards_data[0].get("extra")
+                    rj, ju = judge_cards(client, [{"id": cid, "front_html": front_html, "extra": extra}], body.model)
+                    u["input_tokens"] += ju.get("input_tokens", 0)
+                    u["output_tokens"] += ju.get("output_tokens", 0)
+                    if rj:
+                        result = rj[0]
+                except Exception:
+                    logger.exception("Fix loop failed for card %d", cid)
+                    break
+        return {"card_id": cid, "front_html": front_html, "extra": extra, "result": result, "usage": u}
+
+    validated = 0
+    fixed = 0
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        futures = [ex.submit(fix_worker, cid) for cid in initial]
+        for fut in as_completed(futures):
+            out = fut.result()
+            card = cards_by_id[out["card_id"]]
+            res = out["result"]
+            total_input += out["usage"]["input_tokens"]
+            total_output += out["usage"]["output_tokens"]
+            if body.auto_fix and out["front_html"] != card.front_html:
+                card.front_html = out["front_html"]
+                card.front_text = strip_card_html(out["front_html"])
+                card.extra = out["extra"]
+                fixed += 1
+            passed, total = summarize(res["rules"])
+            card.correctness_score = passed
+            card.correctness = {
+                "total": total,
+                "rules": res["rules"],
+                "split_suggested": res.get("split_suggested", False),
+            }
+            validated += 1
+    db.commit()
+
+    if total_input or total_output:
+        db.add(AIUsageLog(
+            operation="card_validation",
+            model=body.model,
+            input_tokens=total_input,
+            output_tokens=total_output,
+            cost_usd=compute_cost(body.model, total_input, total_output),
+        ))
+        db.commit()
+
+    return {"validated": validated, "fixed": fixed}
 
 
 class ManualCardInput(BaseModel):

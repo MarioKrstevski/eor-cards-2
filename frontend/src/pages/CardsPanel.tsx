@@ -28,6 +28,7 @@ import {
   createReviewMarkType,
   bulkMarkCards,
   bulkScoreCards,
+  validateCards,
   createFixBatch,
   getFixBatch,
   confirmFixBatch,
@@ -1100,6 +1101,7 @@ export default function CardsPanel({
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showDeleteMenu, setShowDeleteMenu] = useState(false);
   const [scoring, setScoring] = useState(false);
+  const [validating, setValidating] = useState(false);
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const [showFixBatchModal, setShowFixBatchModal] = useState(false);
   const [fixBatchPrompt, setFixBatchPrompt] = useState('');
@@ -1395,6 +1397,21 @@ export default function CardsPanel({
                     {card.accuracy_score}
                   </span>
                 )}
+                {card.correctness && card.correctness_score != null && (() => {
+                  const total = card.correctness.total;
+                  const fails = total - card.correctness_score;
+                  const color = fails === 0 ? 'bg-green-500' : fails === 1 ? 'bg-amber-500' : 'bg-red-600';
+                  const lines = card.correctness.rules.map(r => `${r.pass ? '✓' : '✗'} ${r.title}${!r.pass && r.reason ? ` — ${r.reason}` : ''}`);
+                  const title = `Correctness: ${card.correctness_score}/${total}\n${lines.join('\n')}${card.correctness.split_suggested ? '\n⚠ Suggest splitting into sibling cards' : ''}`;
+                  return (
+                    <span
+                      className={`px-1 h-4 rounded flex items-center justify-center text-[8px] font-bold text-white shrink-0 ${color}`}
+                      title={title}
+                    >
+                      {card.correctness_score}/{total}{card.correctness.split_suggested ? ' ⚠' : ''}
+                    </span>
+                  );
+                })()}
                 <span className={`text-xs tabular-nums ${!card.is_reviewed ? 'font-bold' : 'text-gray-400'}`}>
                   {info.getValue()}
                 </span>
@@ -2595,6 +2612,43 @@ export default function CardsPanel({
                     Score Cards — all in topic ({totalCards})
                   </button>
                 )}
+                <button
+                  onClick={async () => {
+                    setShowActionsMenu(false);
+                    if (selectedIds.size === 0) return;
+                    setValidating(true);
+                    try {
+                      await validateCards({ card_ids: [...selectedIds], model: selectedModel, auto_fix: true });
+                      fetchCards(sectionId, topicPath, true, undefined, sectionIds);
+                    } catch { setActionError('Validation failed'); } finally { setValidating(false); }
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-indigo-700 hover:bg-indigo-50"
+                >
+                  Validate &amp; fix — selected ({selectedIds.size})
+                </button>
+                {(sectionId || (sectionIds && sectionIds.length > 0)) && (
+                  <button
+                    onClick={async () => {
+                      setShowActionsMenu(false);
+                      setValidating(true);
+                      try {
+                        const allCards = await getCards({
+                          ...(sectionId ? { section_id: sectionId } : {}),
+                          ...(sectionIds && sectionIds.length > 0 ? { section_ids: sectionIds.join(',') } : {}),
+                          ...(!sectionId && !sectionIds?.length && topicPath ? { topic: topicPath } : {}),
+                          limit: 10000, offset: 0,
+                        });
+                        const allIds = allCards.cards.map(c => c.id);
+                        if (allIds.length === 0) return;
+                        await validateCards({ card_ids: allIds, model: selectedModel, auto_fix: true });
+                        fetchCards(sectionId, topicPath, true, undefined, sectionIds);
+                      } catch { setActionError('Validation failed'); } finally { setValidating(false); }
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-xs text-indigo-700 hover:bg-indigo-50"
+                  >
+                    Validate &amp; fix — all in topic ({totalCards})
+                  </button>
+                )}
                 <div className="border-t border-gray-100 my-1" />
                 <p className="px-3 py-1 text-[9px] font-semibold text-gray-400 uppercase tracking-wide">Mark as</p>
                 {markTypes.map(m => (
@@ -2725,13 +2779,13 @@ export default function CardsPanel({
             )}
           </div>
           {/* Activity spinner */}
-          {(jobRunning || bulkRegenProgress || scoring) && (
+          {(jobRunning || bulkRegenProgress || scoring || validating) && (
             <div className="flex items-center gap-1.5 ml-2 text-[10px] text-blue-600">
               <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
-              <span>{bulkRegenProgress ? `Regen ${bulkRegenProgress.done}/${bulkRegenProgress.total}` : scoring ? 'Scoring...' : 'Generating...'}</span>
+              <span>{bulkRegenProgress ? `Regen ${bulkRegenProgress.done}/${bulkRegenProgress.total}` : validating ? 'Validating...' : scoring ? 'Scoring...' : 'Generating...'}</span>
             </div>
           )}
           <button
