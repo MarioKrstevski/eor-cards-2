@@ -29,32 +29,82 @@ NEVER use markdown formatting. \
 * characters are FORBIDDEN for emphasis. \
 No #, no backticks, no markdown of any kind. \
 For any emphasis, use only HTML tags: <b>term</b>. \
-The output format is: number|card text|additional context (optional)|source:P1-P3 \
+The output format is: number|card text|additional context (optional) \
 The additional context after the second | is optional. When the rules specify \
 additional context, sibling footers, or supplementary information for a card, \
 place it after a second | delimiter on the same line. \
 Do NOT concatenate additional context directly into the card text. \
 The card text (between first and second |) must contain ONLY the primary testable content. \
-The fourth field (after the third |) is a source reference indicating which [P1], [P2], etc. \
-paragraph markers from the source text the card was derived from. Use format source:P3 (single), \
-source:P3-P5 (contiguous range), or source:P3,P7 (non-contiguous). This field is required. \
 CLOZE INDEX RULE — ABSOLUTE: Every card uses {{c1::term}} for ALL cloze deletions. \
 Always c1, regardless of the card number. Never use c2, c3, c4, etc. \
-Example: 1|Primary card text with {{c1::clozes}}.|Other items: item A, item B, item C|source:P1-P2"""
+Example: 1|Primary card text with {{c1::clozes}}.|Other items: item A, item B, item C"""
 
 
-def number_paragraphs(text: str) -> str:
-    """Prefix each non-empty line with [P1], [P2], etc. for source traceability."""
-    lines = text.split("\n")
-    numbered = []
-    counter = 0
-    for line in lines:
-        if line.strip():
-            counter += 1
-            numbered.append(f"[P{counter}] {line}")
+def _inline_with_emphasis(node) -> str:
+    """Inner text of an element, keeping only <b>/<i>/<u> emphasis tags and
+    dropping any nested lists (rendered separately). Whitespace collapsed."""
+    from bs4 import NavigableString, Tag
+    parts = []
+    for child in node.children:
+        if isinstance(child, NavigableString):
+            parts.append(str(child))
+        elif isinstance(child, Tag):
+            if child.name in ("ul", "ol"):
+                continue
+            if child.name in ("b", "i", "u"):
+                parts.append(f"<{child.name}>{_inline_with_emphasis(child)}</{child.name}>")
+            else:
+                parts.append(_inline_with_emphasis(child))
+    return re.sub(r"\s+", " ", "".join(parts)).strip()
+
+
+def structured_source_from_html(html: str) -> str:
+    """Render a section's content_html as plain source text that PRESERVES the
+    two cues a flat dump loses: bullet nesting (via indentation) and bold/italic
+    emphasis (kept as <b>/<i>/<u>). No paragraph numbers — cards no longer cite
+    source refs. Used as the source block in the generation prompt."""
+    from bs4 import BeautifulSoup, Tag
+    soup = BeautifulSoup(html or "", "html.parser")
+    lines: list[str] = []
+
+    def emit(depth: int, marker: str, text: str):
+        if text:
+            lines.append(f"{'  ' * depth}{marker}{text}")
+
+    def walk_list(list_tag, depth):
+        for li in list_tag.find_all("li", recursive=False):
+            emit(depth, "- ", _inline_with_emphasis(li))
+            for sub in li.find_all(["ul", "ol"], recursive=False):
+                walk_list(sub, depth + 1)
+
+    for el in soup.children:
+        if isinstance(el, Tag):
+            if el.name in ("ul", "ol"):
+                walk_list(el, 0)
+            elif el.name == "div" and "image-placeholder" in (el.get("class") or []):
+                continue
+            else:
+                depth = 0
+                m = re.search(r"margin-left:\s*([\d.]+)em", el.get("style", "") or "")
+                if m:
+                    depth = max(0, round(float(m.group(1)) / 1.5))
+                emit(depth, "", _inline_with_emphasis(el))
         else:
-            numbered.append(line)
-    return "\n".join(numbered)
+            t = re.sub(r"\s+", " ", str(el)).strip()
+            if t:
+                emit(0, "", t)
+    return "\n".join(lines)
+
+
+def _render_source_text(section_data: dict) -> str:
+    """Source block for the prompt: structure-preserving when content_html is
+    available, else the plain content_text (no numbering either way)."""
+    html = section_data.get("content_html")
+    if html:
+        rendered = structured_source_from_html(html)
+        if rendered.strip():
+            return rendered
+    return (section_data.get("content_text") or "").strip()
 
 
 def strip_card_html(card_text: str) -> str:
@@ -178,17 +228,17 @@ def regenerate_single_card(
     topic = section_data.get('curriculum_topic_path') or ''
     topic_line = f"Curriculum context (for reference only): {topic}\n" if topic else ''
 
-    numbered_source = number_paragraphs(section_data.get('content_text', ''))
+    source_text = _render_source_text(section_data)
 
     chunk_prompt = (
         f"You are regenerating a single flashcard from the source content below.\n\n"
         f"{topic_line}Section: {section_data.get('heading', '')}\n\n"
-        f"Source text:\n{numbered_source}\n\n"
+        f"Source text:\n{source_text}\n\n"
         f"The existing card (improve or replace it):\n{existing_card_html}\n"
     )
     if extra_prompt:
         chunk_prompt += f"\nAdditional guidance: {extra_prompt}\n"
-    chunk_prompt += "\nGenerate ONE improved replacement card. Output exactly:\n1|cloze card text|additional context (optional)|source:P1-P3"
+    chunk_prompt += "\nGenerate ONE improved replacement card. Output exactly:\n1|cloze card text|additional context (optional)"
 
     response = client.messages.create(
         model=resolve_model(model)[0],
@@ -215,7 +265,8 @@ def build_generation_prompt(section_data: dict, rules_text: str) -> tuple[str, s
 
     Single source of truth so the debug/inspect endpoint shows byte-for-byte
     what the real generation call sends. section_data should have:
-    content_text, heading, curriculum_topic_path, heading_tree (optional).
+    content_html (preferred) or content_text, heading, curriculum_topic_path,
+    heading_tree (optional).
     """
     topic = section_data.get('curriculum_topic_path') or ''
     topic_line = f"Curriculum context (for reference only): {topic}\n" if topic else ''
@@ -225,15 +276,15 @@ def build_generation_prompt(section_data: dict, rules_text: str) -> tuple[str, s
     if heading_tree:
         tree_section = f"\nSection structure:\n{_format_heading_tree(heading_tree)}\n"
 
-    numbered_source = number_paragraphs(section_data.get('content_text', ''))
+    source_text = _render_source_text(section_data)
 
     user_text = (
         f"Now generate cards from the following study note content.\n\n"
         f"{topic_line}Section: {section_data.get('heading', '')}\n"
         f"{tree_section}\n"
-        f"Source text:\n{numbered_source}\n\n"
+        f"Source text:\n{source_text}\n\n"
         f"Generate the cards following ALL the rules above. Output in the exact format:\n"
-        f"number|cloze card text|additional context (optional)|source:P1-P3\n\n"
+        f"number|cloze card text|additional context (optional)\n\n"
         f"If you cannot confidently generate quality cards for this content, output NEEDS_REVIEW on its own line at the end.\n"
         f"Remember: ALL clozes on every card use {{{{c1::term}}}} — always c1, regardless of card number."
     )

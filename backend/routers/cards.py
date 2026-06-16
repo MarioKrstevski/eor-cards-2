@@ -198,6 +198,7 @@ def regenerate_card(card_id: int, body: RegenerateCardRequest, db: Session = Dep
         client,
         section_data={
             "content_text": section.content_text,
+            "content_html": section.content_html,
             "heading": section.heading,
             "curriculum_topic_path": section.curriculum_topic_path,
         },
@@ -360,6 +361,7 @@ def regenerate_card_preview(card_id: int, body: RegenerateCardRequest, db: Sessi
         client,
         section_data={
             "content_text": section.content_text,
+            "content_html": section.content_html,
             "heading": section.heading,
             "curriculum_topic_path": section.curriculum_topic_path,
         },

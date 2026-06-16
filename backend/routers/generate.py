@@ -77,6 +77,7 @@ def debug_generate_section(section_id: int, body: DebugGenerateRequest, db: Sess
     section_data = {
         "id": section.id,
         "content_text": section.content_text,
+        "content_html": section.content_html,
         "heading": section.heading,
         "heading_tree": section.heading_tree,
         "curriculum_topic_path": section.curriculum_topic_path,
@@ -394,6 +395,7 @@ def _run_generation(
             sections_by_id[section.id] = {
                 "id": section.id,
                 "content_text": section.content_text,
+                "content_html": section.content_html,
                 "heading": section.heading,
                 "heading_tree": section.heading_tree,
                 "curriculum_topic_path": section.curriculum_topic_path,
