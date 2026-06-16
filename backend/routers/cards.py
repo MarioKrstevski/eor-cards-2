@@ -151,32 +151,37 @@ def patch_card(card_id: int, body: CardPatch, db: Session = Depends(get_db)):
     card = db.get(Card, card_id)
     if not card:
         raise HTTPException(404)
-    if body.front_html is not None:
-        card.front_html = body.front_html
-        card.front_text = strip_card_html(body.front_html)
-    if body.front_html_v1 is not None:
+    # Use the set of fields the client actually SENT (model_fields_set), not
+    # "is not None" — otherwise an explicit null (clearing extra/vignette/
+    # teaching_case to empty) is indistinguishable from "field omitted" and the
+    # deletion silently doesn't persist.
+    sent = body.model_fields_set
+    if "front_html" in sent:
+        card.front_html = body.front_html or ""
+        card.front_text = strip_card_html(body.front_html or "")
+    if "front_html_v1" in sent:
         card.front_html_v1 = body.front_html_v1
-    if body.front_html_v2 is not None:
+    if "front_html_v2" in sent:
         card.front_html_v2 = body.front_html_v2
-    if body.front_html_v3 is not None:
+    if "front_html_v3" in sent:
         card.front_html_v3 = body.front_html_v3
-    if body.tags is not None:
+    if "tags" in sent:
         card.tags = body.tags
-    if body.tags_mapped is not None:
+    if "tags_mapped" in sent:
         card.tags_mapped = body.tags_mapped
-    if body.extra is not None:
+    if "extra" in sent:
         card.extra = body.extra
-    if body.vignette is not None:
+    if "vignette" in sent:
         card.vignette = body.vignette
-    if body.teaching_case is not None:
+    if "teaching_case" in sent:
         card.teaching_case = body.teaching_case
-    if body.ref_img_id is not None:
-        card.ref_img_id = body.ref_img_id if body.ref_img_id != 0 else None
-    if body.ref_img_position is not None:
+    if "ref_img_id" in sent:
+        card.ref_img_id = body.ref_img_id or None  # 0 / null both mean "clear"
+    if "ref_img_position" in sent:
         card.ref_img_position = body.ref_img_position
-    if body.status is not None:
+    if "status" in sent and body.status is not None:
         card.status = body.status
-    if body.is_reviewed is not None:
+    if "is_reviewed" in sent:
         card.is_reviewed = body.is_reviewed
     db.commit()
     db.refresh(card)
