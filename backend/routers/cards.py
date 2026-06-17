@@ -566,8 +566,10 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
     initial: dict[int, dict] = {}
     for sid, group in section_groups.items():
         payload = [{"id": c.id, "front_html": c.front_html, "extra": c.extra} for c in group]
+        sec = sections.get(sid)
+        cpath = (sec.curriculum_topic_path or "") if sec else ""
         try:
-            results, usage = judge_cards(client, payload, body.model)
+            results, usage = judge_cards(client, payload, body.model, cpath)
             total_input += usage.get("input_tokens", 0)
             total_output += usage.get("output_tokens", 0)
             for r in results:
@@ -603,10 +605,11 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
     def regen_fix_loop(front_html, extra, section_data, temp_id, initial_result, u):
         """Judge (if needed) then regenerate up to 3x, keeping the best-scoring
         attempt across rounds (not just the last). Never splits. Mutates u."""
+        cpath = section_data.get("curriculum_topic_path", "")
         result = initial_result
         if result is None:
             try:
-                rj, ju = judge_cards(client, [{"id": temp_id, "front_html": front_html, "extra": extra}], body.model)
+                rj, ju = judge_cards(client, [{"id": temp_id, "front_html": front_html, "extra": extra}], body.model, cpath)
                 u["input_tokens"] += ju.get("input_tokens", 0)
                 u["output_tokens"] += ju.get("output_tokens", 0)
                 result = rj[0] if rj else None
@@ -629,7 +632,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                 if cards_data:
                     front_html = cards_data[0]["front_html"]
                     extra = cards_data[0].get("extra")
-                rj, ju = judge_cards(client, [{"id": temp_id, "front_html": front_html, "extra": extra}], body.model)
+                rj, ju = judge_cards(client, [{"id": temp_id, "front_html": front_html, "extra": extra}], body.model, cpath)
                 u["input_tokens"] += ju.get("input_tokens", 0)
                 u["output_tokens"] += ju.get("output_tokens", 0)
                 if rj:

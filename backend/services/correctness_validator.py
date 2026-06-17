@@ -143,10 +143,13 @@ def judge_cards(
     client: anthropic.Anthropic,
     cards: list[dict],
     model: str,
+    curriculum_path: str = "",
 ) -> tuple[list[dict], dict]:
     """Grade a batch of cards against all rules.
 
     cards: list of {"id", "front_html", "extra"}.
+    curriculum_path: where these cards live (e.g. "Surgery > GI > Cholecystitis"),
+    so the judge knows the anchor/topic context when scoring.
     Returns (results, usage). Each result: {"card_id", "split_suggested",
     "rules": [{"key", "pass", "reason"}]} with the format_markup rule overridden
     by the deterministic code check.
@@ -157,8 +160,14 @@ def judge_cards(
         extra = c.get("extra") or "(none)"
         return f"Card {c['id']}:\n  front_html: {front}\n  front_revealed: {plain}\n  extra: {extra}"
 
+    topic_line = (
+        f"Topic context — these cards belong under this curriculum path: {curriculum_path}\n"
+        "Use it to judge whether the visible anchor/context is sufficient and which condition the card is about.\n\n"
+        if curriculum_path else ""
+    )
     user_message = (
-        "Review these cards. Judge every card against every rule in the rubric.\n\n"
+        topic_line
+        + "Review these cards. Judge every card against every rule in the rubric.\n\n"
         + "\n\n".join(card_block(c) for c in cards)
     )
 
