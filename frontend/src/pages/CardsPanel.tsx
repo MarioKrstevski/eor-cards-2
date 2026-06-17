@@ -1412,7 +1412,7 @@ export default function CardsPanel({
                   const title = `Correctness: ${card.correctness_score}/${total}\n${lines.join('\n')}${card.correctness.split_suggested ? '\n⚠ Suggest splitting into sibling cards' : ''}`;
                   return (
                     <span
-                      className={`min-w-[20px] px-1 py-0.5 rounded-md flex items-center justify-center text-[8px] font-bold text-white shrink-0 leading-none ${color}`}
+                      className={`min-w-[20px] px-1 py-0.5 flex items-center justify-center text-[8px] font-bold text-white shrink-0 leading-none ${color}`}
                       title={title}
                     >
                       {card.correctness_score}/{total}{card.correctness.split_suggested ? ' ⚠' : ''}
