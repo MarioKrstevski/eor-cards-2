@@ -267,7 +267,7 @@ def split_card(
     """Split one overloaded card into multiple focused sibling cards. Returns
     (cards, usage) where each card is a parsed {front_html, front_text, extra,...}.
     """
-    from backend.services.generator import ANCHOR_INSTRUCTION, _render_source_text, parse_card_output
+    from backend.services.generator import _render_source_text, parse_card_output
 
     source = _render_source_text(section_data)
     topic = section_data.get("curriculum_topic_path") or ""
@@ -297,7 +297,7 @@ def split_card(
         **effort_kwargs(model),
         max_tokens=4096,
         temperature=0,
-        system=[{"type": "text", "text": ANCHOR_INSTRUCTION + "\n\n" + rules_text, "cache_control": {"type": "ephemeral"}}],
+        system=[{"type": "text", "text": rules_text, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user}],
     )
     cards, _needs_review = parse_card_output(response_text(response))

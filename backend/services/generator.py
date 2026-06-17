@@ -8,6 +8,9 @@ from backend.services.ai_utils import CLOZE_RE, response_text, usage_dict
 
 logger = logging.getLogger(__name__)
 
+# NOTE: ANCHOR_INSTRUCTION is intentionally NO LONGER wired into any prompt — these
+# rules now live in the editable rule set (card_gen_v6). Kept here as dead/reference
+# code in case we want to reinstate a hardcoded system prefix later.
 ANCHOR_INSTRUCTION = """CRITICAL RULE — Anchor term: Every card must contain a visible, unclosed "anchor" \
 that tells the student what topic/condition/concept they are being tested on. \
 Determine the anchor from the topic path, section heading, and content context. \
@@ -247,7 +250,7 @@ def regenerate_single_card(
         temperature=0,
         system=[{
             "type": "text",
-            "text": ANCHOR_INSTRUCTION + "\n\n" + rules_text,
+            "text": rules_text,  # ANCHOR_INSTRUCTION no longer prepended (rules live in the rule set)
             "cache_control": {"type": "ephemeral"},
         }],
         messages=[{
@@ -288,7 +291,7 @@ def build_generation_prompt(section_data: dict, rules_text: str) -> tuple[str, s
         f"If you cannot confidently generate quality cards for this content, output NEEDS_REVIEW on its own line at the end.\n"
         f"Remember: ALL clozes on every card use {{{{c1::term}}}} — always c1, regardless of card number."
     )
-    system_text = ANCHOR_INSTRUCTION + "\n\n" + rules_text
+    system_text = rules_text  # ANCHOR_INSTRUCTION no longer prepended — its rules now live in the rule set
     return system_text, user_text
 
 
