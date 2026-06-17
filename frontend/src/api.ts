@@ -341,6 +341,22 @@ export async function validateCards(params: { card_ids: number[]; model: string;
   return res.data;
 }
 
+export interface SectionCost {
+  total: number;
+  since: string | null;
+  by_operation: { operation: string; cost: number }[];
+}
+
+export async function getSectionCost(sectionId: number): Promise<SectionCost> {
+  const res = await http.get<SectionCost>(`/sections/${sectionId}/cost`);
+  return res.data;
+}
+
+export async function resetSectionCost(sectionId: number): Promise<{ reset_at: string }> {
+  const res = await http.post<{ reset_at: string }>(`/sections/${sectionId}/cost/reset`, {});
+  return res.data;
+}
+
 export async function getValidationRules(): Promise<{ key: string; title: string; criteria: string }[]> {
   const res = await http.get<{ key: string; title: string; criteria: string }[]>('/cards/validation-rules');
   return res.data;

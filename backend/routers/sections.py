@@ -6,7 +6,7 @@ from sqlalchemy import func
 from pydantic import BaseModel
 from typing import Optional
 from backend.db import get_db
-from backend.models import Section, ContentBlock, SectionImage, utcnow
+from backend.models import Section, ContentBlock, SectionImage, AIUsageLog, utcnow
 from backend.services.doc_processor import parse_html, build_content_html
 
 router = APIRouter()
@@ -364,3 +364,40 @@ def delete_section_image(section_id: int, image_id: int, db: Session = Depends(g
         section.image_count -= 1
     db.commit()
     return {"ok": True}
+
+
+@router.get("/{section_id}/cost")
+def section_cost(section_id: int, db: Session = Depends(get_db)):
+    """AI spend attributed to this section, broken down by operation. Only counts
+    usage logged after the section's cost baseline (if it was reset)."""
+    section = db.get(Section, section_id)
+    if not section:
+        raise HTTPException(404, "Section not found")
+    q = db.query(AIUsageLog.operation, func.sum(AIUsageLog.cost_usd)).filter(
+        AIUsageLog.section_id == section_id
+    )
+    if section.cost_reset_at:
+        q = q.filter(AIUsageLog.created_at > section.cost_reset_at)
+    rows = q.group_by(AIUsageLog.operation).all()
+    by_operation = sorted(
+        [{"operation": op, "cost": float(c or 0)} for op, c in rows],
+        key=lambda r: r["cost"], reverse=True,
+    )
+    total = sum(r["cost"] for r in by_operation)
+    return {
+        "total": total,
+        "since": section.cost_reset_at.isoformat() if section.cost_reset_at else None,
+        "by_operation": by_operation,
+    }
+
+
+@router.post("/{section_id}/cost/reset")
+def reset_section_cost(section_id: int, db: Session = Depends(get_db)):
+    """Set the section's cost baseline to now, so the displayed spend restarts
+    at $0 (history is kept; we just stop counting earlier usage)."""
+    section = db.get(Section, section_id)
+    if not section:
+        raise HTTPException(404, "Section not found")
+    section.cost_reset_at = utcnow()
+    db.commit()
+    return {"reset_at": section.cost_reset_at.isoformat()}

@@ -479,6 +479,16 @@ def _run_generation(
         scoring_failures = 0
         cancelled = False
 
+        # Per-section token tally so cost can be attributed to each section.
+        per_section_usage: dict[int, dict] = {}
+
+        def _acc_section(sid, u):
+            d = per_section_usage.setdefault(sid, {"input": 0, "output": 0, "cw": 0, "cr": 0})
+            d["input"] += u.get("input_tokens", 0)
+            d["output"] += u.get("output_tokens", 0)
+            d["cw"] += u.get("cache_creation_input_tokens", 0)
+            d["cr"] += u.get("cache_read_input_tokens", 0)
+
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = {executor.submit(process_section, s): s for s in sections_by_id.values()}
             for future in as_completed(futures):
@@ -544,6 +554,7 @@ def _run_generation(
                 total_output_tokens += usage["output_tokens"]
                 total_cache_write += usage.get("cache_creation_input_tokens", 0)
                 total_cache_read += usage.get("cache_read_input_tokens", 0)
+                _acc_section(section_data["id"], usage)
                 db.commit()
 
                 # Score the cards created in this run (base generation only —
@@ -571,6 +582,7 @@ def _run_generation(
                         total_output_tokens += score_usage.get("output_tokens", 0)
                         total_cache_write += score_usage.get("cache_creation_input_tokens", 0)
                         total_cache_read += score_usage.get("cache_read_input_tokens", 0)
+                        _acc_section(section_data["id"], score_usage)
                         db.commit()
                     except Exception:
                         logger.exception("Error scoring cards for section %d", section_data["id"])
@@ -580,18 +592,21 @@ def _run_generation(
                 db.commit()
 
         topic_tree_id = next(iter(sections_by_id.values()), {}).get("topic_tree_id")
-        if total_input_tokens or total_output_tokens:
-            db.add(AIUsageLog(
-                operation="card_generation",
-                model=model,
-                input_tokens=total_input_tokens,
-                output_tokens=total_output_tokens,
-                cache_write_tokens=total_cache_write,
-                cache_read_tokens=total_cache_read,
-                cost_usd=compute_cost(model, total_input_tokens, total_output_tokens, total_cache_write, total_cache_read),
-                topic_tree_id=topic_tree_id,
-                job_id=job_id,
-            ))
+        # One usage row per section (generation + its scoring) so cost is attributable per section.
+        for sid, u in per_section_usage.items():
+            if u["input"] or u["output"]:
+                db.add(AIUsageLog(
+                    operation="card_generation",
+                    model=model,
+                    input_tokens=u["input"],
+                    output_tokens=u["output"],
+                    cache_write_tokens=u["cw"],
+                    cache_read_tokens=u["cr"],
+                    cost_usd=compute_cost(model, u["input"], u["output"], u["cw"], u["cr"]),
+                    topic_tree_id=topic_tree_id,
+                    section_id=sid,
+                    job_id=job_id,
+                ))
         if cancelled:
             db.commit()  # keep the usage log; status stays cancelled
             return
@@ -676,6 +691,16 @@ def _run_supplemental(
             if leaf not in group_paths:
                 group_paths[leaf] = " > ".join(path) if path else "Unassigned"
 
+        card_section = {c.id: c.section_id for c in cards}  # attribute cost per section
+        per_section_usage: dict[int, dict] = {}
+
+        def _acc_section(sid, u):
+            d = per_section_usage.setdefault(sid, {"input": 0, "output": 0, "cw": 0, "cr": 0})
+            d["input"] += u.get("input_tokens", 0)
+            d["output"] += u.get("output_tokens", 0)
+            d["cw"] += u.get("cache_creation_input_tokens", 0)
+            d["cr"] += u.get("cache_read_input_tokens", 0)
+
         total_input = 0
         total_output = 0
         total_cache_write = 0
@@ -738,21 +763,26 @@ def _run_supplemental(
                 total_output += usage.get("output_tokens", 0)
                 total_cache_write += usage.get("cache_creation_input_tokens", 0)
                 total_cache_read += usage.get("cache_read_input_tokens", 0)
+                sid = card_section.get(group_cards[0]["id"]) if group_cards else None
+                if sid:
+                    _acc_section(sid, usage)
                 processed_groups += 1
                 job.processed_sections = processed_groups
                 db.commit()
 
-        if total_input or total_output:
-            db.add(AIUsageLog(
-                operation="supplemental_generation",
-                model=model,
-                input_tokens=total_input,
-                output_tokens=total_output,
-                cache_write_tokens=total_cache_write,
-                cache_read_tokens=total_cache_read,
-                cost_usd=compute_cost(model, total_input, total_output, total_cache_write, total_cache_read),
-                job_id=job_id,
-            ))
+        for sid, u in per_section_usage.items():
+            if u["input"] or u["output"]:
+                db.add(AIUsageLog(
+                    operation="supplemental_generation",
+                    model=model,
+                    input_tokens=u["input"],
+                    output_tokens=u["output"],
+                    cache_write_tokens=u["cw"],
+                    cache_read_tokens=u["cr"],
+                    cost_usd=compute_cost(model, u["input"], u["output"], u["cw"], u["cr"]),
+                    section_id=sid,
+                    job_id=job_id,
+                ))
         if cancelled:
             db.commit()
             return

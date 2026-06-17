@@ -31,6 +31,9 @@ import {
   validateCards,
   getValidationRules,
   revertValidation,
+  getSectionCost,
+  resetSectionCost,
+  type SectionCost,
   createFixBatch,
   getFixBatch,
   confirmFixBatch,
@@ -1108,6 +1111,8 @@ export default function CardsPanel({
   const [validationRules, setValidationRules] = useState<{ key: string; title: string; criteria: string }[]>([]);
   const [validatorOnly, setValidatorOnly] = useState(false);
   const [validationView, setValidationView] = useState<Card | null>(null);
+  const [showCost, setShowCost] = useState(false);
+  const [sectionCost, setSectionCost] = useState<SectionCost | null>(null);
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const [showFixBatchModal, setShowFixBatchModal] = useState(false);
   const [fixBatchPrompt, setFixBatchPrompt] = useState('');
@@ -1861,6 +1866,24 @@ export default function CardsPanel({
       setRefreshing(false);
     }
   }, [fetchCards, sectionId, topicPath, pagination.pageIndex, sectionIds]);
+
+  // Per-section AI cost (only when a single section is open).
+  const handleOpenCost = useCallback(async () => {
+    if (!sectionId) return;
+    setShowCost(true);
+    setSectionCost(null);
+    try {
+      setSectionCost(await getSectionCost(sectionId));
+    } catch { setActionError('Could not load cost'); }
+  }, [sectionId]);
+
+  const handleResetCost = useCallback(async () => {
+    if (!sectionId) return;
+    try {
+      await resetSectionCost(sectionId);
+      setSectionCost(await getSectionCost(sectionId));
+    } catch { setActionError('Reset failed'); }
+  }, [sectionId]);
 
   // Add manually-written or pasted card(s) to the current single section.
   const handleAddManualCards = useCallback(async () => {
@@ -2895,6 +2918,15 @@ export default function CardsPanel({
               + Add card(s)
             </button>
           )}
+          {sectionId && (
+            <button
+              onClick={handleOpenCost}
+              className="px-2 py-1.5 text-xs font-medium text-emerald-700 bg-white border border-emerald-200 rounded-lg hover:bg-emerald-50 transition-colors duration-150"
+              title="AI spend on this section"
+            >
+              $
+            </button>
+          )}
           {inspectError && <span className="text-xs text-red-600">{inspectError}</span>}
           {jobRunning && activeJobId && (
             <button
@@ -3660,6 +3692,68 @@ export default function CardsPanel({
                 </button>
               )}
               <button onClick={() => setValidationView(null)} className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Per-section cost */}
+      {showCost && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowCost(false)} />
+          <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[460px] max-w-[92vw] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
+              <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">AI spend — this section</h2>
+              <button onClick={() => setShowCost(false)} className="text-gray-400 hover:text-gray-700 text-sm">✕</button>
+            </div>
+            <div className="p-4">
+              {!sectionCost ? (
+                <div className="text-xs text-gray-400">Loading…</div>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold text-emerald-700">${sectionCost.total.toFixed(4)}</div>
+                  <div className="text-[11px] text-gray-400 mb-3">
+                    {sectionCost.since ? `since reset on ${new Date(sectionCost.since).toLocaleString()}` : 'all time'}
+                  </div>
+                  {sectionCost.by_operation.length === 0 ? (
+                    <div className="text-xs text-gray-400">No spend recorded yet.</div>
+                  ) : (
+                    <div className="space-y-1">
+                      {sectionCost.by_operation.map((b) => {
+                        const labels: Record<string, string> = {
+                          card_generation: 'Generation (+ scoring)',
+                          card_validation: 'Validation & auto-fix',
+                          supplemental_generation: 'Vignettes + teaching cases',
+                          card_scoring: 'Scoring',
+                          card_fix: 'AI fix',
+                          combine: 'Combine',
+                          card_regen: 'Regenerate',
+                          card_regen_preview: 'Regenerate (preview)',
+                          manual_card_parse: 'Manual paste (Haiku)',
+                          generate_debug: 'Inspect (debug)',
+                        };
+                        return (
+                          <div key={b.operation} className="flex items-center justify-between text-xs">
+                            <span className="text-gray-600">{labels[b.operation] || b.operation}</span>
+                            <span className="tabular-nums text-gray-800">${b.cost.toFixed(4)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-gray-400 mt-3">Only spend recorded since this feature shipped is counted; older work shows $0.</p>
+                </>
+              )}
+            </div>
+            <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-t border-gray-200">
+              <button
+                onClick={handleResetCost}
+                className="px-3 py-1.5 text-xs font-medium text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-50"
+                title="Restart the counter at $0 from now (history is kept)"
+              >
+                ↺ Reset to $0
+              </button>
+              <button onClick={() => setShowCost(false)} className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg">Close</button>
             </div>
           </div>
         </div>

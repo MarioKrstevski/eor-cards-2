@@ -305,6 +305,7 @@ def combine_preview(body: CombinePreviewRequest, db: Session = Depends(get_db)):
         input_tokens=u.input_tokens,
         output_tokens=u.output_tokens,
         cost_usd=compute_cost(body.model, u.input_tokens, u.output_tokens),
+        section_id=cards[0].section_id if cards else None,
     ))
     db.commit()
     return {
@@ -484,8 +485,6 @@ def bulk_score_cards(body: BulkScoreRequest, db: Session = Depends(get_db)):
     }
 
     total_scored = 0
-    total_input = 0
-    total_output = 0
     failed_groups = 0
 
     for section_id, group_cards in section_groups.items():
@@ -506,23 +505,20 @@ def bulk_score_cards(body: BulkScoreRequest, db: Session = Depends(get_db)):
                     card.accuracy_note = score.get("accuracy_note")
                     card.eor_yield = score.get("eor_yield")
                     total_scored += 1
-            total_input += usage.get("input_tokens", 0)
-            total_output += usage.get("output_tokens", 0)
+            ti, to = usage.get("input_tokens", 0), usage.get("output_tokens", 0)
+            if ti or to:
+                db.add(AIUsageLog(
+                    operation="card_scoring", model=model_name,
+                    input_tokens=ti, output_tokens=to,
+                    cost_usd=compute_cost(model_name, ti, to),
+                    section_id=section_id,
+                    topic_tree_id=section.topic_tree_id if section else None,
+                ))
         except Exception:
             logger.exception("Error scoring cards for section %d", section_id)
             failed_groups += 1
 
     db.commit()
-
-    if total_input or total_output:
-        db.add(AIUsageLog(
-            operation="card_scoring",
-            model=model_name,
-            input_tokens=total_input,
-            output_tokens=total_output,
-            cost_usd=compute_cost(model_name, total_input, total_output),
-        ))
-        db.commit()
 
     return {"scored": total_scored, "failed_groups": failed_groups}
 
@@ -565,6 +561,14 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
 
     total_input = 0
     total_output = 0
+    per_section_usage: dict[int, dict] = {}  # section_id -> {"i","o"} for cost attribution
+
+    def _acc_sec(sid, i, o):
+        if sid is None:
+            return
+        d = per_section_usage.setdefault(sid, {"i": 0, "o": 0})
+        d["i"] += i
+        d["o"] += o
 
     # 1) Batch-judge every card in each section (one call per section).
     initial: dict[int, dict] = {}
@@ -576,6 +580,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
             results, usage = judge_cards(client, payload, body.model, cpath)
             total_input += usage.get("input_tokens", 0)
             total_output += usage.get("output_tokens", 0)
+            _acc_sec(sid, usage.get("input_tokens", 0), usage.get("output_tokens", 0))
             for r in results:
                 initial[r["card_id"]] = r
         except Exception:
@@ -695,6 +700,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
             total_input += out["usage"]["input_tokens"]
             total_output += out["usage"]["output_tokens"]
             card = cards_by_id[out["card_id"]]
+            _acc_sec(card.section_id, out["usage"]["input_tokens"], out["usage"]["output_tokens"])
 
             now_iso = utcnow().isoformat()
             if out["action"] == "split":
@@ -759,15 +765,19 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
         assign_note_ids(all_new_cards)  # unique across the whole request
     db.commit()
 
-    if total_input or total_output:
-        db.add(AIUsageLog(
-            operation="card_validation",
-            model=body.model,
-            input_tokens=total_input,
-            output_tokens=total_output,
-            cost_usd=compute_cost(body.model, total_input, total_output),
-        ))
-        db.commit()
+    for sid, u in per_section_usage.items():
+        if u["i"] or u["o"]:
+            sec = sections.get(sid)
+            db.add(AIUsageLog(
+                operation="card_validation",
+                model=body.model,
+                input_tokens=u["i"],
+                output_tokens=u["o"],
+                cost_usd=compute_cost(body.model, u["i"], u["o"]),
+                section_id=sid,
+                topic_tree_id=sec.topic_tree_id if sec else None,
+            ))
+    db.commit()
 
     return {"validated": validated, "fixed": fixed, "split": split_count}
 

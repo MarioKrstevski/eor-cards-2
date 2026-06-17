@@ -94,6 +94,8 @@ Respond with JSON only."""
             output_tokens=response.usage.output_tokens,
             cost_usd=cost,
             card_id=card_id,
+            section_id=card.section_id,
+            topic_tree_id=section.topic_tree_id if section else None,
             job_id=batch_id,
         ))
 

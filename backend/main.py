@@ -88,6 +88,7 @@ def _migrate_db():
             "ALTER TABLE section_images ADD COLUMN intended_position VARCHAR(10)",
             "ALTER TABLE sections ADD COLUMN section_status VARCHAR(20) DEFAULT 'normal'",
             "ALTER TABLE sections ADD COLUMN is_done BOOLEAN NOT NULL DEFAULT 0",
+            "ALTER TABLE sections ADD COLUMN cost_reset_at DATETIME",
             "ALTER TABLE cards ADD COLUMN manually_added BOOLEAN NOT NULL DEFAULT 0",
             "ALTER TABLE cards ADD COLUMN accuracy_score INTEGER",
             "ALTER TABLE cards ADD COLUMN accuracy_note TEXT",
@@ -217,7 +218,7 @@ async def _no_store_api(request, call_next):
 
 
 # Bumped on each deploy so /api/version can confirm what's actually running.
-APP_VERSION = 43
+APP_VERSION = 44
 
 
 @app.get("/api/version")
