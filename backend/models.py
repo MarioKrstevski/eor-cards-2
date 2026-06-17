@@ -178,6 +178,7 @@ class Card(Base):
     eor_yield: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     correctness_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # rules passed
     correctness: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # {total, rules:[...], split_suggested}
+    validation_change: Mapped[Optional[dict]] = mapped_column(JSON(none_as_null=True), nullable=True)  # {action, prev_front_html, prev_extra, at}; None -> SQL NULL so the "changed" filter works
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
     section: Mapped["Section"] = relationship("Section", back_populates="cards")

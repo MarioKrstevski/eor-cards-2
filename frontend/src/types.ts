@@ -119,6 +119,12 @@ export interface Card {
     rules: { key: string; title: string; pass: boolean; reason: string }[];
     split_suggested: boolean;
   } | null;
+  validation_change?: {
+    action: 'fixed' | 'split';
+    prev_front_html: string;
+    prev_extra: string | null;
+    at: string;
+  } | null;
   in_fix_batch: boolean;
   manually_added?: boolean;
   created_at: string;

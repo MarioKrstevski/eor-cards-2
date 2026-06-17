@@ -346,6 +346,16 @@ export async function getValidationRules(): Promise<{ key: string; title: string
   return res.data;
 }
 
+export async function revertValidation(cardId: number): Promise<Card> {
+  const res = await http.post<Card>(`/cards/${cardId}/revert-validation`, {});
+  return res.data;
+}
+
+export async function clearValidationMarks(params: { card_ids?: number[]; section_id?: number; section_ids?: number[] }): Promise<{ cleared: number }> {
+  const res = await http.post<{ cleared: number }>('/cards/clear-validation-marks', params);
+  return res.data;
+}
+
 export async function bulkMarkCards(params: {
   card_ids: number[];
   mark_type_id: number | null;
@@ -364,6 +374,7 @@ export async function getCards(params?: {
   is_reviewed?: boolean;
   mark_type_id?: number | null;
   search_q?: string;
+  modified_by_validator?: boolean;
   limit?: number;
   offset?: number;
 }): Promise<PaginatedCards> {

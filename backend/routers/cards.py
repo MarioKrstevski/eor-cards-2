@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel
 from typing import Optional
 from backend.db import get_db
-from backend.models import Card, CardStatus, Section, SectionImage, RuleSet, AIUsageLog, Curriculum
+from backend.models import Card, CardStatus, Section, SectionImage, RuleSet, AIUsageLog, Curriculum, utcnow
 from backend.services.generator import strip_card_html, regenerate_single_card, parse_card_output
 from backend.services.ai_utils import response_text
 from backend.services.card_ops import assign_note_ids, score_new_cards
@@ -80,6 +80,7 @@ def card_to_dict(card: Card, db: Session | None = None, img_cache: dict | None =
         "eor_yield": card.eor_yield,
         "correctness_score": getattr(card, "correctness_score", None),
         "correctness": getattr(card, "correctness", None),
+        "validation_change": getattr(card, "validation_change", None),
         "needs_review": card.needs_review if hasattr(card, 'needs_review') else False,
         "created_at": card.created_at.isoformat() if card.created_at else None,
         "updated_at": card.updated_at.isoformat() if card.updated_at else None,
@@ -99,6 +100,7 @@ def list_cards(
     tag: Optional[str] = None,
     topic: Optional[str] = None,
     search_q: Optional[str] = None,
+    modified_by_validator: Optional[bool] = None,
     limit: int = Query(100, le=1000),
     offset: int = 0,
     db: Session = Depends(get_db),
@@ -128,6 +130,8 @@ def list_cards(
         q = q.filter(cast(Card.tags, String).contains(json.dumps(tag)))
     if search_q:
         q = q.filter(Card.front_text.ilike(f"%{search_q}%"))
+    if modified_by_validator:
+        q = q.filter(Card.validation_change.isnot(None))
 
     # Order
     if section_id:
@@ -692,10 +696,13 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
             total_output += out["usage"]["output_tokens"]
             card = cards_by_id[out["card_id"]]
 
+            now_iso = utcnow().isoformat()
             if out["action"] == "split":
                 sid = card.section_id
                 inh_tags, inh_mapped = card.tags, card.tags_mapped
                 vig, tc = card.vignette, card.teaching_case
+                orig_front, orig_extra = card.front_html, card.extra
+                split_change = {"action": "split", "prev_front_html": orig_front, "prev_extra": orig_extra, "at": now_iso}
                 db.delete(card)  # replace the original with its siblings
                 db.flush()
                 start_num = (
@@ -722,6 +729,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                         status=CardStatus.active,
                         correctness_score=passed,
                         correctness=corr,
+                        validation_change=split_change,
                     )
                     db.add(nc)
                     new_cards.append(nc)
@@ -732,6 +740,12 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
             else:
                 res = out["result"]
                 if out["front_html"] != card.front_html:
+                    card.validation_change = {
+                        "action": "fixed",
+                        "prev_front_html": card.front_html,
+                        "prev_extra": card.extra,
+                        "at": now_iso,
+                    }
                     card.front_html = out["front_html"]
                     card.front_text = strip_card_html(out["front_html"])
                     card.extra = out["extra"]
@@ -756,6 +770,43 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
         db.commit()
 
     return {"validated": validated, "fixed": fixed, "split": split_count}
+
+
+@router.post("/{card_id}/revert-validation")
+def revert_validation(card_id: int, db: Session = Depends(get_db)):
+    """Undo an auto-fix: restore the card's front/extra from before the validator
+    changed it, and clear the change marker."""
+    card = db.get(Card, card_id)
+    if not card:
+        raise HTTPException(404)
+    vc = card.validation_change
+    if not vc or vc.get("action") != "fixed":
+        raise HTTPException(422, "Nothing to revert (only auto-fixed cards can be reverted)")
+    card.front_html = vc.get("prev_front_html") or ""
+    card.front_text = strip_card_html(card.front_html)
+    card.extra = vc.get("prev_extra")
+    card.validation_change = None
+    db.commit()
+    db.refresh(card)
+    return card_to_dict(card, db)
+
+
+@router.post("/clear-validation-marks")
+def clear_validation_marks(body: BulkDeleteRequest, db: Session = Depends(get_db)):
+    """Clear the 'changed by validator' marker on cards (after you've reviewed
+    them) without reverting anything. Accepts the same scope as bulk ops."""
+    q = db.query(Card)
+    if body.card_ids:
+        q = q.filter(Card.id.in_(body.card_ids))
+    elif body.section_id:
+        q = q.filter(Card.section_id == body.section_id)
+    elif body.section_ids:
+        q = q.filter(Card.section_id.in_(body.section_ids))
+    else:
+        raise HTTPException(400, "Provide a scope")
+    n = q.filter(Card.validation_change.isnot(None)).update({Card.validation_change: None}, synchronize_session=False)
+    db.commit()
+    return {"cleared": n}
 
 
 class ManualCardInput(BaseModel):

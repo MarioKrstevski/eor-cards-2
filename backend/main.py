@@ -94,6 +94,7 @@ def _migrate_db():
             "ALTER TABLE cards ADD COLUMN eor_yield TEXT",
             "ALTER TABLE cards ADD COLUMN correctness_score INTEGER",
             "ALTER TABLE cards ADD COLUMN correctness TEXT",
+            "ALTER TABLE cards ADD COLUMN validation_change TEXT",
             "ALTER TABLE ai_usage_log ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE ai_usage_log ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0",
             # Indexes for the most common filters (no-ops if they already exist)
@@ -216,7 +217,7 @@ async def _no_store_api(request, call_next):
 
 
 # Bumped on each deploy so /api/version can confirm what's actually running.
-APP_VERSION = 40
+APP_VERSION = 41
 
 
 @app.get("/api/version")

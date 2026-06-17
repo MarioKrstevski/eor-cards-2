@@ -30,6 +30,7 @@ import {
   bulkScoreCards,
   validateCards,
   getValidationRules,
+  revertValidation,
   createFixBatch,
   getFixBatch,
   confirmFixBatch,
@@ -1105,6 +1106,8 @@ export default function CardsPanel({
   const [validating, setValidating] = useState(false);
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [validationRules, setValidationRules] = useState<{ key: string; title: string; criteria: string }[]>([]);
+  const [validatorOnly, setValidatorOnly] = useState(false);
+  const [validationView, setValidationView] = useState<Card | null>(null);
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const [showFixBatchModal, setShowFixBatchModal] = useState(false);
   const [fixBatchPrompt, setFixBatchPrompt] = useState('');
@@ -1253,6 +1256,7 @@ export default function CardsPanel({
         offset,
         ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
         ...(markFilterId != null ? { mark_type_id: markFilterId } : {}),
+        ...(validatorOnly ? { modified_by_validator: true } : {}),
       };
       try {
         let resp;
@@ -1278,7 +1282,7 @@ export default function CardsPanel({
         if (!silent) setCardsLoading(false);
       }
     },
-    [pagination.pageSize, pagination.pageIndex, statusFilter, markFilterId]
+    [pagination.pageSize, pagination.pageIndex, statusFilter, markFilterId, validatorOnly]
   );
 
   // Refetch on dependencies change
@@ -1287,7 +1291,7 @@ export default function CardsPanel({
     fetchCards(sectionId, topicPath, false, undefined, sectionIds);
     setSearchQ('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sectionId, topicPath, sectionIds, refreshKey, statusFilter, markFilterId]);
+  }, [sectionId, topicPath, sectionIds, refreshKey, statusFilter, markFilterId, validatorOnly]);
 
   // Refetch on page change
   useEffect(() => {
@@ -1415,6 +1419,15 @@ export default function CardsPanel({
                     </span>
                   );
                 })()}
+                {card.validation_change && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setValidationView(card); }}
+                    className="text-[10px] text-violet-600 hover:text-violet-800 shrink-0"
+                    title={`Changed by validator (${card.validation_change.action}) — click to see before/after`}
+                  >
+                    ✎
+                  </button>
+                )}
                 <span className={`text-xs tabular-nums ${!card.is_reviewed ? 'font-bold' : 'text-gray-400'}`}>
                   {info.getValue()}
                 </span>
@@ -2405,6 +2418,15 @@ export default function CardsPanel({
           title="Refresh cards from the database"
         >
           <span className={`inline-block ${refreshing ? 'animate-spin' : ''}`} aria-hidden>↻</span>
+        </button>
+
+        {/* Validator-changed filter */}
+        <button
+          onClick={() => setValidatorOnly(v => !v)}
+          className={`text-xs rounded-lg px-2 py-1.5 border transition-colors duration-150 ${validatorOnly ? 'bg-violet-100 text-violet-700 border-violet-300' : 'text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+          title="Show only cards the validator changed (fixed or split) — review just the deltas"
+        >
+          ✎ Changed
         </button>
 
         {/* Status filter */}
@@ -3586,6 +3608,61 @@ export default function CardsPanel({
 
       {viewSectionId != null && (
         <SectionViewer sectionId={viewSectionId} onClose={() => setViewSectionId(null)} />
+      )}
+
+      {/* Validator before/after + revert */}
+      {validationView && validationView.validation_change && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setValidationView(null)} />
+          <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[720px] max-w-[94vw] max-h-[88vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
+              <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">
+                {validationView.validation_change.action === 'split' ? 'Split from original' : 'Validator auto-fix — before / after'}
+              </h2>
+              <button onClick={() => setValidationView(null)} className="text-gray-400 hover:text-gray-700 text-sm">✕</button>
+            </div>
+            <div className="flex-1 overflow-auto p-4 space-y-4">
+              <div>
+                <div className="text-[11px] font-semibold text-gray-500 uppercase mb-1">
+                  {validationView.validation_change.action === 'split' ? 'Original (overloaded) card' : 'Before'}
+                </div>
+                <div className="text-xs bg-gray-50 border border-gray-200 rounded-lg p-2" dangerouslySetInnerHTML={{ __html: validationView.validation_change.prev_front_html }} />
+                {validationView.validation_change.prev_extra && (
+                  <div className="text-[11px] text-gray-500 mt-1"><span className="font-semibold">Extra:</span> <span dangerouslySetInnerHTML={{ __html: validationView.validation_change.prev_extra }} /></div>
+                )}
+              </div>
+              <div>
+                <div className="text-[11px] font-semibold text-gray-500 uppercase mb-1">
+                  {validationView.validation_change.action === 'split' ? 'This sibling card now' : 'After'}
+                </div>
+                <div className="text-xs bg-violet-50 border border-violet-200 rounded-lg p-2" dangerouslySetInnerHTML={{ __html: validationView.front_html }} />
+                {validationView.extra && (
+                  <div className="text-[11px] text-gray-500 mt-1"><span className="font-semibold">Extra:</span> <span dangerouslySetInnerHTML={{ __html: validationView.extra }} /></div>
+                )}
+              </div>
+              {validationView.validation_change.action === 'split' && (
+                <p className="text-[11px] text-gray-400">This card was created by auto-splitting the original above. To undo a split, select the sibling cards and use Combine.</p>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-200">
+              {validationView.validation_change.action === 'fixed' && (
+                <button
+                  onClick={async () => {
+                    try {
+                      await revertValidation(validationView.id);
+                      setValidationView(null);
+                      fetchCards(sectionId, topicPath, true, undefined, sectionIds);
+                    } catch { setActionError('Revert failed'); }
+                  }}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700"
+                >
+                  ↩ Revert to before
+                </button>
+              )}
+              <button onClick={() => setValidationView(null)} className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg">Close</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Correctness rules reference */}
