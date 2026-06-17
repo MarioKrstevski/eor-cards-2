@@ -263,6 +263,18 @@ def regenerate_single_card(
     return cards, needs_review, usage_dict(response)
 
 
+# NOTE: intentionally NO LONGER appended to the generation user message — the
+# output format, NEEDS_REVIEW, and always-c1 rules now live in the rule set.
+# Kept as dead/reference code in case we want to reinstate it. (Cloze index is
+# also normalized to c1 by the parser regardless.)
+_GENERATION_OUTPUT_INSTRUCTION = (
+    "Generate the cards following ALL the rules above. Output in the exact format:\n"
+    "number|cloze card text|additional context (optional)\n\n"
+    "If you cannot confidently generate quality cards for this content, output NEEDS_REVIEW on its own line at the end.\n"
+    "Remember: ALL clozes on every card use {{c1::term}} — always c1, regardless of card number."
+)
+
+
 def build_generation_prompt(section_data: dict, rules_text: str) -> tuple[str, str]:
     """Build the exact (system_text, user_text) sent to Claude for one section.
 
@@ -285,11 +297,7 @@ def build_generation_prompt(section_data: dict, rules_text: str) -> tuple[str, s
         f"Now generate cards from the following study note content.\n\n"
         f"{topic_line}Section: {section_data.get('heading', '')}\n"
         f"{tree_section}\n"
-        f"Source text:\n{source_text}\n\n"
-        f"Generate the cards following ALL the rules above. Output in the exact format:\n"
-        f"number|cloze card text|additional context (optional)\n\n"
-        f"If you cannot confidently generate quality cards for this content, output NEEDS_REVIEW on its own line at the end.\n"
-        f"Remember: ALL clozes on every card use {{{{c1::term}}}} — always c1, regardless of card number."
+        f"Source text:\n{source_text}"
     )
     system_text = rules_text  # ANCHOR_INSTRUCTION no longer prepended — its rules now live in the rule set
     return system_text, user_text
