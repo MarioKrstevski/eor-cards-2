@@ -3103,11 +3103,11 @@ export default function CardsPanel({
             </div>
             <div className="flex-1 overflow-auto p-4 space-y-4">
               <div>
-                <div className="text-[11px] font-semibold text-gray-500 uppercase mb-1">System prompt</div>
+                <div className="text-[11px] font-semibold text-gray-500 uppercase mb-1">System + User Rules Prompt</div>
                 <pre className="text-[11px] whitespace-pre-wrap break-words bg-gray-50 border border-gray-200 rounded-lg p-2 max-h-48 overflow-auto font-mono">{inspectPrompt.system}</pre>
               </div>
               <div>
-                <div className="text-[11px] font-semibold text-gray-500 uppercase mb-1">User message</div>
+                <div className="text-[11px] font-semibold text-gray-500 uppercase mb-1">Section content</div>
                 <pre className="text-[11px] whitespace-pre-wrap break-words bg-gray-50 border border-gray-200 rounded-lg p-2 max-h-48 overflow-auto font-mono">{inspectPrompt.user}</pre>
               </div>
 
@@ -3607,7 +3607,7 @@ export default function CardsPanel({
       )}
 
       {viewSectionId != null && (
-        <SectionViewer sectionId={viewSectionId} onClose={() => setViewSectionId(null)} />
+        <SectionViewer sectionId={viewSectionId} onClose={() => setViewSectionId(null)} initialVariant="left" />
       )}
 
       {/* Validator before/after + revert */}

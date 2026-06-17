@@ -33,7 +33,10 @@ RULES = [
             "explanation content (a clause, sentence, sub-bullet, or qualifier of 4 or more words), "
             "(b) the items share one conceptual category (all symptoms, all treatments, all findings, "
             "all diagnostic steps, etc.), and (c) each item could stand as its own EOR exam question "
-            "without the others. When uncertain, PASS."
+            "without the others. A hedged or optional list introduced by phrasing like 'may present with', "
+            "'maybe', 'can include', 'associated with', or 'such as' (e.g. 'may also have fever, chills, "
+            "nausea/vomiting') is a single tightly-linked cluster — keep it as ONE card, do not split it. "
+            "When uncertain, PASS."
         ),
         "guidance": "If this is a genuine list of same-category items that each carry their own 4-plus-word explanation, it should become sibling cards; otherwise keep it as one coherent concept without dropping any content.",
     },
@@ -283,6 +286,9 @@ def split_card(
         "SCOPE: Split ONLY the content already in this card into siblings. Use the source text solely to "
         "keep the facts accurate and the wording faithful — do NOT introduce items, bullets, or facts from "
         "elsewhere in the section. "
+        "GROUNDING: The section source is the ONLY authoritative source of facts. The existing card and its "
+        "additional-context (extra) field are reference only, NOT a source of facts — include only content "
+        "supported by the section, and drop anything in the card or its extra that is not in the section. "
         "Output one card per line in the exact format:\n"
         "number|cloze card text|additional context (optional)"
     )
@@ -309,5 +315,11 @@ def fix_guidance(failed_rules: list[dict]) -> str:
         "SCOPE: Rewrite ONLY the content this card already covers. Use the source text solely to keep the "
         "facts accurate and to restore any missing context for THIS card — do NOT pull in other items, "
         "bullets, or facts from elsewhere in the section, and do not broaden the card's scope."
+    )
+    lines.append(
+        "GROUNDING: The section source is the ONLY authoritative source of facts. The existing card and its "
+        "additional-context (extra) field are reference for what the card was about — NOT a source of facts. "
+        "Include only content supported by the section source; if the card or its extra contains anything not "
+        "present in the section, drop it."
     )
     return "\n".join(lines)

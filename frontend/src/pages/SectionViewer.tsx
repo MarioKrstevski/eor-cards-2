@@ -31,9 +31,11 @@ function formatExtractedText(text: string): string {
 interface SectionViewerProps {
   sectionId: number;
   onClose: () => void;
+  initialVariant?: 'center' | 'left';
 }
 
-export default function SectionViewer({ sectionId, onClose }: SectionViewerProps) {
+export default function SectionViewer({ sectionId, onClose, initialVariant = 'center' }: SectionViewerProps) {
+  const [variant, setVariant] = useState<'center' | 'left'>(initialVariant);
   const [section, setSection] = useState<SectionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [verifying, setVerifying] = useState(false);
@@ -134,14 +136,26 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
     generate_debug: 'Inspect (debug)',
   };
 
+  const isLeft = variant === 'left';
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-2xl shadow-2xl w-[90vw] max-w-5xl h-[85vh] flex flex-col overflow-hidden">
+    <div className={isLeft
+      ? "fixed inset-y-0 left-0 z-50"
+      : "fixed inset-0 z-50 flex items-center justify-center bg-black/40"}>
+      <div className={isLeft
+        ? "bg-white shadow-2xl border-r border-gray-200 w-[480px] max-w-[92vw] h-full flex flex-col overflow-hidden"
+        : "bg-white rounded-2xl shadow-2xl w-[90vw] max-w-5xl h-[85vh] flex flex-col overflow-hidden"}>
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-200 shrink-0">
-          <h2 className="text-sm font-bold text-gray-900 flex-1 truncate">
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-gray-200 shrink-0">
+          <h2 className="text-sm font-bold text-gray-900 flex-1 min-w-[120px] truncate">
             {section?.heading ?? 'Loading...'}
           </h2>
+          <button
+            onClick={() => setVariant(isLeft ? 'center' : 'left')}
+            title={isLeft ? 'Move to center' : 'Dock to the left (view alongside cards)'}
+            className="px-2 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+          >
+            {isLeft ? '⤢ Center' : '⤡ Dock left'}
+          </button>
 
           {section && (section.images?.length ?? 0) > 0 && (
             <button
@@ -390,7 +404,7 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
         ) : section ? (
           <div className="flex flex-1 overflow-hidden">
             {/* Main content */}
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 overflow-auto p-6">
               {/* Flags */}
               {(section.flags?.length ?? 0) > 0 && (
                 <div className="mb-4 flex flex-wrap gap-1.5">
