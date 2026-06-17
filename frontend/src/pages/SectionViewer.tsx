@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getSection, verifySection, pasteSectionContent, updateSection, updateSectionImage, createCurriculumNode, getCurriculum } from '../api';
+import { getSection, verifySection, pasteSectionContent, updateSection, updateSectionImage, createCurriculumNode, getCurriculum, getSectionCost, resetSectionCost, type SectionCost } from '../api';
 import type { SectionDetail, SectionImage, CurriculumNode } from '../types';
 import CurriculumPicker from '../components/CurriculumPicker';
 
@@ -38,6 +38,8 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
   const [loading, setLoading] = useState(true);
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<{ is_valid: boolean; flags: string[] } | null>(null);
+  const [showCost, setShowCost] = useState(false);
+  const [sectionCost, setSectionCost] = useState<SectionCost | null>(null);
   const [selectedImage, setSelectedImage] = useState<SectionImage | null>(null);
   const [showImages, setShowImages] = useState(false);
   const [showBlocks, setShowBlocks] = useState(false);
@@ -106,6 +108,32 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
     }
   }, [section, sectionId]);
 
+  const handleOpenCost = useCallback(async () => {
+    setShowCost(true);
+    setSectionCost(null);
+    try { setSectionCost(await getSectionCost(sectionId)); } catch { /* ignore */ }
+  }, [sectionId]);
+
+  const handleResetCost = useCallback(async () => {
+    try {
+      await resetSectionCost(sectionId);
+      setSectionCost(await getSectionCost(sectionId));
+    } catch { /* ignore */ }
+  }, [sectionId]);
+
+  const COST_LABELS: Record<string, string> = {
+    card_generation: 'Generation (+ scoring)',
+    card_validation: 'Validation & auto-fix',
+    supplemental_generation: 'Vignettes + teaching cases',
+    card_scoring: 'Scoring',
+    card_fix: 'AI fix',
+    combine: 'Combine',
+    card_regen: 'Regenerate',
+    card_regen_preview: 'Regenerate (preview)',
+    manual_card_parse: 'Manual paste (Haiku)',
+    generate_debug: 'Inspect (debug)',
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="bg-white rounded-2xl shadow-2xl w-[90vw] max-w-5xl h-[85vh] flex flex-col overflow-hidden">
@@ -151,6 +179,16 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
               {section.is_done ? 'Section done' : 'Mark section done'}
+            </button>
+          )}
+
+          {section && (
+            <button
+              onClick={handleOpenCost}
+              title="AI spend on this section"
+              className="px-3 py-1.5 text-xs font-medium text-emerald-700 bg-white border border-emerald-200 rounded-lg hover:bg-emerald-50 transition-colors duration-150"
+            >
+              $ Cost
             </button>
           )}
 
@@ -551,6 +589,54 @@ export default function SectionViewer({ sectionId, onClose }: SectionViewerProps
                 />
                 <p className="mt-1 text-[9px] text-gray-400">Commands: REF:FRONT, REF:BACK, EXTRACT, EXTRACT:CHART, EXTRACT:TABLE, EXTRACT:TEXT — use | to separate command from description</p>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Per-section cost */}
+      {showCost && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowCost(false)} />
+          <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[460px] max-w-[92vw] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
+              <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">AI spend — this section</h2>
+              <button onClick={() => setShowCost(false)} className="text-gray-400 hover:text-gray-700 text-sm">✕</button>
+            </div>
+            <div className="p-4">
+              {!sectionCost ? (
+                <div className="text-xs text-gray-400">Loading…</div>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold text-emerald-700">${sectionCost.total.toFixed(4)}</div>
+                  <div className="text-[11px] text-gray-400 mb-3">
+                    {sectionCost.since ? `since reset on ${new Date(sectionCost.since).toLocaleString()}` : 'all time'}
+                  </div>
+                  {sectionCost.by_operation.length === 0 ? (
+                    <div className="text-xs text-gray-400">No spend recorded yet.</div>
+                  ) : (
+                    <div className="space-y-1">
+                      {sectionCost.by_operation.map((b) => (
+                        <div key={b.operation} className="flex items-center justify-between text-xs">
+                          <span className="text-gray-600">{COST_LABELS[b.operation] || b.operation}</span>
+                          <span className="tabular-nums text-gray-800">${b.cost.toFixed(4)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-gray-400 mt-3">Only spend recorded since this feature shipped is counted; older work shows $0.</p>
+                </>
+              )}
+            </div>
+            <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-t border-gray-200">
+              <button
+                onClick={handleResetCost}
+                className="px-3 py-1.5 text-xs font-medium text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-50"
+                title="Restart the counter at $0 from now (history is kept)"
+              >
+                ↺ Reset to $0
+              </button>
+              <button onClick={() => setShowCost(false)} className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg">Close</button>
             </div>
           </div>
         </div>
