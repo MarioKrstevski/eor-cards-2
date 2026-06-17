@@ -22,8 +22,20 @@ RULES = [
     {
         "key": "single_concept",
         "title": "Single concept",
-        "criteria": "The card tests ONE primary recall target (or one tightly-linked set commonly tested together). FAIL if it crams multiple independently-testable items that each deserve their own sibling card — i.e. a student can't grab a single clean concept from it.",
-        "guidance": "This card bundles multiple independently-testable items under one cloze set. It should test a single concept. Tighten it to one primary target (the other items belong on their own sibling cards).",
+        "criteria": (
+            "Decide using the sibling-card rules, biased toward NOT splitting. A card may legitimately "
+            "be long or hold several clozes — length and cloze count are NOT reasons to fail. "
+            "PASS (keep as one card) when the content is a tightly-linked clinical set tested as a unit: "
+            "a classic triad, named pearl or mnemonic, diagnostic-criteria set, symptom cluster, "
+            "first-line management group, a single mechanism or causal chain, or at most two items with "
+            "short (3 words or fewer) qualifiers. FAIL (and set split_suggested) ONLY when the card "
+            "bundles a list of items for which ALL of the following hold: (a) each item carries its own "
+            "explanation content (a clause, sentence, sub-bullet, or qualifier of 4 or more words), "
+            "(b) the items share one conceptual category (all symptoms, all treatments, all findings, "
+            "all diagnostic steps, etc.), and (c) each item could stand as its own EOR exam question "
+            "without the others. When uncertain, PASS."
+        ),
+        "guidance": "If this is a genuine list of same-category items that each carry their own 4-plus-word explanation, it should become sibling cards; otherwise keep it as one coherent concept without dropping any content.",
     },
     {
         "key": "studyable",
@@ -75,8 +87,11 @@ _SYSTEM = (
     + "\n".join(f"- {r['key']}: {r['criteria']}" for r in RULES)
     + "\n\nFor each card, return a verdict (pass true/false) for every rule key, plus a brief reason "
     "(one short clause) whenever a rule fails (reason may be empty when it passes). "
-    "Set split_suggested true only when single_concept fails specifically because the card should be "
-    "broken into multiple sibling cards."
+    "Set split_suggested true ONLY when single_concept fails AND the card is a genuine same-category "
+    "list whose items each carry their own 4-plus-word explanation, which the sibling-card rules require "
+    "to be separate cards. Never suggest splitting tightly-linked sets, triads, named pearls, "
+    "diagnostic-criteria sets, symptom clusters, first-line management groups, single mechanisms, or "
+    "cards that are merely long. When in doubt, do not split."
 )
 
 _TOOL = {

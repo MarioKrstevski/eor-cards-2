@@ -597,8 +597,12 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
             if not r["pass"] and not (r["key"] == "single_concept" and result.get("split_suggested"))
         ]
 
+    def _passed(result):
+        return summarize(result["rules"])[0] if result else -1
+
     def regen_fix_loop(front_html, extra, section_data, temp_id, initial_result, u):
-        """Judge (if needed) then regenerate up to 3x. Never splits. Mutates u."""
+        """Judge (if needed) then regenerate up to 3x, keeping the best-scoring
+        attempt across rounds (not just the last). Never splits. Mutates u."""
         result = initial_result
         if result is None:
             try:
@@ -608,6 +612,8 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                 result = rj[0] if rj else None
             except Exception:
                 logger.exception("Initial judge failed for temp %s", temp_id)
+        best = (front_html, extra, result)
+        best_passed = _passed(result)
         for _ in range(3):
             if not result:
                 break
@@ -628,10 +634,15 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                 u["output_tokens"] += ju.get("output_tokens", 0)
                 if rj:
                     result = rj[0]
+                    p = _passed(result)
+                    if p > best_passed:
+                        best, best_passed = (front_html, extra, result), p
+                    if not _fixable(result):  # nothing left to fix — stop early
+                        break
             except Exception:
                 logger.exception("Fix loop failed for temp %s", temp_id)
                 break
-        return front_html, extra, result
+        return best
 
     def worker(cid: int) -> dict:
         result = initial[cid]
