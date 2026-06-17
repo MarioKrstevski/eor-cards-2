@@ -43,9 +43,10 @@ Always c1, regardless of the card number. Never use c2, c3, c4, etc. \
 Example: 1|Primary card text with {{c1::clozes}}.|Other items: item A, item B, item C"""
 
 
-def _inline_with_emphasis(node) -> str:
-    """Inner text of an element, keeping only <b>/<i>/<u> emphasis tags and
-    dropping any nested lists (rendered separately). Whitespace collapsed."""
+def _inline_text(node) -> str:
+    """Inner text of an element, dropping ALL tags (and nested lists, which are
+    rendered separately). Whitespace collapsed — reads like a clean paste, with
+    no HTML clutter."""
     from bs4 import NavigableString, Tag
     parts = []
     for child in node.children:
@@ -54,18 +55,15 @@ def _inline_with_emphasis(node) -> str:
         elif isinstance(child, Tag):
             if child.name in ("ul", "ol"):
                 continue
-            if child.name in ("b", "i", "u"):
-                parts.append(f"<{child.name}>{_inline_with_emphasis(child)}</{child.name}>")
-            else:
-                parts.append(_inline_with_emphasis(child))
+            parts.append(_inline_text(child))
     return re.sub(r"\s+", " ", "".join(parts)).strip()
 
 
 def structured_source_from_html(html: str) -> str:
-    """Render a section's content_html as plain source text that PRESERVES the
-    two cues a flat dump loses: bullet nesting (via indentation) and bold/italic
-    emphasis (kept as <b>/<i>/<u>). No paragraph numbers — cards no longer cite
-    source refs. Used as the source block in the generation prompt."""
+    """Render a section's content_html as a clean, paste-like outline: bullets
+    ("- ") with one indent level per nesting depth, headings/paragraphs on their
+    own lines. HTML tags are stripped (no <b>, no markdown) so it looks just like
+    pasting the section into a chat. Used as the source block in the prompt."""
     from bs4 import BeautifulSoup, Tag
     soup = BeautifulSoup(html or "", "html.parser")
     lines: list[str] = []
@@ -76,7 +74,7 @@ def structured_source_from_html(html: str) -> str:
 
     def walk_list(list_tag, depth):
         for li in list_tag.find_all("li", recursive=False):
-            emit(depth, "- ", _inline_with_emphasis(li))
+            emit(depth, "- ", _inline_text(li))
             for sub in li.find_all(["ul", "ol"], recursive=False):
                 walk_list(sub, depth + 1)
 
@@ -84,6 +82,10 @@ def structured_source_from_html(html: str) -> str:
         if isinstance(el, Tag):
             if el.name in ("ul", "ol"):
                 walk_list(el, 0)
+            elif el.name == "li":  # bare <li> not wrapped in a list
+                emit(0, "- ", _inline_text(el))
+                for sub in el.find_all(["ul", "ol"], recursive=False):
+                    walk_list(sub, 1)
             elif el.name == "div" and "image-placeholder" in (el.get("class") or []):
                 continue
             else:
@@ -91,7 +93,7 @@ def structured_source_from_html(html: str) -> str:
                 m = re.search(r"margin-left:\s*([\d.]+)em", el.get("style", "") or "")
                 if m:
                     depth = max(0, round(float(m.group(1)) / 1.5))
-                emit(depth, "", _inline_with_emphasis(el))
+                emit(depth, "", _inline_text(el))
         else:
             t = re.sub(r"\s+", " ", str(el)).strip()
             if t:
