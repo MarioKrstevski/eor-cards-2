@@ -280,6 +280,9 @@ def split_card(
         "testable concept. These cards are closely related siblings, so give each card an additional "
         "context field that briefly references the related concepts covered by the other sibling cards, "
         "so each card still stands on its own and the link between them is preserved. "
+        "SCOPE: Split ONLY the content already in this card into siblings. Use the source text solely to "
+        "keep the facts accurate and the wording faithful — do NOT introduce items, bullets, or facts from "
+        "elsewhere in the section. "
         "Output one card per line in the exact format:\n"
         "number|cloze card text|additional context (optional)"
     )
@@ -302,4 +305,9 @@ def fix_guidance(failed_rules: list[dict]) -> str:
         g = RULE_BY_KEY.get(r["key"], {}).get("guidance", "")
         reason = r.get("reason")
         lines.append(f"- {RULE_BY_KEY.get(r['key'], {}).get('title', r['key'])}: {g}" + (f" (issue: {reason})" if reason else ""))
+    lines.append(
+        "SCOPE: Rewrite ONLY the content this card already covers. Use the source text solely to keep the "
+        "facts accurate and to restore any missing context for THIS card — do NOT pull in other items, "
+        "bullets, or facts from elsewhere in the section, and do not broaden the card's scope."
+    )
     return "\n".join(lines)
