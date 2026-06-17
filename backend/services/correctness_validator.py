@@ -52,8 +52,16 @@ RULES = [
     {
         "key": "bold_appropriate",
         "title": "Bold appropriateness",
-        "criteria": "Bold (<b>) is applied ONLY to structural orientation labels, explicit source emphasis qualifiers (e.g. most common, first line, gold standard), or key clinical anchor terms. FAIL if bold is on filler/connector/ordinary words such as 'and', 'with', 'better', 'the', 'a'.",
-        "guidance": "Remove bold from ordinary/filler words (like 'and', 'with', 'better'). Bold only structural labels, source emphasis qualifiers, or key clinical anchors, using <b>...</b> HTML tags.",
+        "criteria": (
+            "Judge NON-clozed words only. Clozed terms are ALWAYS wrapped in the blue span + bold "
+            "(<span style=\"color:#1f77b4\"><b>{{c1::...}}</b></span>) by design — that is required styling, "
+            "NOT a bold violation; ignore the bold inside clozes entirely. For the remaining (non-clozed) "
+            "words: the card's anchor/condition and legitimate structural labels or source emphasis qualifiers "
+            "(most common, first line, gold standard) may be bold. FAIL only when an ordinary, filler, or "
+            "connector word that is NOT clozed is bolded (e.g. 'and', 'with', 'better', 'include', 'the'), or "
+            "when the visible anchor/condition is clearly present but not bolded."
+        ),
+        "guidance": "Keep EVERY clozed term wrapped exactly in <span style=\"color:#1f77b4\"><b>{{c1::...}}</b></span> — never remove the bold or color from a cloze. Only adjust NON-cloze bolding: bold the card's anchor/condition, remove bold from ordinary/filler words.",
     },
     {
         "key": "extra_quality",
@@ -127,6 +135,28 @@ _TOOL = {
         "required": ["results"],
     },
 }
+
+
+# ── Cloze styling normalizer ─────────────────────────────────────────────────
+# Every cloze must be wrapped exactly in the blue span + bold. A regenerate/split
+# may drop or double-wrap it; this re-applies the wrapper deterministically so the
+# styling can never be stripped, regardless of what the model returns.
+_CLOZE_STYLE_OPEN = '<span style="color:#1f77b4"><b>'
+_CLOZE_STYLE_CLOSE = '</b></span>'
+_CLOZE = r"\{\{c\d+::.*?\}\}"
+_UNWRAP_SPAN = re.compile(r'<span style="color:#1f77b4">\s*<b>\s*(' + _CLOZE + r")\s*</b>\s*</span>")
+_UNWRAP_B = re.compile(r"<b>\s*(" + _CLOZE + r")\s*</b>")
+_BARE_CLOZE = re.compile("(" + _CLOZE + ")")
+
+
+def ensure_cloze_styling(html: str) -> str:
+    """Wrap every cloze in exactly the blue span + bold (idempotent)."""
+    if not html or "{{c" not in html:
+        return html
+    s = _UNWRAP_SPAN.sub(r"\1", html)   # remove existing blue-span wrappers
+    s = _UNWRAP_B.sub(r"\1", s)          # remove any bare <b> around a cloze
+    s = _BARE_CLOZE.sub(lambda m: _CLOZE_STYLE_OPEN + m.group(1) + _CLOZE_STYLE_CLOSE, s)
+    return s
 
 
 def _format_check(front_html: str, extra: str | None) -> tuple[bool, str]:

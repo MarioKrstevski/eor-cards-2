@@ -1351,7 +1351,7 @@ export default function CardsPanel({
                 setSelectedIds(new Set(filteredCards.map((c) => c.id)));
               }
             }}
-            className="rounded border-gray-300 text-blue-700 focus:ring-blue-500"
+            className="w-[18px] h-[18px] cursor-pointer rounded border-gray-300 text-blue-700 focus:ring-blue-500"
           />
         ),
         cell: ({ row }) => (
@@ -1366,7 +1366,7 @@ export default function CardsPanel({
                 return next;
               });
             }}
-            className="rounded border-gray-300 text-blue-700 focus:ring-blue-500"
+            className="w-[18px] h-[18px] cursor-pointer rounded border-gray-300 text-blue-700 focus:ring-blue-500"
           />
         ),
       }),

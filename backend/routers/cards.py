@@ -548,7 +548,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
     if not body.card_ids:
         raise HTTPException(400, "No card_ids provided")
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    from backend.services.correctness_validator import judge_cards, summarize, fix_guidance, split_card, RULE_KEYS
+    from backend.services.correctness_validator import judge_cards, summarize, fix_guidance, split_card, RULE_KEYS, ensure_cloze_styling
     from backend.services.generator import regenerate_single_card
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -634,7 +634,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                 u["input_tokens"] += fu.get("input_tokens", 0)
                 u["output_tokens"] += fu.get("output_tokens", 0)
                 if cards_data:
-                    front_html = cards_data[0]["front_html"]
+                    front_html = ensure_cloze_styling(cards_data[0]["front_html"])
                     extra = cards_data[0].get("extra")
                 rj, ju = judge_cards(client, [{"id": temp_id, "front_html": front_html, "extra": extra}], body.model, cpath)
                 u["input_tokens"] += ju.get("input_tokens", 0)
@@ -674,7 +674,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                 if len(valid_sibs) >= 2:
                     processed = []
                     for i, sib in enumerate(valid_sibs):
-                        fh, ex, sres = regen_fix_loop(sib["front_html"], sib.get("extra"), section_data, i + 1, None, u)
+                        fh, ex, sres = regen_fix_loop(ensure_cloze_styling(sib["front_html"]), sib.get("extra"), section_data, i + 1, None, u)
                         processed.append({"front_html": fh, "extra": ex, "result": sres})
                     return {"card_id": cid, "action": "split", "siblings": processed, "usage": u}
             except Exception:
