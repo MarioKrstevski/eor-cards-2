@@ -64,6 +64,25 @@ def _write_extra(card: "Card", card_version: str, extra) -> None:
     setattr(card, _extra_field(card_version), extra)
 
 
+# Per-version accuracy/yield score columns. Base scoring writes the unversioned trio.
+_SCORE_FIELDS = {
+    "v1": ("accuracy_score_v1", "accuracy_note_v1", "eor_yield_v1"),
+    "v2": ("accuracy_score_v2", "accuracy_note_v2", "eor_yield_v2"),
+    "v3": ("accuracy_score_v3", "accuracy_note_v3", "eor_yield_v3"),
+}
+
+
+def _score_fields(card_version: str):
+    return _SCORE_FIELDS.get(card_version, ("accuracy_score", "accuracy_note", "eor_yield"))
+
+
+def _write_score(card: "Card", card_version: str, accuracy, note, eor) -> None:
+    fa, fn, fe = _score_fields(card_version)
+    setattr(card, fa, accuracy)
+    setattr(card, fn, note)
+    setattr(card, fe, eor)
+
+
 # validation_change is stored as a per-version map: {"<version>": {action, prev_front_html, prev_extra, at}, ...}
 # Each version (base/v1/v2/v3) keeps its OWN before/after so it can be reverted independently.
 _VC_KEYS = ("action", "prev_front_html", "prev_extra", "at")
@@ -141,6 +160,15 @@ def card_to_dict(card: Card, db: Session | None = None, img_cache: dict | None =
         "accuracy_score": card.accuracy_score,
         "accuracy_note": card.accuracy_note,
         "eor_yield": card.eor_yield,
+        "accuracy_score_v1": getattr(card, "accuracy_score_v1", None),
+        "accuracy_score_v2": getattr(card, "accuracy_score_v2", None),
+        "accuracy_score_v3": getattr(card, "accuracy_score_v3", None),
+        "accuracy_note_v1": getattr(card, "accuracy_note_v1", None),
+        "accuracy_note_v2": getattr(card, "accuracy_note_v2", None),
+        "accuracy_note_v3": getattr(card, "accuracy_note_v3", None),
+        "eor_yield_v1": getattr(card, "eor_yield_v1", None),
+        "eor_yield_v2": getattr(card, "eor_yield_v2", None),
+        "eor_yield_v3": getattr(card, "eor_yield_v3", None),
         "correctness_score": getattr(card, "correctness_score", None),
         "correctness": getattr(card, "correctness", None),
         "validation_change": getattr(card, "validation_change", None),
@@ -536,6 +564,7 @@ def bulk_delete_cards(body: BulkDeleteRequest, db: Session = Depends(get_db)):
 class BulkScoreRequest(BaseModel):
     card_ids: list[int]
     model: str = DEFAULT_MODEL
+    card_version: str = "base"
 
 
 @router.post("/bulk-score")
@@ -544,6 +573,12 @@ def bulk_score_cards(body: BulkScoreRequest, db: Session = Depends(get_db)):
     if not body.card_ids:
         raise HTTPException(400, "No card_ids provided")
     model_name = body.model
+    ver = body.card_version
+
+    def _ver_front_raw(c):
+        # The version's own front (no base fallback) so we can skip cards that
+        # don't have this version populated.
+        return c.front_html if ver == "base" else getattr(c, _front_field(ver), None)
 
     from backend.services.scorer import score_cards
 
@@ -569,18 +604,22 @@ def bulk_score_cards(body: BulkScoreRequest, db: Session = Depends(get_db)):
         path = section.curriculum_topic_path if section else ""
         cards_by_id = {c.id: c for c in group_cards}
         cards_for_scoring = [
-            {"id": c.id, "front_text": c.front_text, "extra": c.extra}
-            for c in group_cards
+            {
+                "id": c.id,
+                "front_text": c.front_text if ver == "base" else strip_card_html(_ver_front_raw(c) or ""),
+                "extra": _read_extra(c, ver),
+            }
+            for c in group_cards if (_ver_front_raw(c) or "").strip()
         ]
+        if not cards_for_scoring:
+            continue
 
         try:
             scores, usage = score_cards(client, cards_for_scoring, path or "", model_name)
             for score in scores:
                 card = cards_by_id.get(score.get("card_id"))
                 if card:
-                    card.accuracy_score = score.get("accuracy")
-                    card.accuracy_note = score.get("accuracy_note")
-                    card.eor_yield = score.get("eor_yield")
+                    _write_score(card, ver, score.get("accuracy"), score.get("accuracy_note"), score.get("eor_yield"))
                     total_scored += 1
             ti, to = usage.get("input_tokens", 0), usage.get("output_tokens", 0)
             if ti or to:

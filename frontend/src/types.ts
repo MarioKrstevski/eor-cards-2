@@ -116,6 +116,15 @@ export interface Card {
   accuracy_score: number | null;
   accuracy_note: string | null;
   eor_yield: Record<string, string> | null;
+  accuracy_score_v1?: number | null;
+  accuracy_score_v2?: number | null;
+  accuracy_score_v3?: number | null;
+  accuracy_note_v1?: string | null;
+  accuracy_note_v2?: string | null;
+  accuracy_note_v3?: string | null;
+  eor_yield_v1?: Record<string, string> | null;
+  eor_yield_v2?: Record<string, string> | null;
+  eor_yield_v3?: Record<string, string> | null;
   correctness_score?: number | null;
   correctness?: {
     total: number;

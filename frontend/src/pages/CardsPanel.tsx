@@ -219,6 +219,15 @@ function getFieldValue(card: Card, key: string, ver: CardVersion): string {
   if (key === 'extra') return (((card as any)[extraFieldFor(ver)] || card.extra) ?? '') as string;
   return (((card as any)[key]) ?? '') as string;
 }
+// The active version's accuracy/yield score. A version that hasn't been scored
+// yet (null score column) inherits the base score so the badge still shows.
+function scoreFor(card: Card, ver: CardVersion): { score: number | null; note: string | null; eor: Record<string, string> | null } {
+  if (ver === 'base') return { score: card.accuracy_score, note: card.accuracy_note, eor: card.eor_yield };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const c = card as any;
+  if (c[`accuracy_score_${ver}`] == null) return { score: card.accuracy_score, note: card.accuracy_note, eor: card.eor_yield };
+  return { score: c[`accuracy_score_${ver}`], note: c[`accuracy_note_${ver}`], eor: c[`eor_yield_${ver}`] };
+}
 // The validator change-record for ONE version. validation_change is a per-version
 // map ({base, v1, v2, v3}); legacy rows may still be the old flat shape.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1405,20 +1414,24 @@ export default function CardsPanel({
                     card.is_reviewed ? 'Reviewed' : 'Pending'
                   }
                 />
-                {card.accuracy_score != null && (
+                {(() => {
+                  const acc = scoreFor(card, activeCardVersion);
+                  if (acc.score == null) return null;
+                  return (
                   <span
                     className={`w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white shrink-0 ${
-                      card.accuracy_score >= 5 ? 'bg-green-500' :
-                      card.accuracy_score >= 4 ? 'bg-blue-500' :
-                      card.accuracy_score >= 3 ? 'bg-amber-500' :
-                      card.accuracy_score >= 2 ? 'bg-red-500' :
+                      acc.score >= 5 ? 'bg-green-500' :
+                      acc.score >= 4 ? 'bg-blue-500' :
+                      acc.score >= 3 ? 'bg-amber-500' :
+                      acc.score >= 2 ? 'bg-red-500' :
                       'bg-red-800'
                     }`}
-                    title={`Accuracy: ${card.accuracy_score}/5${card.accuracy_note && card.accuracy_note !== 'Accurate' ? ` — ${card.accuracy_note}` : ''}${card.eor_yield ? `\nEOR: ${Object.entries(card.eor_yield).map(([k, v]) => `${k}: ${v}`).join(', ')}` : ''}`}
+                    title={`Accuracy${activeCardVersion !== 'base' ? ` (${activeCardVersion.toUpperCase()})` : ''}: ${acc.score}/5${acc.note && acc.note !== 'Accurate' ? ` — ${acc.note}` : ''}${acc.eor ? `\nEOR: ${Object.entries(acc.eor).map(([k, v]) => `${k}: ${v}`).join(', ')}` : ''}`}
                   >
-                    {card.accuracy_score}
+                    {acc.score}
                   </span>
-                )}
+                  );
+                })()}
                 {card.correctness && card.correctness_score != null && (() => {
                   const total = card.correctness.total;
                   const fails = total - card.correctness_score;
@@ -2631,7 +2644,7 @@ export default function CardsPanel({
                     if (selectedIds.size === 0) return;
                     setScoring(true);
                     try {
-                      await bulkScoreCards({ card_ids: [...selectedIds], model: selectedModel });
+                      await bulkScoreCards({ card_ids: [...selectedIds], model: selectedModel, card_version: activeCardVersion });
                       fetchCards(sectionId, topicPath, true, undefined, sectionIds);
                     } catch { setActionError('Scoring failed'); } finally { setScoring(false); }
                   }}
@@ -2653,7 +2666,7 @@ export default function CardsPanel({
                         });
                         const allIds = allCards.cards.map(c => c.id);
                         if (allIds.length === 0) return;
-                        await bulkScoreCards({ card_ids: allIds, model: selectedModel });
+                        await bulkScoreCards({ card_ids: allIds, model: selectedModel, card_version: activeCardVersion });
                         fetchCards(sectionId, topicPath, true, undefined, sectionIds);
                       } catch { setActionError('Scoring failed'); } finally { setScoring(false); }
                     }}

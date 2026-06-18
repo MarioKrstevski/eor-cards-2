@@ -331,7 +331,7 @@ export async function combineApply(params: { card_ids: number[]; front_html: str
   return res.data;
 }
 
-export async function bulkScoreCards(params: { card_ids: number[]; model: string }): Promise<{ scored: number }> {
+export async function bulkScoreCards(params: { card_ids: number[]; model: string; card_version?: string }): Promise<{ scored: number }> {
   const res = await http.post<{ scored: number }>('/cards/bulk-score', params);
   return res.data;
 }

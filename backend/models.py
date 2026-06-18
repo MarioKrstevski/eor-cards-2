@@ -180,6 +180,16 @@ class Card(Base):
     accuracy_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     accuracy_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     eor_yield: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # Per-version accuracy/yield scores (empty => not scored for that version yet; UI falls back to base)
+    accuracy_score_v1: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    accuracy_score_v2: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    accuracy_score_v3: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    accuracy_note_v1: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    accuracy_note_v2: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    accuracy_note_v3: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    eor_yield_v1: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    eor_yield_v2: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    eor_yield_v3: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     correctness_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # rules passed
     correctness: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # {total, rules:[...], split_suggested}
     validation_change: Mapped[Optional[dict]] = mapped_column(JSON(none_as_null=True), nullable=True)  # {action, prev_front_html, prev_extra, at}; None -> SQL NULL so the "changed" filter works
