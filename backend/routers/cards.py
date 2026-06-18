@@ -47,6 +47,23 @@ def _write_front(card: "Card", card_version: str, front_html: str) -> None:
         card.front_text = strip_card_html(front_html)
 
 
+_EXTRA_FIELD = {"v1": "extra_v1", "v2": "extra_v2", "v3": "extra_v3"}
+
+
+def _extra_field(card_version: str) -> str:
+    return _EXTRA_FIELD.get(card_version, "extra")
+
+
+def _read_extra(card: "Card", card_version: str):
+    """The active version's extra, falling back to base when that version is empty."""
+    return getattr(card, _extra_field(card_version), None) or card.extra
+
+
+def _write_extra(card: "Card", card_version: str, extra) -> None:
+    """Write extra to the active version's column."""
+    setattr(card, _extra_field(card_version), extra)
+
+
 # validation_change is stored as a per-version map: {"<version>": {action, prev_front_html, prev_extra, at}, ...}
 # Each version (base/v1/v2/v3) keeps its OWN before/after so it can be reverted independently.
 _VC_KEYS = ("action", "prev_front_html", "prev_extra", "at")
@@ -73,6 +90,9 @@ class CardPatch(BaseModel):
     tags: Optional[list[str]] = None
     tags_mapped: Optional[list[str]] = None
     extra: Optional[str] = None
+    extra_v1: Optional[str] = None
+    extra_v2: Optional[str] = None
+    extra_v3: Optional[str] = None
     vignette: Optional[str] = None
     teaching_case: Optional[str] = None
     ref_img_id: Optional[int] = None
@@ -103,6 +123,9 @@ def card_to_dict(card: Card, db: Session | None = None, img_cache: dict | None =
         "tags": card.tags,
         "tags_mapped": card.tags_mapped,
         "extra": card.extra,
+        "extra_v1": card.extra_v1,
+        "extra_v2": card.extra_v2,
+        "extra_v3": card.extra_v3,
         "vignette": card.vignette,
         "teaching_case": card.teaching_case,
         "ref_img": resolved_img,
@@ -226,6 +249,12 @@ def patch_card(card_id: int, body: CardPatch, db: Session = Depends(get_db)):
         card.tags_mapped = body.tags_mapped
     if "extra" in sent:
         card.extra = body.extra
+    if "extra_v1" in sent:
+        card.extra_v1 = body.extra_v1
+    if "extra_v2" in sent:
+        card.extra_v2 = body.extra_v2
+    if "extra_v3" in sent:
+        card.extra_v3 = body.extra_v3
     if "vignette" in sent:
         card.vignette = body.vignette
     if "teaching_case" in sent:
@@ -270,7 +299,7 @@ def regenerate_card(card_id: int, body: RegenerateCardRequest, db: Session = Dep
     if cards_data:
         _write_front(card, body.card_version, cards_data[0]["front_html"])
         if cards_data[0].get("extra") is not None:
-            card.extra = cards_data[0]["extra"]
+            _write_extra(card, body.card_version, cards_data[0]["extra"])
         card.source_ref = cards_data[0].get("source_ref")
         card.is_reviewed = False
     db.commit()
@@ -630,7 +659,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
     initial: dict[int, dict] = {}
     for sid, group in section_groups.items():
         payload = [
-            {"id": c.id, "front_html": _ver_front(c), "extra": c.extra}
+            {"id": c.id, "front_html": _ver_front(c), "extra": _read_extra(c, ver)}
             for c in group if (_ver_front(c) or "").strip()
         ]
         if not payload:
@@ -659,7 +688,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
             "heading": s.heading if s else "",
             "curriculum_topic_path": s.curriculum_topic_path if s else "",
         }
-        state_by_card[cid] = {"front_html": _ver_front(c) or c.front_html, "extra": c.extra}
+        state_by_card[cid] = {"front_html": _ver_front(c) or c.front_html, "extra": _read_extra(c, ver)}
 
     def _fixable(result: dict) -> list:
         # Everything failing except single-concept when a split is suggested
@@ -814,12 +843,12 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                     vcmap[ver] = {
                         "action": "fixed",
                         "prev_front_html": cur_front,
-                        "prev_extra": card.extra,
+                        "prev_extra": _read_extra(card, ver),
                         "at": now_iso,
                     }
                     card.validation_change = vcmap
                     _write_front(card, ver, out["front_html"])
-                    card.extra = out["extra"]
+                    _write_extra(card, ver, out["extra"])
                     fixed += 1
                 if res:
                     passed, total = summarize(res["rules"])
@@ -860,7 +889,7 @@ def revert_validation(card_id: int, version: str = "base", db: Session = Depends
     if not entry or entry.get("action") != "fixed":
         raise HTTPException(422, f"Nothing to revert for {version} (only auto-fixed cards can be reverted)")
     _write_front(card, version, entry.get("prev_front_html") or "")
-    card.extra = entry.get("prev_extra")
+    _write_extra(card, version, entry.get("prev_extra"))
     vcmap.pop(version, None)
     card.validation_change = vcmap or None
     db.commit()

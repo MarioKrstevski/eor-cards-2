@@ -99,6 +99,9 @@ export interface Card {
   tags: string[];
   tags_mapped: string[] | null;
   extra: string | null;
+  extra_v1: string | null;
+  extra_v2: string | null;
+  extra_v3: string | null;
   vignette: string | null;
   teaching_case: string | null;
   source_ref: string | null;

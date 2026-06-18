@@ -210,8 +210,13 @@ const EDIT_TABS: { key: string; label: string }[] = [
 function frontFieldFor(v: CardVersion): string {
   return v === 'v1' ? 'front_html_v1' : v === 'v2' ? 'front_html_v2' : v === 'v3' ? 'front_html_v3' : 'front_html';
 }
+function extraFieldFor(v: CardVersion): string {
+  return v === 'v1' ? 'extra_v1' : v === 'v2' ? 'extra_v2' : v === 'v3' ? 'extra_v3' : 'extra';
+}
 function getFieldValue(card: Card, key: string, ver: CardVersion): string {
   if (key === 'front_html') return (((card as any)[frontFieldFor(ver)] ?? card.front_html) ?? '') as string;
+  // extra is versioned too; empty version column inherits base (matches backend _read_extra).
+  if (key === 'extra') return (((card as any)[extraFieldFor(ver)] || card.extra) ?? '') as string;
   return (((card as any)[key]) ?? '') as string;
 }
 // The validator change-record for ONE version. validation_change is a per-version
@@ -226,7 +231,8 @@ function vcEntryFor(card: Card, ver: CardVersion): any {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function fieldPatch(key: string, val: string, ver: CardVersion): any {
   if (key === 'front_html') return { [frontFieldFor(ver)]: val };
-  return { [key]: val || null };  // extra/vignette/teaching_case null out when blank
+  if (key === 'extra') return { [extraFieldFor(ver)]: val || null };  // versioned extra
+  return { [key]: val || null };  // vignette/teaching_case null out when blank
 }
 
 interface BigEditModalProps {
@@ -1553,17 +1559,25 @@ export default function CardsPanel({
         },
       }),
       columnHelper.accessor('extra', {
-        header: 'Extra',
+        header: () => (
+          <span>
+            Extra
+            {activeCardVersion !== 'base' && (
+              <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-violet-50 text-violet-600 font-semibold uppercase">{activeCardVersion}</span>
+            )}
+          </span>
+        ),
         size: 200,
         cell: (info) => {
           const row = info.row;
-          const val = info.getValue() ?? '';
+          // Versioned extra; empty version column inherits base (matches getFieldValue).
+          const val = getFieldValue(row.original, 'extra', activeCardVersion);
           const cellId = `${row.index}:extra`;
           return (
             <EditableCell
               value={val}
               cellId={cellId}
-              onSave={(newVal) => handleCellSave(row.original.id, { extra: newVal || null })}
+              onSave={(newVal) => handleCellSave(row.original.id, fieldPatch('extra', newVal, activeCardVersion))}
               onSelect={handleCellSelect}
               onNavigate={(dir) => handleCellNavigate(row.index, 'extra', dir)}
               multiline
@@ -2144,8 +2158,10 @@ export default function CardsPanel({
     try {
       // Snapshot the current card for rollback only now, at accept time.
       if (cur) setRegenHistory(h => pushSnapshots(h, [{ id: cur.id, front_html: cur.front_html, extra: cur.extra }], Date.now()));
-      await updateCard(regenProposal.cardId, { front_html: regenProposal.front_html, extra: regenProposal.extra ?? '' });
-      setCards(prev => prev.map(c => c.id === regenProposal.cardId ? { ...c, front_html: regenProposal.front_html, extra: regenProposal.extra } as Card : c));
+      await updateCard(regenProposal.cardId, {
+        ...fieldPatch('front_html', regenProposal.front_html, activeCardVersion),
+        ...fieldPatch('extra', regenProposal.extra ?? '', activeCardVersion),
+      });
       setRegenProposal(null);
       setBulkRegenPrompt('');
       setSelectedIds(new Set());
@@ -3625,6 +3641,7 @@ export default function CardsPanel({
         if (!vcv) return null;
         const verLabel = activeCardVersion === 'base' ? 'Base' : activeCardVersion.toUpperCase();
         const afterFront = getFieldValue(validationView, 'front_html', activeCardVersion);
+        const afterExtra = getFieldValue(validationView, 'extra', activeCardVersion);
         return (
         <div className="fixed inset-0 z-[70] flex items-center justify-center" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-black/40" onClick={() => setValidationView(null)} />
@@ -3650,8 +3667,8 @@ export default function CardsPanel({
                   {vcv.action === 'split' ? 'This sibling card now' : 'After'}
                 </div>
                 <div className="text-xs bg-violet-50 border border-violet-200 rounded-lg p-2" dangerouslySetInnerHTML={{ __html: afterFront }} />
-                {validationView.extra && (
-                  <div className="text-[11px] text-gray-500 mt-1"><span className="font-semibold">Extra:</span> <span dangerouslySetInnerHTML={{ __html: validationView.extra }} /></div>
+                {afterExtra && (
+                  <div className="text-[11px] text-gray-500 mt-1"><span className="font-semibold">Extra:</span> <span dangerouslySetInnerHTML={{ __html: afterExtra }} /></div>
                 )}
               </div>
               {vcv.action === 'split' && (

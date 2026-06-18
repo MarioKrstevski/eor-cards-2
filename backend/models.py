@@ -162,6 +162,9 @@ class Card(Base):
     tags: Mapped[list] = mapped_column(JSON, default=list)
     tags_mapped: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # new curriculum tags after mapping
     extra: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    extra_v1: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # per-version extra; empty => inherit base
+    extra_v2: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    extra_v3: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     vignette: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     teaching_case: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source_ref: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
