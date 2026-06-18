@@ -55,10 +55,15 @@ def resolve_model(selection: str) -> tuple[str, str | None]:
 
 
 def effort_kwargs(selection: str) -> dict:
-    """Extra messages.create() kwargs for a model selection — the effort
-    output_config when one is set, else empty. Pair with model=resolve_model(...)[0]."""
-    _, effort = resolve_model(selection)
-    return {"output_config": {"effort": effort}} if effort else {}
+    """Extra messages.create() kwargs for a model selection — effort + adaptive
+    thinking for capable models. Pair with model=resolve_model(...)[0]."""
+    model_id, effort = resolve_model(selection)
+    result = {}
+    if effort:
+        result["output_config"] = {"effort": effort}
+    if model_id in EFFORT_CAPABLE:
+        result["thinking"] = {"type": "adaptive"}
+    return result
 
 
 def _short_label(model_id: str, effort: str | None) -> str:

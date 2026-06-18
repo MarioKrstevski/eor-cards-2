@@ -589,10 +589,34 @@ def _run_generation(
                                 setattr(matched, extra_field, card_data.get("extra"))
                             version_cards.append((matched, card_data["front_text"]))
                         total_cards += n
-                        if len(cards_data) != len(existing_list):
+                        # Overflow: AI produced more cards than base has — create new rows
+                        # with only the version column filled (no base/other versions).
+                        overflow_data = cards_data[n:]
+                        if overflow_data:
+                            max_num = max((c.card_number for c in existing_list), default=0)
+                            for j, card_data in enumerate(overflow_data):
+                                new_card = Card(
+                                    section_id=section_data["id"],
+                                    card_number=max_num + j + 1,
+                                    front_html=None,
+                                    front_text=card_data.get("front_text", ""),
+                                    tags=[],
+                                    status=CardStatus.active,
+                                    needs_review=True,
+                                )
+                                if version_field:
+                                    setattr(new_card, version_field, card_data["front_html"])
+                                if extra_field:
+                                    setattr(new_card, extra_field, card_data.get("extra"))
+                                db.add(new_card)
+                                db.flush()
+                                version_cards.append((new_card, card_data.get("front_text", "")))
+                            total_cards += len(overflow_data)
+                        # Only warn when version produced FEWER cards (some base cards left uncovered)
+                        if len(cards_data) < len(existing_list):
                             version_warnings.append(
                                 f"{section_data.get('heading', '?')}: {card_version} produced {len(cards_data)} card(s) "
-                                f"but base has {len(existing_list)} — filled first {n}"
+                                f"but base has {len(existing_list)} — {len(existing_list) - len(cards_data)} base card(s) have no {card_version}"
                             )
 
                 total_input_tokens += usage["input_tokens"]
