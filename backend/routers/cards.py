@@ -3,7 +3,7 @@ import json
 import logging
 import anthropic
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import cast, String, func
+from sqlalchemy import cast, String, func, or_
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel
 from typing import Optional
@@ -45,6 +45,24 @@ def _write_front(card: "Card", card_version: str, front_html: str) -> None:
     setattr(card, field, front_html)
     if field == "front_html":
         card.front_text = strip_card_html(front_html)
+
+
+# validation_change is stored as a per-version map: {"<version>": {action, prev_front_html, prev_extra, at}, ...}
+# Each version (base/v1/v2/v3) keeps its OWN before/after so it can be reverted independently.
+_VC_KEYS = ("action", "prev_front_html", "prev_extra", "at")
+
+
+def _vc_map(vc) -> dict:
+    """Normalize validation_change to the per-version map shape.
+
+    Migrates the old flat shape ({action, prev_front_html, prev_extra, at, version})
+    by re-keying it under its recorded version (defaulting to 'base')."""
+    if not vc:
+        return {}
+    if "action" in vc:  # legacy flat record
+        ver = vc.get("version") or "base"
+        return {ver: {k: vc[k] for k in _VC_KEYS if k in vc}}
+    return dict(vc)
 
 
 class CardPatch(BaseModel):
@@ -123,6 +141,7 @@ def list_cards(
     topic: Optional[str] = None,
     search_q: Optional[str] = None,
     modified_by_validator: Optional[bool] = None,
+    version: Optional[str] = None,
     limit: int = Query(100, le=1000),
     offset: int = 0,
     db: Session = Depends(get_db),
@@ -154,6 +173,14 @@ def list_cards(
         q = q.filter(Card.front_text.ilike(f"%{search_q}%"))
     if modified_by_validator:
         q = q.filter(Card.validation_change.isnot(None))
+        if version:
+            vc_str = cast(Card.validation_change, String)
+            # New per-version map shape stores "<version>": {...}; legacy flat shape stores "version": "<v>".
+            q = q.filter(or_(
+                vc_str.contains(f'"{version}":'),
+                vc_str.contains(f'"version": "{version}"'),
+                vc_str.contains(f'"version":"{version}"'),
+            ))
 
     # Order
     if section_id:
@@ -744,7 +771,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                 inh_tags, inh_mapped = card.tags, card.tags_mapped
                 vig, tc = card.vignette, card.teaching_case
                 orig_front, orig_extra = card.front_html, card.extra
-                split_change = {"action": "split", "prev_front_html": orig_front, "prev_extra": orig_extra, "at": now_iso}
+                split_change = {"base": {"action": "split", "prev_front_html": orig_front, "prev_extra": orig_extra, "at": now_iso}}
                 db.delete(card)  # replace the original with its siblings
                 db.flush()
                 start_num = (
@@ -783,13 +810,14 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                 res = out["result"]
                 cur_front = getattr(card, _front_field(ver), None) or card.front_html
                 if out["front_html"] != cur_front:
-                    card.validation_change = {
+                    vcmap = _vc_map(card.validation_change)
+                    vcmap[ver] = {
                         "action": "fixed",
                         "prev_front_html": cur_front,
                         "prev_extra": card.extra,
                         "at": now_iso,
-                        "version": ver,
                     }
+                    card.validation_change = vcmap
                     _write_front(card, ver, out["front_html"])
                     card.extra = out["extra"]
                     fixed += 1
@@ -820,18 +848,21 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/{card_id}/revert-validation")
-def revert_validation(card_id: int, db: Session = Depends(get_db)):
-    """Undo an auto-fix: restore the card's front/extra from before the validator
-    changed it, and clear the change marker."""
+def revert_validation(card_id: int, version: str = "base", db: Session = Depends(get_db)):
+    """Undo an auto-fix for ONE version: restore that version's front (and the
+    shared extra) from before the validator changed it, and drop that version's
+    change marker, leaving the other versions' markers untouched."""
     card = db.get(Card, card_id)
     if not card:
         raise HTTPException(404)
-    vc = card.validation_change
-    if not vc or vc.get("action") != "fixed":
-        raise HTTPException(422, "Nothing to revert (only auto-fixed cards can be reverted)")
-    _write_front(card, vc.get("version", "base"), vc.get("prev_front_html") or "")
-    card.extra = vc.get("prev_extra")
-    card.validation_change = None
+    vcmap = _vc_map(card.validation_change)
+    entry = vcmap.get(version)
+    if not entry or entry.get("action") != "fixed":
+        raise HTTPException(422, f"Nothing to revert for {version} (only auto-fixed cards can be reverted)")
+    _write_front(card, version, entry.get("prev_front_html") or "")
+    card.extra = entry.get("prev_extra")
+    vcmap.pop(version, None)
+    card.validation_change = vcmap or None
     db.commit()
     db.refresh(card)
     return card_to_dict(card, db)

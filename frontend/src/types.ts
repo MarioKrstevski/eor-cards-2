@@ -119,12 +119,14 @@ export interface Card {
     rules: { key: string; title: string; pass: boolean; reason: string }[];
     split_suggested: boolean;
   } | null;
-  validation_change?: {
+  // Per-version map: each version (base/v1/v2/v3) keeps its own before/after so it
+  // can be reverted independently. (Legacy rows may still be the old flat shape.)
+  validation_change?: Record<string, {
     action: 'fixed' | 'split';
     prev_front_html: string;
     prev_extra: string | null;
     at: string;
-  } | null;
+  }> | null;
   in_fix_batch: boolean;
   manually_added?: boolean;
   created_at: string;

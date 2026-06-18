@@ -362,8 +362,8 @@ export async function getValidationRules(): Promise<{ key: string; title: string
   return res.data;
 }
 
-export async function revertValidation(cardId: number): Promise<Card> {
-  const res = await http.post<Card>(`/cards/${cardId}/revert-validation`, {});
+export async function revertValidation(cardId: number, version: string = 'base'): Promise<Card> {
+  const res = await http.post<Card>(`/cards/${cardId}/revert-validation`, {}, { params: { version } });
   return res.data;
 }
 
@@ -391,6 +391,7 @@ export async function getCards(params?: {
   mark_type_id?: number | null;
   search_q?: string;
   modified_by_validator?: boolean;
+  version?: string;
   limit?: number;
   offset?: number;
 }): Promise<PaginatedCards> {

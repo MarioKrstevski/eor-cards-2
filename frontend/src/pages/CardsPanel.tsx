@@ -214,6 +214,15 @@ function getFieldValue(card: Card, key: string, ver: CardVersion): string {
   if (key === 'front_html') return (((card as any)[frontFieldFor(ver)] ?? card.front_html) ?? '') as string;
   return (((card as any)[key]) ?? '') as string;
 }
+// The validator change-record for ONE version. validation_change is a per-version
+// map ({base, v1, v2, v3}); legacy rows may still be the old flat shape.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function vcEntryFor(card: Card, ver: CardVersion): any {
+  const vc = card.validation_change as any;
+  if (!vc) return null;
+  if (vc.action) return (vc.version || 'base') === ver ? vc : null;  // legacy flat shape
+  return vc[ver] || null;
+}
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function fieldPatch(key: string, val: string, ver: CardVersion): any {
   if (key === 'front_html') return { [frontFieldFor(ver)]: val };
@@ -1256,7 +1265,7 @@ export default function CardsPanel({
         offset,
         ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
         ...(markFilterId != null ? { mark_type_id: markFilterId } : {}),
-        ...(validatorOnly ? { modified_by_validator: true } : {}),
+        ...(validatorOnly ? { modified_by_validator: true, version: activeCardVersion } : {}),
       };
       try {
         let resp;
@@ -1282,7 +1291,7 @@ export default function CardsPanel({
         if (!silent) setCardsLoading(false);
       }
     },
-    [pagination.pageSize, pagination.pageIndex, statusFilter, markFilterId, validatorOnly]
+    [pagination.pageSize, pagination.pageIndex, statusFilter, markFilterId, validatorOnly, activeCardVersion]
   );
 
   // Refetch on dependencies change
@@ -1291,7 +1300,7 @@ export default function CardsPanel({
     fetchCards(sectionId, topicPath, false, undefined, sectionIds);
     setSearchQ('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sectionId, topicPath, sectionIds, refreshKey, statusFilter, markFilterId, validatorOnly]);
+  }, [sectionId, topicPath, sectionIds, refreshKey, statusFilter, markFilterId, validatorOnly, activeCardVersion]);
 
   // Refetch on page change
   useEffect(() => {
@@ -1419,11 +1428,11 @@ export default function CardsPanel({
                     </span>
                   );
                 })()}
-                {card.validation_change && (
+                {vcEntryFor(card, activeCardVersion) && (
                   <button
                     onClick={(e) => { e.stopPropagation(); setValidationView(card); }}
                     className="text-[10px] text-violet-600 hover:text-violet-800 shrink-0"
-                    title={`Changed by validator (${card.validation_change.action}) — click to see before/after`}
+                    title={`${activeCardVersion === 'base' ? 'Base' : activeCardVersion.toUpperCase()} changed by validator (${vcEntryFor(card, activeCardVersion).action}) — click to see before/after`}
                   >
                     ✎
                   </button>
@@ -3611,59 +3620,65 @@ export default function CardsPanel({
       )}
 
       {/* Validator before/after + revert */}
-      {validationView && validationView.validation_change && (
+      {validationView && (() => {
+        const vcv = vcEntryFor(validationView, activeCardVersion);
+        if (!vcv) return null;
+        const verLabel = activeCardVersion === 'base' ? 'Base' : activeCardVersion.toUpperCase();
+        const afterFront = getFieldValue(validationView, 'front_html', activeCardVersion);
+        return (
         <div className="fixed inset-0 z-[70] flex items-center justify-center" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-black/40" onClick={() => setValidationView(null)} />
           <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[720px] max-w-[94vw] max-h-[88vh] flex flex-col">
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
               <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">
-                {validationView.validation_change.action === 'split' ? 'Split from original' : 'Validator auto-fix — before / after'}
+                <span className="text-violet-600">{verLabel}</span> · {vcv.action === 'split' ? 'Split from original' : 'Validator auto-fix — before / after'}
               </h2>
               <button onClick={() => setValidationView(null)} className="text-gray-400 hover:text-gray-700 text-sm">✕</button>
             </div>
             <div className="flex-1 overflow-auto p-4 space-y-4">
               <div>
                 <div className="text-[11px] font-semibold text-gray-500 uppercase mb-1">
-                  {validationView.validation_change.action === 'split' ? 'Original (overloaded) card' : 'Before'}
+                  {vcv.action === 'split' ? 'Original (overloaded) card' : 'Before'}
                 </div>
-                <div className="text-xs bg-gray-50 border border-gray-200 rounded-lg p-2" dangerouslySetInnerHTML={{ __html: validationView.validation_change.prev_front_html }} />
-                {validationView.validation_change.prev_extra && (
-                  <div className="text-[11px] text-gray-500 mt-1"><span className="font-semibold">Extra:</span> <span dangerouslySetInnerHTML={{ __html: validationView.validation_change.prev_extra }} /></div>
+                <div className="text-xs bg-gray-50 border border-gray-200 rounded-lg p-2" dangerouslySetInnerHTML={{ __html: vcv.prev_front_html }} />
+                {vcv.prev_extra && (
+                  <div className="text-[11px] text-gray-500 mt-1"><span className="font-semibold">Extra:</span> <span dangerouslySetInnerHTML={{ __html: vcv.prev_extra }} /></div>
                 )}
               </div>
               <div>
                 <div className="text-[11px] font-semibold text-gray-500 uppercase mb-1">
-                  {validationView.validation_change.action === 'split' ? 'This sibling card now' : 'After'}
+                  {vcv.action === 'split' ? 'This sibling card now' : 'After'}
                 </div>
-                <div className="text-xs bg-violet-50 border border-violet-200 rounded-lg p-2" dangerouslySetInnerHTML={{ __html: validationView.front_html }} />
+                <div className="text-xs bg-violet-50 border border-violet-200 rounded-lg p-2" dangerouslySetInnerHTML={{ __html: afterFront }} />
                 {validationView.extra && (
                   <div className="text-[11px] text-gray-500 mt-1"><span className="font-semibold">Extra:</span> <span dangerouslySetInnerHTML={{ __html: validationView.extra }} /></div>
                 )}
               </div>
-              {validationView.validation_change.action === 'split' && (
+              {vcv.action === 'split' && (
                 <p className="text-[11px] text-gray-400">This card was created by auto-splitting the original above. To undo a split, select the sibling cards and use Combine.</p>
               )}
             </div>
             <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-200">
-              {validationView.validation_change.action === 'fixed' && (
+              {vcv.action === 'fixed' && (
                 <button
                   onClick={async () => {
                     try {
-                      await revertValidation(validationView.id);
+                      await revertValidation(validationView.id, activeCardVersion);
                       setValidationView(null);
                       fetchCards(sectionId, topicPath, true, undefined, sectionIds);
                     } catch { setActionError('Revert failed'); }
                   }}
                   className="px-3 py-1.5 text-xs font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700"
                 >
-                  ↩ Revert to before
+                  ↩ Revert {verLabel} to before
                 </button>
               )}
               <button onClick={() => setValidationView(null)} className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg">Close</button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
 
       {/* Correctness rules reference */}
