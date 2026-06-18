@@ -131,6 +131,13 @@ export interface Card {
     rules: { key: string; title: string; pass: boolean; reason: string }[];
     split_suggested: boolean;
   } | null;
+  // Per-version validator (X/N) scores; empty => not validated for that version (UI falls back to base).
+  correctness_score_v1?: number | null;
+  correctness_score_v2?: number | null;
+  correctness_score_v3?: number | null;
+  correctness_v1?: Card['correctness'];
+  correctness_v2?: Card['correctness'];
+  correctness_v3?: Card['correctness'];
   // Per-version map: each version (base/v1/v2/v3) keeps its own before/after so it
   // can be reverted independently. (Legacy rows may still be the old flat shape.)
   validation_change?: Record<string, {

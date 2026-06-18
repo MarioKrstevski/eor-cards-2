@@ -83,6 +83,24 @@ def _write_score(card: "Card", card_version: str, accuracy, note, eor) -> None:
     setattr(card, fe, eor)
 
 
+# Per-version validator (X/N correctness) columns.
+_CORRECTNESS_FIELDS = {
+    "v1": ("correctness_score_v1", "correctness_v1"),
+    "v2": ("correctness_score_v2", "correctness_v2"),
+    "v3": ("correctness_score_v3", "correctness_v3"),
+}
+
+
+def _correctness_fields(card_version: str):
+    return _CORRECTNESS_FIELDS.get(card_version, ("correctness_score", "correctness"))
+
+
+def _write_correctness(card: "Card", card_version: str, passed, corr) -> None:
+    fs, fc = _correctness_fields(card_version)
+    setattr(card, fs, passed)
+    setattr(card, fc, corr)
+
+
 # validation_change is stored as a per-version map: {"<version>": {action, prev_front_html, prev_extra, at}, ...}
 # Each version (base/v1/v2/v3) keeps its OWN before/after so it can be reverted independently.
 _VC_KEYS = ("action", "prev_front_html", "prev_extra", "at")
@@ -171,6 +189,12 @@ def card_to_dict(card: Card, db: Session | None = None, img_cache: dict | None =
         "eor_yield_v3": getattr(card, "eor_yield_v3", None),
         "correctness_score": getattr(card, "correctness_score", None),
         "correctness": getattr(card, "correctness", None),
+        "correctness_score_v1": getattr(card, "correctness_score_v1", None),
+        "correctness_score_v2": getattr(card, "correctness_score_v2", None),
+        "correctness_score_v3": getattr(card, "correctness_score_v3", None),
+        "correctness_v1": getattr(card, "correctness_v1", None),
+        "correctness_v2": getattr(card, "correctness_v2", None),
+        "correctness_v3": getattr(card, "correctness_v3", None),
         "validation_change": getattr(card, "validation_change", None),
         "needs_review": card.needs_review if hasattr(card, 'needs_review') else False,
         "created_at": card.created_at.isoformat() if card.created_at else None,
@@ -891,8 +915,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                     fixed += 1
                 if res:
                     passed, total = summarize(res["rules"])
-                    card.correctness_score = passed
-                    card.correctness = {"total": total, "rules": res["rules"], "split_suggested": res.get("split_suggested", False)}
+                    _write_correctness(card, ver, passed, {"total": total, "rules": res["rules"], "split_suggested": res.get("split_suggested", False)})
                 validated += 1
     if all_new_cards:
         assign_note_ids(all_new_cards)  # unique across the whole request

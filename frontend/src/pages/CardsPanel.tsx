@@ -228,6 +228,15 @@ function scoreFor(card: Card, ver: CardVersion): { score: number | null; note: s
   if (c[`accuracy_score_${ver}`] == null) return { score: card.accuracy_score, note: card.accuracy_note, eor: card.eor_yield };
   return { score: c[`accuracy_score_${ver}`], note: c[`accuracy_note_${ver}`], eor: c[`eor_yield_${ver}`] };
 }
+// The active version's validator (X/N) score. A version not validated yet
+// (null score column) inherits the base correctness so the badge still shows.
+function correctnessFor(card: Card, ver: CardVersion): { score: number | null; data: Card['correctness'] | null } {
+  if (ver === 'base') return { score: card.correctness_score ?? null, data: card.correctness ?? null };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const c = card as any;
+  if (c[`correctness_score_${ver}`] == null) return { score: card.correctness_score ?? null, data: card.correctness ?? null };
+  return { score: c[`correctness_score_${ver}`], data: c[`correctness_${ver}`] };
+}
 // The validator change-record for ONE version. validation_change is a per-version
 // map ({base, v1, v2, v3}); legacy rows may still be the old flat shape.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1432,18 +1441,20 @@ export default function CardsPanel({
                   </span>
                   );
                 })()}
-                {card.correctness && card.correctness_score != null && (() => {
-                  const total = card.correctness.total;
-                  const fails = total - card.correctness_score;
+                {(() => {
+                  const corr = correctnessFor(card, activeCardVersion);
+                  if (!corr.data || corr.score == null) return null;
+                  const total = corr.data.total;
+                  const fails = total - corr.score;
                   const color = fails === 0 ? 'bg-green-500' : fails === 1 ? 'bg-amber-500' : 'bg-red-600';
-                  const lines = card.correctness.rules.map(r => `${r.pass ? '✓' : '✗'} ${r.title}${!r.pass && r.reason ? ` — ${r.reason}` : ''}`);
-                  const title = `Correctness: ${card.correctness_score}/${total}\n${lines.join('\n')}${card.correctness.split_suggested ? '\n⚠ Suggest splitting into sibling cards' : ''}`;
+                  const lines = corr.data.rules.map(r => `${r.pass ? '✓' : '✗'} ${r.title}${!r.pass && r.reason ? ` — ${r.reason}` : ''}`);
+                  const title = `Correctness${activeCardVersion !== 'base' ? ` (${activeCardVersion.toUpperCase()})` : ''}: ${corr.score}/${total}\n${lines.join('\n')}${corr.data.split_suggested ? '\n⚠ Suggest splitting into sibling cards' : ''}`;
                   return (
                     <span
                       className={`min-w-[20px] px-1 py-0.5 flex items-center justify-center text-[8px] font-bold text-white shrink-0 leading-none ${color}`}
                       title={title}
                     >
-                      {card.correctness_score}/{total}{card.correctness.split_suggested ? ' ⚠' : ''}
+                      {corr.score}/{total}{corr.data.split_suggested ? ' ⚠' : ''}
                     </span>
                   );
                 })()}

@@ -192,6 +192,13 @@ class Card(Base):
     eor_yield_v3: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     correctness_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # rules passed
     correctness: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # {total, rules:[...], split_suggested}
+    # Per-version validator (X/N) scores (empty => not validated for that version yet; UI falls back to base)
+    correctness_score_v1: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    correctness_score_v2: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    correctness_score_v3: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    correctness_v1: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    correctness_v2: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    correctness_v3: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     validation_change: Mapped[Optional[dict]] = mapped_column(JSON(none_as_null=True), nullable=True)  # {action, prev_front_html, prev_extra, at}; None -> SQL NULL so the "changed" filter works
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)

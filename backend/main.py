@@ -96,6 +96,12 @@ def _migrate_db():
             "ALTER TABLE cards ADD COLUMN eor_yield_v1 TEXT",
             "ALTER TABLE cards ADD COLUMN eor_yield_v2 TEXT",
             "ALTER TABLE cards ADD COLUMN eor_yield_v3 TEXT",
+            "ALTER TABLE cards ADD COLUMN correctness_score_v1 INTEGER",
+            "ALTER TABLE cards ADD COLUMN correctness_score_v2 INTEGER",
+            "ALTER TABLE cards ADD COLUMN correctness_score_v3 INTEGER",
+            "ALTER TABLE cards ADD COLUMN correctness_v1 TEXT",
+            "ALTER TABLE cards ADD COLUMN correctness_v2 TEXT",
+            "ALTER TABLE cards ADD COLUMN correctness_v3 TEXT",
             "ALTER TABLE rule_sets ADD COLUMN card_version VARCHAR(10) NOT NULL DEFAULT 'base'",
             "ALTER TABLE section_images ADD COLUMN intended_position VARCHAR(10)",
             "ALTER TABLE sections ADD COLUMN section_status VARCHAR(20) DEFAULT 'normal'",
@@ -230,7 +236,7 @@ async def _no_store_api(request, call_next):
 
 
 # Bumped on each deploy so /api/version can confirm what's actually running.
-APP_VERSION = 54
+APP_VERSION = 55
 
 
 @app.get("/api/version")
