@@ -219,23 +219,23 @@ function getFieldValue(card: Card, key: string, ver: CardVersion): string {
   if (key === 'extra') return (((card as any)[extraFieldFor(ver)] || card.extra) ?? '') as string;
   return (((card as any)[key]) ?? '') as string;
 }
-// The active version's accuracy/yield score. A version that hasn't been scored
-// yet (null score column) inherits the base score so the badge still shows.
+// The active version's accuracy/yield score. A score reflects the specific text
+// that was scored, so we do NOT fall back to base: a version that hasn't been
+// scored yet returns null and the badge simply hides (matches an unscored base card).
 function scoreFor(card: Card, ver: CardVersion): { score: number | null; note: string | null; eor: Record<string, string> | null } {
   if (ver === 'base') return { score: card.accuracy_score, note: card.accuracy_note, eor: card.eor_yield };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const c = card as any;
-  if (c[`accuracy_score_${ver}`] == null) return { score: card.accuracy_score, note: card.accuracy_note, eor: card.eor_yield };
-  return { score: c[`accuracy_score_${ver}`], note: c[`accuracy_note_${ver}`], eor: c[`eor_yield_${ver}`] };
+  return { score: c[`accuracy_score_${ver}`] ?? null, note: c[`accuracy_note_${ver}`] ?? null, eor: c[`eor_yield_${ver}`] ?? null };
 }
-// The active version's validator (X/N) score. A version not validated yet
-// (null score column) inherits the base correctness so the badge still shows.
+// The active version's validator (X/N) score. Like the accuracy score, this
+// reflects the specific text validated, so we do NOT fall back to base: an
+// unvalidated version returns null and the badge hides.
 function correctnessFor(card: Card, ver: CardVersion): { score: number | null; data: Card['correctness'] | null } {
   if (ver === 'base') return { score: card.correctness_score ?? null, data: card.correctness ?? null };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const c = card as any;
-  if (c[`correctness_score_${ver}`] == null) return { score: card.correctness_score ?? null, data: card.correctness ?? null };
-  return { score: c[`correctness_score_${ver}`], data: c[`correctness_${ver}`] };
+  return { score: c[`correctness_score_${ver}`] ?? null, data: c[`correctness_${ver}`] ?? null };
 }
 // The validator change-record for ONE version. validation_change is a per-version
 // map ({base, v1, v2, v3}); legacy rows may still be the old flat shape.
