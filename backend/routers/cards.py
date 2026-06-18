@@ -23,6 +23,28 @@ router = APIRouter()
 class RegenerateCardRequest(BaseModel):
     model: str = DEFAULT_MODEL
     prompt: Optional[str] = None
+    card_version: str = "base"  # base | v1 | v2 | v3 — which front column to edit
+
+
+# Which Card column holds the front for a given card version.
+_VERSION_FIELD = {"v1": "front_html_v1", "v2": "front_html_v2", "v3": "front_html_v3"}
+
+
+def _front_field(card_version: str) -> str:
+    return _VERSION_FIELD.get(card_version, "front_html")
+
+
+def _read_front(card: "Card", card_version: str) -> str:
+    """The active version's front, falling back to base if that version is empty."""
+    return getattr(card, _front_field(card_version), None) or card.front_html or ""
+
+
+def _write_front(card: "Card", card_version: str, front_html: str) -> None:
+    """Write the front to the active version's column (base also updates front_text)."""
+    field = _front_field(card_version)
+    setattr(card, field, front_html)
+    if field == "front_html":
+        card.front_text = strip_card_html(front_html)
 
 
 class CardPatch(BaseModel):
@@ -213,14 +235,13 @@ def regenerate_card(card_id: int, body: RegenerateCardRequest, db: Session = Dep
             "heading": section.heading,
             "curriculum_topic_path": section.curriculum_topic_path,
         },
-        existing_card_html=card.front_html,
+        existing_card_html=_read_front(card, body.card_version),
         rules_text=rules,
         extra_prompt=body.prompt or None,
         model=body.model,
     )
     if cards_data:
-        card.front_html = cards_data[0]["front_html"]
-        card.front_text = cards_data[0]["front_text"]
+        _write_front(card, body.card_version, cards_data[0]["front_html"])
         if cards_data[0].get("extra") is not None:
             card.extra = cards_data[0]["extra"]
         card.source_ref = cards_data[0].get("source_ref")
@@ -377,7 +398,7 @@ def regenerate_card_preview(card_id: int, body: RegenerateCardRequest, db: Sessi
             "heading": section.heading,
             "curriculum_topic_path": section.curriculum_topic_path,
         },
-        existing_card_html=card.front_html,
+        existing_card_html=_read_front(card, body.card_version),
         rules_text=rules,
         extra_prompt=body.prompt or None,
         model=body.model,
@@ -527,6 +548,7 @@ class ValidateRequest(BaseModel):
     card_ids: list[int]
     model: str = DEFAULT_MODEL
     auto_fix: bool = True
+    card_version: str = "base"  # base | v1 | v2 | v3 — which front column to validate/fix
 
 
 @router.get("/validation-rules")
@@ -562,6 +584,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
     total_input = 0
     total_output = 0
     per_section_usage: dict[int, dict] = {}  # section_id -> {"i","o"} for cost attribution
+    ver = body.card_version  # which front column to validate/fix
 
     def _acc_sec(sid, i, o):
         if sid is None:
@@ -570,10 +593,21 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
         d["i"] += i
         d["o"] += o
 
-    # 1) Batch-judge every card in each section (one call per section).
+    def _ver_front(c):
+        # The selected version's front WITHOUT base fallback (None/empty if that
+        # version isn't populated — used to skip such cards in version mode).
+        return c.front_html if ver == "base" else getattr(c, _front_field(ver), None)
+
+    # 1) Batch-judge every card in each section (one call per section). In a
+    #    non-base version, only judge cards that actually have that version.
     initial: dict[int, dict] = {}
     for sid, group in section_groups.items():
-        payload = [{"id": c.id, "front_html": c.front_html, "extra": c.extra} for c in group]
+        payload = [
+            {"id": c.id, "front_html": _ver_front(c), "extra": c.extra}
+            for c in group if (_ver_front(c) or "").strip()
+        ]
+        if not payload:
+            continue
         sec = sections.get(sid)
         cpath = (sec.curriculum_topic_path or "") if sec else ""
         try:
@@ -598,7 +632,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
             "heading": s.heading if s else "",
             "curriculum_topic_path": s.curriculum_topic_path if s else "",
         }
-        state_by_card[cid] = {"front_html": c.front_html, "extra": c.extra}
+        state_by_card[cid] = {"front_html": _ver_front(c) or c.front_html, "extra": c.extra}
 
     def _fixable(result: dict) -> list:
         # Everything failing except single-concept when a split is suggested
@@ -667,7 +701,9 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
             return {"card_id": cid, "action": "fix", "front_html": front_html, "extra": extra, "result": result, "usage": u}
 
         # Split path: card flagged as needing sibling cards.
-        needs_split = result.get("split_suggested") and any(
+        # Split only in base mode — v1/v2/v3 are 1:1 rephrasings of base cards,
+        # so changing the card count there would desync the versions.
+        needs_split = ver == "base" and result.get("split_suggested") and any(
             r["key"] == "single_concept" and not r["pass"] for r in result["rules"]
         )
         if needs_split:
@@ -745,15 +781,16 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                 validated += len(new_cards)
             else:
                 res = out["result"]
-                if out["front_html"] != card.front_html:
+                cur_front = getattr(card, _front_field(ver), None) or card.front_html
+                if out["front_html"] != cur_front:
                     card.validation_change = {
                         "action": "fixed",
-                        "prev_front_html": card.front_html,
+                        "prev_front_html": cur_front,
                         "prev_extra": card.extra,
                         "at": now_iso,
+                        "version": ver,
                     }
-                    card.front_html = out["front_html"]
-                    card.front_text = strip_card_html(out["front_html"])
+                    _write_front(card, ver, out["front_html"])
                     card.extra = out["extra"]
                     fixed += 1
                 if res:
@@ -792,8 +829,7 @@ def revert_validation(card_id: int, db: Session = Depends(get_db)):
     vc = card.validation_change
     if not vc or vc.get("action") != "fixed":
         raise HTTPException(422, "Nothing to revert (only auto-fixed cards can be reverted)")
-    card.front_html = vc.get("prev_front_html") or ""
-    card.front_text = strip_card_html(card.front_html)
+    _write_front(card, vc.get("version", "base"), vc.get("prev_front_html") or "")
     card.extra = vc.get("prev_extra")
     card.validation_change = None
     db.commit()

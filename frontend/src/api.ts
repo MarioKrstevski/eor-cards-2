@@ -336,7 +336,7 @@ export async function bulkScoreCards(params: { card_ids: number[]; model: string
   return res.data;
 }
 
-export async function validateCards(params: { card_ids: number[]; model: string; auto_fix?: boolean }): Promise<{ validated: number; fixed: number; split: number }> {
+export async function validateCards(params: { card_ids: number[]; model: string; auto_fix?: boolean; card_version?: string }): Promise<{ validated: number; fixed: number; split: number }> {
   const res = await http.post<{ validated: number; fixed: number; split: number }>('/cards/validate', params);
   return res.data;
 }
@@ -427,7 +427,7 @@ export async function rejectCard(id: number): Promise<Card> {
 
 export async function regenerateCardPreview(
   id: number,
-  params: { model: string; prompt?: string }
+  params: { model: string; prompt?: string; card_version?: string }
 ): Promise<{ front_html: string; extra: string | null; source_ref: string | null }> {
   const res = await http.post(`/cards/${id}/regenerate-preview`, params);
   return res.data;
@@ -480,7 +480,7 @@ export async function addManualCards(params: {
 
 export async function regenerateCard(
   id: number,
-  params: { model?: string; prompt?: string }
+  params: { model?: string; prompt?: string; card_version?: string }
 ): Promise<Card> {
   const res = await http.post<Card>(`/cards/${id}/regenerate`, params);
   return res.data;

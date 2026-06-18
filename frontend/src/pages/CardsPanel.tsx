@@ -1999,7 +1999,7 @@ export default function CardsPanel({
     try {
       const prev = cards.find(c => c.id === id);
       if (prev) setRegenHistory(h => pushSnapshots(h, [{ id, front_html: prev.front_html, extra: prev.extra }], Date.now()));
-      await regenerateCard(id, { model: selectedModel, prompt: prompt || undefined });
+      await regenerateCard(id, { model: selectedModel, prompt: prompt || undefined, card_version: activeCardVersion });
       fetchCards(sectionId, topicPath, true);
       refreshUsage?.();
     } catch {
@@ -2119,7 +2119,7 @@ export default function CardsPanel({
   const handleRegenPreview = useCallback(async (cardId: number, prompt: string) => {
     setRegenPreviewLoading(true);
     try {
-      const res = await regenerateCardPreview(cardId, { model: selectedModel, prompt: prompt || undefined });
+      const res = await regenerateCardPreview(cardId, { model: selectedModel, prompt: prompt || undefined, card_version: activeCardVersion });
       setRegenProposal({ cardId, front_html: res.front_html, extra: res.extra ?? null });
       setShowBulkRegenModal(false);
     } catch {
@@ -2216,7 +2216,7 @@ export default function CardsPanel({
     setBulkRegenProgress({ done: 0, total: ids.length });
     try {
       for (let i = 0; i < ids.length; i++) {
-        await regenerateCard(ids[i], { model: selectedModel, prompt: prompt || undefined });
+        await regenerateCard(ids[i], { model: selectedModel, prompt: prompt || undefined, card_version: activeCardVersion });
         setBulkRegenProgress({ done: i + 1, total: ids.length });
       }
       setShowBulkRegenModal(false);
@@ -2643,7 +2643,7 @@ export default function CardsPanel({
                     if (selectedIds.size === 0) return;
                     setValidating(true);
                     try {
-                      await validateCards({ card_ids: [...selectedIds], model: selectedModel, auto_fix: true });
+                      await validateCards({ card_ids: [...selectedIds], model: selectedModel, auto_fix: true, card_version: activeCardVersion });
                       fetchCards(sectionId, topicPath, true, undefined, sectionIds);
                     } catch { setActionError('Validation failed'); } finally { setValidating(false); }
                   }}
@@ -2665,7 +2665,7 @@ export default function CardsPanel({
                         });
                         const allIds = allCards.cards.map(c => c.id);
                         if (allIds.length === 0) return;
-                        await validateCards({ card_ids: allIds, model: selectedModel, auto_fix: true });
+                        await validateCards({ card_ids: allIds, model: selectedModel, auto_fix: true, card_version: activeCardVersion });
                         fetchCards(sectionId, topicPath, true, undefined, sectionIds);
                       } catch { setActionError('Validation failed'); } finally { setValidating(false); }
                     }}
