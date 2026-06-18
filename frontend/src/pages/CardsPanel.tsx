@@ -46,10 +46,11 @@ import {
   debugRunSection,
   getModels,
   addManualCards,
+  getRuleSets,
   type DebugPromptResult,
   type DebugRunResult,
 } from '../api';
-import type { Card, CardStatus, CostEstimate, ReviewMarkType, SectionImage, FixProposal, Model } from '../types';
+import type { Card, CardStatus, CostEstimate, ReviewMarkType, SectionImage, FixProposal, Model, RuleSet } from '../types';
 import { loadRegenHistory, pushSnapshots, rollbackToIndex, type RegenHistory } from '../regenHistory';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
@@ -214,9 +215,16 @@ function extraFieldFor(v: CardVersion): string {
   return v === 'v1' ? 'extra_v1' : v === 'v2' ? 'extra_v2' : v === 'v3' ? 'extra_v3' : 'extra';
 }
 function getFieldValue(card: Card, key: string, ver: CardVersion): string {
-  if (key === 'front_html') return (((card as any)[frontFieldFor(ver)] ?? card.front_html) ?? '') as string;
-  // extra is versioned too; empty version column inherits base (matches backend _read_extra).
-  if (key === 'extra') return (((card as any)[extraFieldFor(ver)] || card.extra) ?? '') as string;
+  // Each version is independent — NO base fallback. An empty version column shows
+  // empty (you fill it by generating/editing that version), never the base text.
+  if (key === 'front_html') {
+    if (ver === 'base') return card.front_html ?? '';
+    return (((card as any)[frontFieldFor(ver)]) ?? '') as string;
+  }
+  if (key === 'extra') {
+    if (ver === 'base') return card.extra ?? '';
+    return (((card as any)[extraFieldFor(ver)]) ?? '') as string;
+  }
   return (((card as any)[key]) ?? '') as string;
 }
 // The active version's accuracy/yield score. A score reflects the specific text
@@ -1090,6 +1098,14 @@ export default function CardsPanel({
 
   // ── Card list state ──────────────────────────────────────────────────────
   const [cards, setCards] = useState<Card[]>([]);
+  // The single section in scope: an explicit sectionId (Documents path) OR — when
+  // reached via a Topic — the lone section all loaded cards share. Lets the
+  // single-section actions (Inspect prompt / Add cards) work from both nav paths.
+  const effectiveSectionId = useMemo<number | null>(() => {
+    if (sectionId != null) return sectionId;
+    const ids = new Set(cards.map(c => c.section_id));
+    return ids.size === 1 ? (cards[0]?.section_id ?? null) : null;
+  }, [sectionId, cards]);
   const [totalCards, setTotalCards] = useState(0);
   const [cardsLoading, setCardsLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -1161,6 +1177,11 @@ export default function CardsPanel({
 
   // ── Generate confirm ─────────────────────────────────────────────────────
   const [showGenerateConfirm, setShowGenerateConfirm] = useState(false);
+  // Generation rule sets, so we can show which card version a run will target.
+  const [genRuleSets, setGenRuleSets] = useState<RuleSet[]>([]);
+  useEffect(() => { getRuleSets('generation').then(setGenRuleSets).catch(() => {}); }, []);
+  const targetVersion = genRuleSets.find(r => r.id === selectedRuleSetId)?.card_version ?? 'base';
+  const targetVersionLabel = targetVersion === 'base' ? 'Base' : targetVersion.toUpperCase();
 
   // ── Inspect prompt (debug single section's generation, dry-run) ───────────
   const [inspectLoading, setInspectLoading] = useState(false);
@@ -1510,13 +1531,13 @@ export default function CardsPanel({
         cell: (info) => {
           const row = info.row;
           const card = row.original;
-          // Pick the right version to display; fall back to base if version not generated
+          // Each version is independent — show ONLY this version's front (no base fallback).
           const versionedHtml =
             activeCardVersion === 'v1' ? card.front_html_v1 :
             activeCardVersion === 'v2' ? card.front_html_v2 :
             activeCardVersion === 'v3' ? card.front_html_v3 :
             card.front_html;
-          const displayHtml = versionedHtml || card.front_html;
+          const displayHtml = versionedHtml || '';
           const isVersionMissing = activeCardVersion !== 'base' && !versionedHtml;
           const cellId = `${row.index}:front_html`;
           return (
@@ -1536,9 +1557,6 @@ export default function CardsPanel({
                 const histCount = regenHistory[card.id]?.length ?? 0;
                 return (
                   <div className="relative">
-                    {isVersionMissing && (
-                      <span className={`absolute top-0 ${histCount > 0 ? 'right-9' : 'right-0'} text-[9px] px-1 py-0.5 rounded bg-gray-100 text-gray-400`}>base</span>
-                    )}
                     {histCount > 0 && (
                       <button
                         onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
@@ -1552,12 +1570,16 @@ export default function CardsPanel({
                         {histCount}
                       </button>
                     )}
-                    <div
-                      className="text-sm leading-relaxed text-gray-800"
-                      dangerouslySetInnerHTML={{
-                        __html: showAnkiFormat ? renderClozeHtml(v) : v,
-                      }}
-                    />
+                    {isVersionMissing ? (
+                      <span className="text-xs italic text-gray-300">Not generated for {activeCardVersion.toUpperCase()} — click to add</span>
+                    ) : (
+                      <div
+                        className="text-sm leading-relaxed text-gray-800"
+                        dangerouslySetInnerHTML={{
+                          __html: showAnkiFormat ? renderClozeHtml(v) : v,
+                        }}
+                      />
+                    )}
                   </div>
                 );
               }}
@@ -1835,7 +1857,7 @@ export default function CardsPanel({
 
   // Step 1: instantly pull the exact prompt (no API call, no cost).
   const handleInspectPrompt = useCallback(async () => {
-    if (!sectionId) return;
+    if (!effectiveSectionId) return;
     setInspectLoading(true);
     setInspectError(null);
     setInspectPrompt(null);
@@ -1843,7 +1865,7 @@ export default function CardsPanel({
     setActiveDebugTab(null);
     setDebugApply({});
     try {
-      const res = await debugPromptSection(sectionId, { rule_set_id: selectedRuleSetId ?? undefined });
+      const res = await debugPromptSection(effectiveSectionId, { rule_set_id: selectedRuleSetId ?? undefined });
       setInspectPrompt(res);
       // Default-select the current model; load the model list if needed.
       setDebugSelected(new Set(selectedModel ? [selectedModel] : []));
@@ -1855,7 +1877,7 @@ export default function CardsPanel({
     } finally {
       setInspectLoading(false);
     }
-  }, [sectionId, selectedRuleSetId, selectedModel, debugModels.length]);
+  }, [effectiveSectionId, selectedRuleSetId, selectedModel, debugModels.length]);
 
   // Step 2: run the prompt against each selected model in parallel (dry-run).
   const handleGenerateResponses = useCallback(async () => {
@@ -1881,13 +1903,13 @@ export default function CardsPanel({
   // Apply a model's debug response as real cards. The response is already in our
   // number|card|extra format, so we parse it with the real card parser (no Haiku).
   const handleApplyDebug = useCallback(async (modelId: string) => {
-    if (!sectionId) return;
+    if (!effectiveSectionId) return;
     const resp = debugResponses[modelId]?.result;
     if (!resp || !resp.raw_response.trim()) return;
     setDebugApply(prev => ({ ...prev, [modelId]: { loading: true } }));
     try {
       const { created } = await addManualCards({
-        section_id: sectionId,
+        section_id: effectiveSectionId,
         raw_text: resp.raw_response,
         format: 'pipe',
         model: modelId,
@@ -1898,7 +1920,7 @@ export default function CardsPanel({
     } catch (err: unknown) {
       setDebugApply(prev => ({ ...prev, [modelId]: { loading: false, error: err instanceof Error ? err.message : 'Apply failed' } }));
     }
-  }, [sectionId, debugResponses, fetchCards, topicPath, sectionIds, onReviewChange]);
+  }, [effectiveSectionId, debugResponses, fetchCards, sectionId, topicPath, sectionIds, onReviewChange]);
 
   // Manual refresh of the card list (so a second user's edits show without a full reload).
   const handleManualRefresh = useCallback(async () => {
@@ -1912,12 +1934,12 @@ export default function CardsPanel({
 
   // Add manually-written or pasted card(s) to the current single section.
   const handleAddManualCards = useCallback(async () => {
-    if (!sectionId) return;
+    if (!effectiveSectionId) return;
     setAddLoading(true);
     setAddError(null);
     try {
       const payload: Parameters<typeof addManualCards>[0] = {
-        section_id: sectionId,
+        section_id: effectiveSectionId,
         model: selectedModel,
       };
       if (addMode === 'single') {
@@ -1943,7 +1965,7 @@ export default function CardsPanel({
     } finally {
       setAddLoading(false);
     }
-  }, [sectionId, selectedModel, addMode, addFront, addExtra, addTags, addPaste, fetchCards, topicPath, sectionIds, onReviewChange, refreshUsage]);
+  }, [effectiveSectionId, sectionId, selectedModel, addMode, addFront, addExtra, addTags, addPaste, fetchCards, topicPath, sectionIds, onReviewChange, refreshUsage]);
 
   // Resume polling for active jobs on mount and when topic/section context changes (handles page refresh)
   useEffect(() => {
@@ -2901,7 +2923,7 @@ export default function CardsPanel({
               ? `Generating… ${jobProgress ? `${jobProgress.processed}/${jobProgress.total}` : ''}`
               : 'Generate Cards'}
           </button>
-          {sectionId && (
+          {effectiveSectionId && (
             <button
               onClick={handleInspectPrompt}
               disabled={inspectLoading || jobRunning}
@@ -2911,7 +2933,7 @@ export default function CardsPanel({
               {inspectLoading ? 'Inspecting…' : (<><span aria-hidden>🔍</span> Inspect prompt</>)}
             </button>
           )}
-          {sectionId && (
+          {effectiveSectionId && (
             <button
               onClick={() => { setShowAddCards(true); setAddError(null); }}
               disabled={jobRunning}
@@ -3102,7 +3124,7 @@ export default function CardsPanel({
       {showGenerateConfirm && (
         <ConfirmModal
           title="Generate Cards"
-          message={`Generate cards for this section using ${selectedModel}?${estimate ? ` Estimated cost: $${estimate.estimated_cost_usd.toFixed(3)}` : ''}`}
+          message={`Generate cards using ${selectedModel}, into version: ${targetVersionLabel}${targetVersion !== 'base' ? ' (fills that version on existing base cards)' : ''}.${estimate ? ` Estimated cost: $${estimate.estimated_cost_usd.toFixed(3)}.` : ''}`}
           confirmLabel="Generate"
           onConfirm={handleGenerate}
           onCancel={() => setShowGenerateConfirm(false)}

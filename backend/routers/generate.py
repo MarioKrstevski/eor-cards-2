@@ -441,18 +441,30 @@ def _run_generation(
                 db.query(Card).filter(Card.section_id == section_id).delete()
             db.commit()
 
-        # Pre-load existing cards by section for version matching (v1/v2/v3)
-        existing_cards_by_section: dict[int, dict[int, Card]] = {}
+        # Pre-load existing base cards per section (ordered) so v1/v2/v3 runs can
+        # attach onto them by position — they are alternate phrasings, 1:1 with base.
+        existing_cards_by_section: dict[int, list[Card]] = {}
         if card_version != "base":
             for section_id in sections_by_id:
-                cards_in_section = db.query(Card).filter(Card.section_id == section_id).order_by(Card.card_number).all()
-                existing_cards_by_section[section_id] = {c.card_number: c for c in cards_in_section}
+                existing_cards_by_section[section_id] = (
+                    db.query(Card).filter(Card.section_id == section_id).order_by(Card.card_number).all()
+                )
 
-        # Map version string to column name
+        # Map version string to its column names
         version_field = {
             "v1": "front_html_v1",
             "v2": "front_html_v2",
             "v3": "front_html_v3",
+        }.get(card_version)
+        extra_field = {
+            "v1": "extra_v1",
+            "v2": "extra_v2",
+            "v3": "extra_v3",
+        }.get(card_version)
+        version_score_fields = {
+            "v1": ("accuracy_score_v1", "accuracy_note_v1", "eor_yield_v1"),
+            "v2": ("accuracy_score_v2", "accuracy_note_v2", "eor_yield_v2"),
+            "v3": ("accuracy_score_v3", "accuracy_note_v3", "eor_yield_v3"),
         }.get(card_version)
 
         def process_section(section_data):
@@ -476,6 +488,7 @@ def _run_generation(
                     time.sleep(wait)
 
         failed_sections: list[str] = []
+        version_warnings: list[str] = []
         scoring_failures = 0
         cancelled = False
 
@@ -516,6 +529,7 @@ def _run_generation(
                 tags = section_data["curriculum_topic_path"].split(" > ") if section_data.get("curriculum_topic_path") else []
                 cv = section_data.get("curriculum_version")
                 created_cards: list[Card] = []
+                version_cards: list[tuple] = []  # (base card, version front_text) for v1/v2/v3 scoring
 
                 if card_version == "base":
                     # Create new card rows
@@ -540,15 +554,30 @@ def _run_generation(
                         created_cards.append(card)
                     total_cards += len(cards_data)
                 else:
-                    # Update version column on existing cards matched by card_number
-                    existing = existing_cards_by_section.get(section_data["id"], {})
-                    updated = 0
-                    for card_data in cards_data:
-                        matched = existing.get(card_data["card_number"])
-                        if matched and version_field:
-                            setattr(matched, version_field, card_data["front_html"])
-                            updated += 1
-                    total_cards += updated
+                    # Attach this run's output onto the existing base cards BY ORDER
+                    # (v1/v2/v3 are alternate phrasings of the base set, 1:1). We fill the
+                    # version's front + extra columns; nothing is created or deleted.
+                    existing_list = existing_cards_by_section.get(section_data["id"], [])
+                    if not existing_list:
+                        failed_sections.append(
+                            f"{section_data.get('heading', '?')} — no base cards to attach {card_version} to; generate base first"
+                        )
+                    else:
+                        n = min(len(existing_list), len(cards_data))
+                        for i in range(n):
+                            matched = existing_list[i]
+                            card_data = cards_data[i]
+                            if version_field:
+                                setattr(matched, version_field, card_data["front_html"])
+                            if extra_field:
+                                setattr(matched, extra_field, card_data.get("extra"))
+                            version_cards.append((matched, card_data["front_text"]))
+                        total_cards += n
+                        if len(cards_data) != len(existing_list):
+                            version_warnings.append(
+                                f"{section_data.get('heading', '?')}: {card_version} produced {len(cards_data)} card(s) "
+                                f"but base has {len(existing_list)} — filled first {n}"
+                            )
 
                 total_input_tokens += usage["input_tokens"]
                 total_output_tokens += usage["output_tokens"]
@@ -588,6 +617,37 @@ def _run_generation(
                         logger.exception("Error scoring cards for section %d", section_data["id"])
                         scoring_failures += 1
 
+                # Score the version cards we just filled, into that version's score columns
+                if version_cards and version_score_fields:
+                    try:
+                        fa, fn, fe = version_score_fields
+                        cards_for_scoring = [
+                            {"id": c.id, "front_text": ft, "extra": getattr(c, extra_field, None) if extra_field else None}
+                            for (c, ft) in version_cards
+                        ]
+                        scores, score_usage = score_cards(
+                            client,
+                            cards_for_scoring,
+                            section_data.get("curriculum_topic_path", ""),
+                            model,
+                        )
+                        cards_by_id = {c.id: c for (c, _) in version_cards}
+                        for score in scores:
+                            card = cards_by_id.get(score.get("card_id"))
+                            if card:
+                                setattr(card, fa, score.get("accuracy"))
+                                setattr(card, fn, score.get("accuracy_note"))
+                                setattr(card, fe, score.get("eor_yield"))
+                        total_input_tokens += score_usage.get("input_tokens", 0)
+                        total_output_tokens += score_usage.get("output_tokens", 0)
+                        total_cache_write += score_usage.get("cache_creation_input_tokens", 0)
+                        total_cache_read += score_usage.get("cache_read_input_tokens", 0)
+                        _acc_section(section_data["id"], score_usage)
+                        db.commit()
+                    except Exception:
+                        logger.exception("Error scoring %s cards for section %d", card_version, section_data["id"])
+                        scoring_failures += 1
+
                 job.processed_sections += 1
                 db.commit()
 
@@ -615,6 +675,8 @@ def _run_generation(
         warnings = []
         if failed_sections:
             warnings.append(f"{len(failed_sections)} section(s) failed: {', '.join(failed_sections[:5])}")
+        if version_warnings:
+            warnings.append("; ".join(version_warnings[:5]))
         if scoring_failures:
             warnings.append(f"scoring failed for {scoring_failures} section(s)")
 
