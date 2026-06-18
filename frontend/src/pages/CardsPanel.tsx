@@ -1793,12 +1793,13 @@ export default function CardsPanel({
     setEstimating(true);
     setEstimate(null);
     try {
-      const params: { rule_set_id: number; model: string; section_ids?: number[]; topic_tree_id?: number } = {
+      const params: { rule_set_id: number; model: string; section_ids?: number[]; topic_path?: string; topic_tree_id?: number } = {
         rule_set_id: selectedRuleSetId,
         model: selectedModel,
       };
       if (sectionId) params.section_ids = [sectionId];
       else if (sectionIds && sectionIds.length > 0) params.section_ids = sectionIds;
+      else if (topicPath) params.topic_path = topicPath;
       else if (topicTreeId) params.topic_tree_id = topicTreeId;
       const est = await estimateCost(params);
       setEstimate(est);
@@ -1807,7 +1808,7 @@ export default function CardsPanel({
     } finally {
       setEstimating(false);
     }
-  }, [selectedRuleSetId, selectedModel, sectionId, sectionIds, topicTreeId]);
+  }, [selectedRuleSetId, selectedModel, sectionId, sectionIds, topicPath, topicTreeId]);
 
   const handleGenerate = useCallback(async () => {
     if (!selectedRuleSetId || !selectedModel) return;
@@ -1816,12 +1817,13 @@ export default function CardsPanel({
     setJobProgress(null);
     setJobError(null);
     try {
-      const params: { rule_set_id: number; model: string; section_ids?: number[]; topic_tree_id?: number; replace_existing?: boolean } = {
+      const params: { rule_set_id: number; model: string; section_ids?: number[]; topic_path?: string; topic_tree_id?: number; replace_existing?: boolean } = {
         rule_set_id: selectedRuleSetId,
         model: selectedModel,
       };
       if (sectionId) params.section_ids = [sectionId];
       else if (sectionIds && sectionIds.length > 0) params.section_ids = sectionIds;
+      else if (topicPath) params.topic_path = topicPath;
       else if (topicTreeId) params.topic_tree_id = topicTreeId;
       const { job_id } = await startGeneration(params);
       setActiveJobId(job_id);

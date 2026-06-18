@@ -28,6 +28,7 @@ router = APIRouter()
 class EstimateRequest(BaseModel):
     topic_tree_id: Optional[int] = None
     section_ids: Optional[list[int]] = None
+    topic_path: Optional[str] = None  # scope to sections under this curriculum path
     rule_set_id: int
     model: str = DEFAULT_MODEL
 
@@ -35,6 +36,7 @@ class EstimateRequest(BaseModel):
 class StartRequest(BaseModel):
     topic_tree_id: Optional[int] = None
     section_ids: Optional[list[int]] = None
+    topic_path: Optional[str] = None  # scope to sections under this curriculum path
     rule_set_id: int
     model: str = DEFAULT_MODEL
     replace_existing: bool = True
@@ -145,18 +147,32 @@ def debug_run(section_id: int, body: DebugRunRequest, db: Session = Depends(get_
     }
 
 
-def _get_sections(topic_tree_id: Optional[int], section_ids: Optional[list[int]], db: Session) -> list[Section]:
+def _get_sections(
+    topic_tree_id: Optional[int],
+    section_ids: Optional[list[int]],
+    db: Session,
+    topic_path: Optional[str] = None,
+) -> list[Section]:
     if section_ids:
         sections = db.query(Section).filter(Section.id.in_(section_ids)).all()
         if len(sections) != len(section_ids):
             raise HTTPException(422, "Some section_ids not found")
+        return sections
+    if topic_path:
+        # Sections whose curriculum path is at or under this node (matches how the
+        # card list scopes by topic) — NOT the whole topic tree.
+        sections = db.query(Section).filter(
+            Section.curriculum_topic_path.startswith(topic_path)
+        ).all()
+        if not sections:
+            raise HTTPException(404, "No sections found for that topic")
         return sections
     if topic_tree_id:
         tt = db.get(TopicTree, topic_tree_id)
         if not tt:
             raise HTTPException(404, "Topic tree not found")
         return db.query(Section).filter_by(topic_tree_id=topic_tree_id).all()
-    raise HTTPException(400, "Provide topic_tree_id or section_ids")
+    raise HTTPException(400, "Provide topic_tree_id, section_ids, or topic_path")
 
 
 @router.get("/models")
@@ -169,7 +185,7 @@ def estimate(body: EstimateRequest, db: Session = Depends(get_db)):
     rs = db.get(RuleSet, body.rule_set_id)
     if not rs:
         raise HTTPException(404, "Rule set not found")
-    sections = _get_sections(body.topic_tree_id, body.section_ids, db)
+    sections = _get_sections(body.topic_tree_id, body.section_ids, db, body.topic_path)
     return estimate_cost(
         [{"content_text": s.content_text} for s in sections],
         rs.content,
@@ -186,7 +202,7 @@ def start_generation(
     rs = db.get(RuleSet, body.rule_set_id)
     if not rs:
         raise HTTPException(404, "Rule set not found")
-    sections = _get_sections(body.topic_tree_id, body.section_ids, db)
+    sections = _get_sections(body.topic_tree_id, body.section_ids, db, body.topic_path)
 
     cost_est = estimate_cost(
         [{"content_text": s.content_text} for s in sections],

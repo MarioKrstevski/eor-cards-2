@@ -512,6 +512,7 @@ export async function getModels(): Promise<Model[]> {
 export async function estimateCost(params: {
   topic_tree_id?: number;
   section_ids?: number[];
+  topic_path?: string;
   rule_set_id: number;
   model: string;
 }): Promise<CostEstimate> {
@@ -522,6 +523,7 @@ export async function estimateCost(params: {
 export async function startGeneration(params: {
   topic_tree_id?: number;
   section_ids?: number[];
+  topic_path?: string;
   rule_set_id: number;
   model: string;
   replace_existing?: boolean;
