@@ -1142,6 +1142,7 @@ export default function CardsPanel({
   const [validatorOnly, setValidatorOnly] = useState(false);
   const [validationView, setValidationView] = useState<Card | null>(null);
   const [showActionsMenu, setShowActionsMenu] = useState(false);
+  const [showMarksMenu, setShowMarksMenu] = useState(false);
   const [showFixBatchModal, setShowFixBatchModal] = useState(false);
   const [fixBatchPrompt, setFixBatchPrompt] = useState('');
   const [fixBatchMarkId, setFixBatchMarkId] = useState<number | null>(null);
@@ -2418,9 +2419,52 @@ export default function CardsPanel({
     }
   }, [selectedIds, selectedRuleSetId, selectedModel, fetchCards, sectionId, sectionIds, topicPath, refreshUsage]);
 
+  // Resolve the card IDs to act on for a given scope. 'selected' → the checked
+  // rows; 'all' → every card in the current section/topic.
+  const idsForScope = useCallback(async (scope: 'selected' | 'all'): Promise<number[]> => {
+    if (scope === 'selected') return [...selectedIds];
+    const allCards = await getCards({
+      ...(sectionId ? { section_id: sectionId } : {}),
+      ...(sectionIds && sectionIds.length > 0 ? { section_ids: sectionIds.join(',') } : {}),
+      ...(!sectionId && !sectionIds?.length && topicPath ? { topic: topicPath } : {}),
+      limit: 10000, offset: 0,
+    });
+    return allCards.cards.map(c => c.id);
+  }, [selectedIds, sectionId, sectionIds, topicPath]);
+
+  const doScore = useCallback(async (scope: 'selected' | 'all') => {
+    setShowActionsMenu(false);
+    setScoring(true);
+    try {
+      const ids = await idsForScope(scope);
+      if (ids.length === 0) return;
+      await bulkScoreCards({ card_ids: ids, model: selectedModel, card_version: activeCardVersion });
+      fetchCards(sectionId, topicPath, true, undefined, sectionIds);
+    } catch { setActionError('Scoring failed'); } finally { setScoring(false); }
+  }, [idsForScope, selectedModel, activeCardVersion, fetchCards, sectionId, topicPath, sectionIds]);
+
+  const doValidate = useCallback(async (scope: 'selected' | 'all') => {
+    setShowActionsMenu(false);
+    setValidating(true);
+    try {
+      const ids = await idsForScope(scope);
+      if (ids.length === 0) return;
+      await validateCards({ card_ids: ids, model: selectedModel, auto_fix: true, card_version: activeCardVersion });
+      fetchCards(sectionId, topicPath, true, undefined, sectionIds);
+    } catch { setActionError('Validation failed'); } finally { setValidating(false); }
+  }, [idsForScope, selectedModel, activeCardVersion, fetchCards, sectionId, topicPath, sectionIds]);
+
+  const doRegen = useCallback((scope: 'selected' | 'all') => {
+    setShowActionsMenu(false);
+    setBulkRegenScope(scope);
+    setShowBulkRegenModal(true);
+  }, []);
+
   // ── Empty state ──────────────────────────────────────────────────────────
 
   const hasContext = sectionId != null || topicPath != null || (sectionIds != null && sectionIds.length > 0);
+  // "All in topic" actions need a concrete section/section-set to operate over.
+  const hasTopicScope = !!(sectionId || (sectionIds && sectionIds.length > 0));
 
   if (!hasContext) {
     return (
@@ -2616,7 +2660,7 @@ export default function CardsPanel({
               Actions ▾
             </button>
             {showActionsMenu && (
-              <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 min-w-[200px] py-1">
+              <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 w-[340px] py-1">
                 <button onClick={() => { setShowActionsMenu(false); setAnkifyOpen(true); }} className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50">
                   Ankify
                 </button>
@@ -2624,127 +2668,60 @@ export default function CardsPanel({
                   Save Presentation
                 </button>
                 <div className="border-t border-gray-100 my-1" />
-                <button onClick={() => { setShowActionsMenu(false); setBulkRegenScope('selected'); setShowBulkRegenModal(true); }} className="w-full text-left px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50">
-                  Regenerate — selected ({selectedIds.size})
-                </button>
-                {(sectionId || (sectionIds && sectionIds.length > 0)) && (
-                  <button onClick={() => { setShowActionsMenu(false); setBulkRegenScope('all'); setShowBulkRegenModal(true); }} className="w-full text-left px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50">
-                    Regenerate — all in topic ({totalCards})
-                  </button>
-                )}
-                <button
-                  onClick={() => { setShowActionsMenu(false); handleGenSupplemental('selected'); }}
-                  disabled={jobRunning || !selectedRuleSetId}
-                  className="w-full text-left px-3 py-1.5 text-xs text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
-                >
-                  Gen Vignettes &amp; Cases — selected ({selectedIds.size})
-                </button>
-                {(sectionId || (sectionIds && sectionIds.length > 0)) && (
-                  <button
-                    onClick={() => { setShowActionsMenu(false); handleGenSupplemental('all'); }}
-                    disabled={jobRunning || !selectedRuleSetId}
-                    className="w-full text-left px-3 py-1.5 text-xs text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
-                  >
-                    Gen Vignettes &amp; Cases — all in topic
-                  </button>
-                )}
-                <div className="border-t border-gray-100 my-1" />
-                <button
-                  onClick={async () => {
-                    setShowActionsMenu(false);
-                    if (selectedIds.size === 0) return;
-                    setScoring(true);
-                    try {
-                      await bulkScoreCards({ card_ids: [...selectedIds], model: selectedModel, card_version: activeCardVersion });
-                      fetchCards(sectionId, topicPath, true, undefined, sectionIds);
-                    } catch { setActionError('Scoring failed'); } finally { setScoring(false); }
-                  }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-teal-700 hover:bg-teal-50"
-                >
-                  Score Cards — selected ({selectedIds.size})
-                </button>
-                {(sectionId || (sectionIds && sectionIds.length > 0)) && (
+                {/* AI actions — left column acts on the selected rows, right column on everything in the section/topic */}
+                <div className="px-2 pb-1">
+                  <div className="grid grid-cols-2 gap-x-1.5 gap-y-1">
+                    <div className="text-[9px] font-semibold text-gray-400 uppercase tracking-wide text-center">Selected ({selectedIds.size})</div>
+                    <div className="text-[9px] font-semibold text-gray-400 uppercase tracking-wide text-center">All in topic ({totalCards})</div>
+
+                    <button disabled={selectedIds.size === 0} onClick={() => doRegen('selected')} className="px-2 py-1 text-[11px] font-medium text-amber-700 bg-amber-50 rounded hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed">Regenerate</button>
+                    <button disabled={!hasTopicScope} onClick={() => doRegen('all')} className="px-2 py-1 text-[11px] font-medium text-amber-700 bg-amber-50 rounded hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed">Regenerate</button>
+
+                    <button disabled={selectedIds.size === 0 || jobRunning || !selectedRuleSetId} onClick={() => { setShowActionsMenu(false); handleGenSupplemental('selected'); }} className="px-2 py-1 text-[11px] font-medium text-indigo-700 bg-indigo-50 rounded hover:bg-indigo-100 disabled:opacity-40 disabled:cursor-not-allowed">Vignettes &amp; Cases</button>
+                    <button disabled={!hasTopicScope || jobRunning || !selectedRuleSetId} onClick={() => { setShowActionsMenu(false); handleGenSupplemental('all'); }} className="px-2 py-1 text-[11px] font-medium text-indigo-700 bg-indigo-50 rounded hover:bg-indigo-100 disabled:opacity-40 disabled:cursor-not-allowed">Vignettes &amp; Cases</button>
+
+                    <button disabled={selectedIds.size === 0 || scoring} onClick={() => doScore('selected')} className="px-2 py-1 text-[11px] font-medium text-teal-700 bg-teal-50 rounded hover:bg-teal-100 disabled:opacity-40 disabled:cursor-not-allowed">Score Cards</button>
+                    <button disabled={!hasTopicScope || scoring} onClick={() => doScore('all')} className="px-2 py-1 text-[11px] font-medium text-teal-700 bg-teal-50 rounded hover:bg-teal-100 disabled:opacity-40 disabled:cursor-not-allowed">Score Cards</button>
+
+                    <button disabled={selectedIds.size === 0 || validating} onClick={() => doValidate('selected')} className="px-2 py-1 text-[11px] font-medium text-violet-700 bg-violet-50 rounded hover:bg-violet-100 disabled:opacity-40 disabled:cursor-not-allowed">Validate &amp; fix</button>
+                    <button disabled={!hasTopicScope || validating} onClick={() => doValidate('all')} className="px-2 py-1 text-[11px] font-medium text-violet-700 bg-violet-50 rounded hover:bg-violet-100 disabled:opacity-40 disabled:cursor-not-allowed">Validate &amp; fix</button>
+                  </div>
                   <button
                     onClick={async () => {
                       setShowActionsMenu(false);
-                      setScoring(true);
                       try {
-                        const allCards = await getCards({
-                          ...(sectionId ? { section_id: sectionId } : {}),
-                          ...(sectionIds && sectionIds.length > 0 ? { section_ids: sectionIds.join(',') } : {}),
-                          ...(!sectionId && !sectionIds?.length && topicPath ? { topic: topicPath } : {}),
-                          limit: 10000, offset: 0,
-                        });
-                        const allIds = allCards.cards.map(c => c.id);
-                        if (allIds.length === 0) return;
-                        await bulkScoreCards({ card_ids: allIds, model: selectedModel, card_version: activeCardVersion });
-                        fetchCards(sectionId, topicPath, true, undefined, sectionIds);
-                      } catch { setActionError('Scoring failed'); } finally { setScoring(false); }
+                        if (validationRules.length === 0) setValidationRules(await getValidationRules());
+                        setShowRulesModal(true);
+                      } catch { setActionError('Could not load rules'); }
                     }}
-                    className="w-full text-left px-3 py-1.5 text-xs text-teal-700 hover:bg-teal-50"
+                    className="mt-1.5 w-full text-center px-2 py-1 text-[10px] text-gray-500 hover:bg-gray-50 rounded"
                   >
-                    Score Cards — all in topic ({totalCards})
+                    ⓘ What does Validate &amp; fix check?
                   </button>
-                )}
-                <button
-                  onClick={async () => {
-                    setShowActionsMenu(false);
-                    if (selectedIds.size === 0) return;
-                    setValidating(true);
-                    try {
-                      await validateCards({ card_ids: [...selectedIds], model: selectedModel, auto_fix: true, card_version: activeCardVersion });
-                      fetchCards(sectionId, topicPath, true, undefined, sectionIds);
-                    } catch { setActionError('Validation failed'); } finally { setValidating(false); }
-                  }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-indigo-700 hover:bg-indigo-50"
-                >
-                  Validate &amp; fix — selected ({selectedIds.size})
-                </button>
-                {(sectionId || (sectionIds && sectionIds.length > 0)) && (
-                  <button
-                    onClick={async () => {
-                      setShowActionsMenu(false);
-                      setValidating(true);
-                      try {
-                        const allCards = await getCards({
-                          ...(sectionId ? { section_id: sectionId } : {}),
-                          ...(sectionIds && sectionIds.length > 0 ? { section_ids: sectionIds.join(',') } : {}),
-                          ...(!sectionId && !sectionIds?.length && topicPath ? { topic: topicPath } : {}),
-                          limit: 10000, offset: 0,
-                        });
-                        const allIds = allCards.cards.map(c => c.id);
-                        if (allIds.length === 0) return;
-                        await validateCards({ card_ids: allIds, model: selectedModel, auto_fix: true, card_version: activeCardVersion });
-                        fetchCards(sectionId, topicPath, true, undefined, sectionIds);
-                      } catch { setActionError('Validation failed'); } finally { setValidating(false); }
-                    }}
-                    className="w-full text-left px-3 py-1.5 text-xs text-indigo-700 hover:bg-indigo-50"
-                  >
-                    Validate &amp; fix — all in topic ({totalCards})
-                  </button>
-                )}
-                <button
-                  onClick={async () => {
-                    setShowActionsMenu(false);
-                    try {
-                      if (validationRules.length === 0) setValidationRules(await getValidationRules());
-                      setShowRulesModal(true);
-                    } catch { setActionError('Could not load rules'); }
-                  }}
-                  className="w-full text-left px-3 py-1.5 text-[11px] text-gray-500 hover:bg-gray-50"
-                >
-                  ⓘ What gets checked?
-                </button>
-                <div className="border-t border-gray-100 my-1" />
-                <p className="px-3 py-1 text-[9px] font-semibold text-gray-400 uppercase tracking-wide">Mark as</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Marking actions dropdown — bulk-mark rows, manage marks, AI fix batch */}
+          <div className="relative">
+            <button
+              onClick={() => setShowMarksMenu(v => !v)}
+              className="px-2.5 py-1 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+            >
+              Marks ▾
+            </button>
+            {showMarksMenu && (
+              <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 min-w-[200px] py-1">
+                <p className="px-3 py-1 text-[9px] font-semibold text-gray-400 uppercase tracking-wide">Mark selected as ({selectedIds.size})</p>
                 {markTypes.map(m => (
-                  <button key={m.id} onClick={() => { setShowActionsMenu(false); handleBulkMark(m.id); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 text-left">
+                  <button key={m.id} onClick={() => { setShowMarksMenu(false); handleBulkMark(m.id); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 text-left">
                     <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
                     {m.name}
                   </button>
                 ))}
                 {markTypes.length > 0 && (
-                  <button onClick={() => { setShowActionsMenu(false); handleBulkMark(null); }} className="w-full px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50 text-left">
+                  <button onClick={() => { setShowMarksMenu(false); handleBulkMark(null); }} className="w-full px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50 text-left">
                     Clear mark
                   </button>
                 )}
@@ -2785,7 +2762,7 @@ export default function CardsPanel({
                   <>
                     <div className="border-t border-gray-100 my-1" />
                     <button
-                      onClick={() => { setShowActionsMenu(false); setFixBatchMarkId(markFilterId ?? (markTypes[0]?.id ?? null)); setFixBatchPrompt(''); setShowFixBatchModal(true); }}
+                      onClick={() => { setShowMarksMenu(false); setFixBatchMarkId(markFilterId ?? (markTypes[0]?.id ?? null)); setFixBatchPrompt(''); setShowFixBatchModal(true); }}
                       className="w-full text-left px-3 py-1.5 text-xs text-purple-700 hover:bg-purple-50"
                     >
                       AI Fix Batch
