@@ -4,6 +4,66 @@ import base64
 import io
 from typing import Optional
 
+_W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+
+# Flag added to a section whose source had verbatim-duplicated content that we
+# auto-collapsed during parsing (see _append_element). Surfaced in SectionViewer.
+DUP_COLLAPSED_FLAG = "Source had duplicated content (auto-collapsed)"
+
+
+def iter_block_items(parent):
+    """Yield Paragraph and Table objects from a docx body in TRUE document order.
+
+    Unlike ``doc.paragraphs`` / ``doc.tables`` (which are flat and separate, so a
+    mid-content table ends up after every paragraph), this walks the body's
+    children in order. Content controls (``w:sdt``) are unwrapped so their inner
+    paragraphs/tables are yielded once, in place — content ``doc.paragraphs``
+    would otherwise drop entirely. Nested content controls are handled by
+    recursion; each paragraph/table is yielded exactly once (no duplication).
+    """
+    from docx.document import Document as _Document
+    from docx.oxml.text.paragraph import CT_P
+    from docx.oxml.table import CT_Tbl
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    part_owner = parent
+    parent_elm = parent.element.body if isinstance(parent, _Document) else parent
+
+    def walk(elm):
+        for child in elm.iterchildren():
+            if isinstance(child, CT_P):
+                yield Paragraph(child, part_owner)
+            elif isinstance(child, CT_Tbl):
+                yield Table(child, part_owner)
+            elif child.tag == f'{_W}sdt':
+                content = child.find(f'{_W}sdtContent')
+                if content is not None:
+                    yield from walk(content)
+
+    yield from walk(parent_elm)
+
+
+def _append_element(elements: list, elem: dict, seen: set, current_h2: Optional[dict]) -> bool:
+    """Append ``elem``, collapsing verbatim content duplicates within a section.
+
+    A corrupted source .docx (e.g. content pasted between Word and web list
+    tools) can carry the same paragraph/bullet twice. We drop a paragraph or
+    list_item whose normalized text was already seen in the current H2 section,
+    and mark the section's H2 heading so a reviewer-facing flag can be raised.
+    Headings, images and tables are never deduped. Returns True if appended.
+    """
+    etype = elem.get("type")
+    if etype in ("paragraph", "list_item"):
+        key = (etype, " ".join((elem.get("text") or "").split()))
+        if key and key[1] and key in seen:
+            if current_h2 is not None:
+                current_h2["_dup_collapsed"] = True
+            return False
+        seen.add(key)
+    elements.append(elem)
+    return True
+
 
 def parse_docx(filepath: str) -> list[dict]:
     """Parse a .docx file into a list of element dicts.
@@ -18,13 +78,34 @@ def parse_docx(filepath: str) -> list[dict]:
     - alt_text: alt text hint for images
     """
     import docx
-    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    from docx.table import Table
 
     doc = docx.Document(filepath)
     elements = []
     current_headings = {}  # level -> heading text
+    seen: set = set()           # normalized content keys within the current H2 section
+    current_h2: Optional[dict] = None  # ref to the current H2 heading element (for dup flag)
 
-    for para in doc.paragraphs:
+    # Single pass in true document order: paragraphs and tables interleaved, with
+    # content controls unwrapped (see iter_block_items).
+    for block in iter_block_items(doc):
+        # ── Tables — emit inline at their real position ──────────────────────
+        if isinstance(block, Table):
+            rows = []
+            for row in block.rows:
+                cells = [cell.text.strip() for cell in row.cells]
+                rows.append(cells)
+            if rows:
+                elements.append({
+                    "type": "table",
+                    "text": _table_to_text(rows),
+                    "html": _table_to_html(rows),
+                    "rows": rows,
+                    "heading_context": _build_heading_context(current_headings),
+                })
+            continue
+
+        para = block
         style_name = (para.style.name or "").lower()
         text = para.text.strip()
 
@@ -34,9 +115,9 @@ def parse_docx(filepath: str) -> list[dict]:
         # Check for images in paragraph runs
         _WP_NS = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'
         for run in para.runs:
-            if run._element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing'):
+            if run._element.findall(f'.//{_W}drawing'):
                 # Extract inline images
-                for drawing in run._element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing'):
+                for drawing in run._element.findall(f'.//{_W}drawing'):
                     # Read alt text from wp:docPr descr attribute
                     doc_pr = drawing.find(f'.//{{{_WP_NS}}}docPr')
                     alt_text = None
@@ -83,13 +164,18 @@ def parse_docx(filepath: str) -> list[dict]:
                 if l > level:
                     del current_headings[l]
 
-            elements.append({
+            heading_elem = {
                 "type": "heading",
                 "text": text,
                 "html": f"<h{level}>{text}</h{level}>",
                 "level": level,
                 "heading_context": _build_heading_context(current_headings),
-            })
+            }
+            elements.append(heading_elem)
+            # Each H2 starts a new section — reset the dedup window and track it.
+            if level == 2:
+                seen = set()
+                current_h2 = heading_elem
         else:
             # Build HTML with basic formatting from runs
             html_parts = []
@@ -117,76 +203,59 @@ def parse_docx(filepath: str) -> list[dict]:
                     list_type = "ol"
             else:
                 # Check for Word numbering (numPr element)
-                num_pr = para._element.find('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}numPr')
+                num_pr = para._element.find(f'.//{_W}numPr')
                 if num_pr is not None:
                     is_list = True
                     # Check numId to distinguish bullet vs number
-                    num_id_el = num_pr.find('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}numId')
+                    num_id_el = num_pr.find(f'{_W}numId')
                     if num_id_el is not None:
-                        num_id_val = int(num_id_el.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val', '0'))
+                        num_id_val = int(num_id_el.get(f'{_W}val', '0'))
                         # numId 0 means no numbering
                         if num_id_val == 0:
                             is_list = False
 
             if is_list:
                 # Get indentation level from ilvl
-                ilvl_el = para._element.find('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}ilvl')
+                ilvl_el = para._element.find(f'.//{_W}ilvl')
                 if ilvl_el is not None:
-                    indent_level = int(ilvl_el.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val', '0'))
+                    indent_level = int(ilvl_el.get(f'{_W}val', '0'))
                 else:
                     # Try indentation from paragraph properties
-                    ind_el = para._element.find('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}ind')
+                    ind_el = para._element.find(f'.//{_W}ind')
                     if ind_el is not None:
-                        left = ind_el.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}left', '0')
+                        left = ind_el.get(f'{_W}left', '0')
                         indent_level = max(0, int(left) // 720)  # 720 twips ≈ 0.5 inch
 
             if is_list:
-                elements.append({
+                _append_element(elements, {
                     "type": "list_item",
                     "text": text,
                     "html": html,
                     "list_type": list_type,
                     "indent_level": indent_level,
                     "heading_context": _build_heading_context(current_headings),
-                })
+                }, seen, current_h2)
             else:
                 # Check for indentation on regular paragraphs
-                ind_el = para._element.find('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}ind')
+                ind_el = para._element.find(f'.//{_W}ind')
                 if ind_el is not None:
-                    left = ind_el.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}left', '0')
+                    left = ind_el.get(f'{_W}left', '0')
                     indent_level = max(0, int(left) // 720)
 
                 if indent_level > 0:
-                    elements.append({
+                    _append_element(elements, {
                         "type": "paragraph",
                         "text": text,
                         "html": f'<p style="margin-left:{indent_level * 1.5}em">{html}</p>',
                         "heading_context": _build_heading_context(current_headings),
-                    })
+                    }, seen, current_h2)
                 else:
-                    elements.append({
+                    _append_element(elements, {
                         "type": "paragraph",
                         "text": text,
                         "html": f"<p>{html}</p>",
                         "heading_context": _build_heading_context(current_headings),
-                    })
-
-    # Process tables
-    for table in doc.tables:
-        rows = []
-        for row in table.rows:
-            cells = [cell.text.strip() for cell in row.cells]
-            rows.append(cells)
-        if rows:
-            text = _table_to_text(rows)
-            html = _table_to_html(rows)
-            elements.append({
-                "type": "table",
-                "text": text,
-                "html": html,
-                "rows": rows,
-                "heading_context": _build_heading_context(current_headings),
-            })
+                    }, seen, current_h2)
 
     return elements
 

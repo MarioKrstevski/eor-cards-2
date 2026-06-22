@@ -23,11 +23,21 @@ def extract_paragraph_hints(filepath: str) -> list[dict]:
       index, text, style_name, is_bold, font_size_pt, indent_twips, char_count
     """
     import docx
+    from docx.table import Table
+    from backend.services.doc_processor import iter_block_items
 
     doc = docx.Document(filepath)
     hints = []
 
-    for i, para in enumerate(doc.paragraphs):
+    # Walk in document order (paragraphs only for indexing); the index counts
+    # EVERY paragraph including empties so it stays aligned with the index
+    # _parse_docx_with_heading_map assigns. Tables are skipped (not indexable).
+    i = -1
+    for block in iter_block_items(doc):
+        if isinstance(block, Table):
+            continue
+        i += 1
+        para = block
         text = para.text.strip()
         if not text:
             continue
@@ -235,10 +245,16 @@ def _parse_docx_with_heading_map(filepath: str, index_to_level: dict[int, int]) 
     import re
     import base64
     import docx
+    from docx.table import Table
+    from backend.services.doc_processor import iter_block_items, _append_element
+
+    ns = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
 
     doc = docx.Document(filepath)
     elements = []
     current_headings = {}
+    seen: set = set()
+    current_h2: Optional[dict] = None
 
     def build_heading_context(headings: dict) -> Optional[str]:
         if not headings:
@@ -246,13 +262,31 @@ def _parse_docx_with_heading_map(filepath: str, index_to_level: dict[int, int]) 
         parts = [f"H{l}: {headings[l]}" for l in sorted(headings.keys())]
         return " > ".join(parts)
 
-    para_index = 0
-    for para in doc.paragraphs:
+    # Single document-order pass. para_index counts EVERY paragraph (incl. empty,
+    # excl. tables) so it stays aligned with extract_paragraph_hints' indexing.
+    para_index = -1
+    for block in iter_block_items(doc):
+        if isinstance(block, Table):
+            rows = []
+            for row in block.rows:
+                cells = [cell.text.strip() for cell in row.cells]
+                rows.append(cells)
+            if rows:
+                elements.append({
+                    "type": "table",
+                    "text": "\n".join(" | ".join(r) for r in rows),
+                    "html": _table_to_html(rows),
+                    "rows": rows,
+                    "heading_context": build_heading_context(current_headings),
+                })
+            continue
+
+        para_index += 1
+        para = block
         text = para.text.strip()
 
         # Extract images regardless
         for run in para.runs:
-            ns = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
             drawings = run._element.findall(f'.//{ns}drawing')
             if drawings:
                 for drawing in drawings:
@@ -276,7 +310,6 @@ def _parse_docx_with_heading_map(filepath: str, index_to_level: dict[int, int]) 
                                 pass
 
         if not text:
-            para_index += 1
             continue
 
         # Determine heading level: AI map takes priority, then Word styles
@@ -293,13 +326,17 @@ def _parse_docx_with_heading_map(filepath: str, index_to_level: dict[int, int]) 
             for l in list(current_headings.keys()):
                 if l > level:
                     del current_headings[l]
-            elements.append({
+            heading_elem = {
                 "type": "heading",
                 "text": text,
                 "html": f"<h{level}>{text}</h{level}>",
                 "level": level,
                 "heading_context": build_heading_context(current_headings),
-            })
+            }
+            elements.append(heading_elem)
+            if level == 2:
+                seen = set()
+                current_h2 = heading_elem
         else:
             # Build run HTML
             html_parts = []
@@ -317,7 +354,6 @@ def _parse_docx_with_heading_map(filepath: str, index_to_level: dict[int, int]) 
             html = "".join(html_parts) or text
 
             # List detection
-            ns = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
             style_name = (para.style.name or "").lower()
             is_list = "list" in style_name
             list_type = "ol" if ("number" in style_name or "ordered" in style_name) else "ul"
@@ -335,40 +371,38 @@ def _parse_docx_with_heading_map(filepath: str, index_to_level: dict[int, int]) 
                 ilvl_el = para._element.find(f'.//{ns}ilvl')
                 if ilvl_el is not None:
                     indent_level = int(ilvl_el.get(f'{ns}val', '0'))
-                elements.append({
+                _append_element(elements, {
                     "type": "list_item",
                     "text": text,
                     "html": html,
                     "list_type": list_type,
                     "indent_level": indent_level,
                     "heading_context": build_heading_context(current_headings),
-                })
+                }, seen, current_h2)
             else:
-                elements.append({
-                    "type": "paragraph",
-                    "text": text,
-                    "html": f"<p>{html}</p>",
-                    "heading_context": build_heading_context(current_headings),
-                })
-
-        para_index += 1
-
-    # Tables
-    for table in doc.tables:
-        rows = []
-        for row in table.rows:
-            cells = [cell.text.strip() for cell in row.cells]
-            rows.append(cells)
-        if rows:
-            header = " | ".join(rows[0]) if rows else ""
-            text = "\n".join(" | ".join(r) for r in rows)
-            elements.append({
-                "type": "table",
-                "text": text,
-                "html": _table_to_html(rows),
-                "rows": rows,
-                "heading_context": build_heading_context(current_headings),
-            })
+                # Indented non-list paragraphs — mirror parse_docx so indentation
+                # isn't lost on the AI-heading path.
+                ind_el = para._element.find(f'.//{ns}ind')
+                if ind_el is not None:
+                    left = ind_el.get(f'{ns}left', '0')
+                    try:
+                        indent_level = max(0, int(left) // 720)
+                    except ValueError:
+                        indent_level = 0
+                if indent_level > 0:
+                    _append_element(elements, {
+                        "type": "paragraph",
+                        "text": text,
+                        "html": f'<p style="margin-left:{indent_level * 1.5}em">{html}</p>',
+                        "heading_context": build_heading_context(current_headings),
+                    }, seen, current_h2)
+                else:
+                    _append_element(elements, {
+                        "type": "paragraph",
+                        "text": text,
+                        "html": f"<p>{html}</p>",
+                        "heading_context": build_heading_context(current_headings),
+                    }, seen, current_h2)
 
     return elements
 
