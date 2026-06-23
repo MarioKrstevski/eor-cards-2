@@ -2526,7 +2526,13 @@ export default function CardsPanel({
     || (topicPath ? topicPath.split(' > ').pop() : null)
     || 'this section';
   const scopePath = topicPath || scopeCard?.curriculum_topic_path || null;
-  const scopeFileName = `${(scopeSectionName || 'cards').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') || 'cards'}.csv`;
+  // Filename: "Section_Name|Full > Topic > Path.csv". Section gets underscores;
+  // the path keeps its " > " spacing. Strip only chars illegal in filenames
+  // (/ : \) — keep | > spaces % en-dash.
+  const sanitizeFilePart = (s: string) => s.replace(/[/:\\]/g, '-').replace(/[\x00-\x1f]/g, '').trim();
+  const scopeSectionPart = sanitizeFilePart(scopeSectionName).replace(/\s+/g, '_') || 'cards';
+  const scopePathPart = scopePath ? sanitizeFilePart(scopePath) : null;
+  const scopeFileName = scopePathPart ? `${scopeSectionPart}|${scopePathPart}.csv` : `${scopeSectionPart}.csv`;
 
   // "All in scope" export: prefer the single section (so the file is named after
   // it), then the topic path, then the whole tree.
@@ -2538,15 +2544,24 @@ export default function CardsPanel({
         ? exportCardsUrl({ topic_tree_id: topicTreeId })
         : undefined;
 
-  // Trigger a download with an explicit filename (same-origin, so the download
-  // attribute is honored and overrides the server's Content-Disposition).
-  const triggerDownload = (url: string, filename: string) => {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+  // Download via a blob so the exact client-side filename is used — the plain
+  // `download` attribute is ignored when the server sends its own
+  // Content-Disposition, but a blob: URL always honors it.
+  const triggerDownload = async (url: string, filename: string) => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+    } catch {
+      window.location.href = url;  // fallback: let the server name it
+    }
   };
 
   return (
