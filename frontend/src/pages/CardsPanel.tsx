@@ -1156,7 +1156,7 @@ export default function CardsPanel({
   const [newMarkColor, setNewMarkColor] = useState(MARK_COLORS[0]);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [exportConfirm, setExportConfirm] = useState<
-    { scope: string; section: string; path: string | null; url: string } | null
+    { scope: string; section: string; path: string | null; url: string; filename: string } | null
   >(null);
   const [showDeleteMenu, setShowDeleteMenu] = useState(false);
   const [scoring, setScoring] = useState(false);
@@ -2517,8 +2517,17 @@ export default function CardsPanel({
   }
 
   // ── Export URL ────────────────────────────────────────────────────────────
-  // Human-readable section name for export labels + (server-side) filenames.
-  const scopeSectionName = topicPath ? (topicPath.split(' > ').pop() || 'this section') : 'this section';
+  // Section name + topic path for export labels/filenames. Prefer the topicPath
+  // prop (Topics nav); fall back to the loaded cards, which carry section_heading
+  // + curriculum_topic_path (Documents nav, where topicPath is empty).
+  const scopeCard = cards[0];
+  const scopeSectionName =
+    scopeCard?.section_heading
+    || (topicPath ? topicPath.split(' > ').pop() : null)
+    || 'this section';
+  const scopePath = topicPath || scopeCard?.curriculum_topic_path || null;
+  const scopeFileName = `${(scopeSectionName || 'cards').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') || 'cards'}.csv`;
+
   // "All in scope" export: prefer the single section (so the file is named after
   // it), then the topic path, then the whole tree.
   const allScopeUrl = effectiveSectionId != null
@@ -2529,11 +2538,12 @@ export default function CardsPanel({
         ? exportCardsUrl({ topic_tree_id: topicTreeId })
         : undefined;
 
-  // Trigger a download, honoring the server's Content-Disposition filename.
-  const triggerDownload = (url: string) => {
+  // Trigger a download with an explicit filename (same-origin, so the download
+  // attribute is honored and overrides the server's Content-Disposition).
+  const triggerDownload = (url: string, filename: string) => {
     const a = document.createElement('a');
     a.href = url;
-    a.download = '';
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -2847,8 +2857,9 @@ export default function CardsPanel({
                       setExportConfirm({
                         scope: `Selected cards (${selectedIds.size})`,
                         section: scopeSectionName,
-                        path: topicPath ?? null,
+                        path: scopePath,
                         url: exportCardsUrl({ card_ids: [...selectedIds] }),
+                        filename: scopeFileName,
                       });
                     }}
                   >
@@ -2863,8 +2874,9 @@ export default function CardsPanel({
                       setExportConfirm({
                         scope: effectiveSectionId != null ? 'All cards in this section' : 'All cards in this topic',
                         section: scopeSectionName,
-                        path: topicPath ?? null,
+                        path: scopePath,
                         url: allScopeUrl,
+                        filename: scopeFileName,
                       });
                     }}
                   >
@@ -3468,13 +3480,14 @@ export default function CardsPanel({
               <div><span className="text-gray-400 uppercase text-[10px] font-semibold">Exporting</span><br />{exportConfirm.scope}</div>
               <div><span className="text-gray-400 uppercase text-[10px] font-semibold">Section</span><br /><b>{exportConfirm.section}</b></div>
               <div><span className="text-gray-400 uppercase text-[10px] font-semibold">Topic path</span><br />{exportConfirm.path ?? '—'}</div>
-              <p className="text-[11px] text-gray-400 pt-1">The file is named after the section/topic. Check this looks right, then download.</p>
+              <div><span className="text-gray-400 uppercase text-[10px] font-semibold">File name</span><br /><span className="font-mono text-[11px]">{exportConfirm.filename}</span></div>
+              <p className="text-[11px] text-gray-400 pt-1">Check this looks right, then download.</p>
             </div>
             <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-200">
               <button onClick={() => setExportConfirm(null)}
                 className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
               <button
-                onClick={() => { triggerDownload(exportConfirm.url); setExportConfirm(null); }}
+                onClick={() => { triggerDownload(exportConfirm.url, exportConfirm.filename); setExportConfirm(null); }}
                 className="px-3 py-1.5 text-xs font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">
                 Download CSV
               </button>

@@ -90,6 +90,8 @@ export interface Upload {
 export interface Card {
   id: number;
   section_id: number;
+  section_heading?: string | null;
+  curriculum_topic_path?: string | null;
   card_number: number;
   front_html: string;
   front_html_v1: string | null;
