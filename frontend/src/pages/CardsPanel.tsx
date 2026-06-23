@@ -76,6 +76,13 @@ const columnHelper = createColumnHelper<Card>();
 // truth — used for the initial page size and any page-size logic.
 const CARDS_PAGE_SIZE = 80;
 
+// Delimiter between a card's tags everywhere they're shown/serialized as a
+// string (Anki-style hierarchical, no surrounding spaces). Individual tags
+// contain commas, so comma can't be the separator.
+const TAG_SEP = '::';
+const joinTags = (tags: string[]) => tags.join(TAG_SEP);
+const splitTags = (s: string) => s.split(TAG_SEP).map(t => t.trim()).filter(Boolean);
+
 // Quick-pick palette for creating a review mark inline from the Actions menu.
 const MARK_COLORS = ['#6b7280', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'];
 
@@ -466,11 +473,7 @@ function TagsCell({ tags, cellId, onSave, onSelect, onNavigate }: TagsCellProps)
       >
         {tags.length === 0
           ? <span className="text-gray-300 text-xs">—</span>
-          : <div className="flex flex-wrap gap-1">
-              {tags.map(tag => (
-                <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded text-[11px] bg-blue-50 text-blue-700 border border-blue-200 font-medium">{tag}</span>
-              ))}
-            </div>
+          : <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] bg-blue-50 text-blue-700 border border-blue-200 font-medium break-all">{joinTags(tags)}</span>
         }
       </div>
     );
@@ -640,7 +643,7 @@ function CardTile({
               className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent transition-colors duration-150"
               value={editTags}
               onChange={(e) => setEditTags(e.target.value)}
-              placeholder="tag1, tag2"
+              placeholder="tag1::tag2"
             />
             <div className="flex items-center gap-1.5">
               <button onClick={() => onSave(card.id)} className="px-3 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 transition-colors duration-150">Save</button>
@@ -660,10 +663,10 @@ function CardTile({
           ) : (
             <button
               onClick={(e) => openPopover('tags', e)}
+              title={joinTags(activeTags)}
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100 transition-colors duration-150"
             >
-              <span className="truncate max-w-[80px]">{activeTags[0]}</span>
-              {activeTags.length > 1 && <span className="bg-blue-200 text-blue-700 rounded px-1 text-[10px] font-semibold">+{activeTags.length - 1}</span>}
+              <span className="truncate max-w-[140px]">{joinTags(activeTags)}</span>
             </button>
           )}
         </div>
@@ -688,11 +691,7 @@ function CardTile({
           {popover.kind === 'tags' && (
             <div className="fixed z-50 bg-white border border-gray-200 rounded-xl shadow-xl p-2.5 min-w-[160px] max-w-[240px]" style={{ top: popover.y, left: popover.x }}>
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5 px-1">Tags</p>
-              <div className="flex flex-wrap gap-1">
-                {activeTags.map((tag) => (
-                  <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded text-[11px] bg-blue-50 text-blue-700 border border-blue-200 font-medium">{tag}</span>
-                ))}
-              </div>
+              <div className="text-[11px] text-blue-700 break-all px-1">{joinTags(activeTags)}</div>
             </div>
           )}
           {popover.kind === 'actions' && (
@@ -1962,7 +1961,7 @@ export default function CardsPanel({
         payload.cards = [{
           front_html: addFront.trim(),
           extra: addExtra.trim() || null,
-          tags: addTags.split(',').map(t => t.trim()).filter(Boolean),
+          tags: splitTags(addTags),
         }];
       } else if (addMode === 'csv') {
         if (!addCsv?.text.trim()) { setAddError('Choose a CSV file first'); setAddLoading(false); return; }
@@ -2035,12 +2034,12 @@ export default function CardsPanel({
     setEditingId(card.id);
     setEditFrontHtml(card.front_html);
     const tagsForEdit = activeTagSet === 'old' ? card.tags : (card.tags_mapped ?? []);
-    setEditTags(tagsForEdit.join(', '));
+    setEditTags(joinTags(tagsForEdit));
   }, [activeTagSet]);
 
   const handleSaveEdit = useCallback(async (id: number) => {
     try {
-      const tags = editTags.split(',').map((t) => t.trim()).filter(Boolean);
+      const tags = splitTags(editTags);
       const tagUpdate = activeTagSet === 'old' ? { tags } : { tags_mapped: tags };
       await updateCard(id, { front_html: editFrontHtml, ...tagUpdate });
       setEditingId(null);
@@ -3397,8 +3396,8 @@ export default function CardsPanel({
                       className="w-full mt-1 text-xs border border-gray-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-violet-500" />
                   </div>
                   <div>
-                    <label className="text-[11px] font-semibold text-gray-500 uppercase">Tags (comma-separated, optional — defaults to section tags)</label>
-                    <input value={addTags} onChange={(e) => setAddTags(e.target.value)}
+                    <label className="text-[11px] font-semibold text-gray-500 uppercase">Tags (:: -separated, optional — defaults to section tags)</label>
+                    <input value={addTags} onChange={(e) => setAddTags(e.target.value)} placeholder="tag1::tag2"
                       className="w-full mt-1 text-xs border border-gray-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-violet-500" />
                   </div>
                 </>
