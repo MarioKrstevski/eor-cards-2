@@ -82,7 +82,10 @@ def export_cards(
             # Tags follow the header's selected tag set, matching the table:
             # 'new' → tags_mapped, otherwise ('old') → tags. Fall back to the
             # other column if the selected one is empty.
-            "tags": ",".join(
+            # Joined with " > " (not ","): individual curriculum tags contain
+            # commas (e.g. "Gynecologic, Sexual, and Reproductive Health"), so a
+            # comma delimiter would be ambiguous. " > " never appears in a tag.
+            "tags": " > ".join(
                 (card.tags_mapped or card.tags or [])
                 if tag_set == "new"
                 else (card.tags or card.tags_mapped or [])

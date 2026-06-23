@@ -1015,11 +1015,14 @@ def _cards_from_csv(csv_text: str) -> list[dict]:
         if not front_html:
             continue
         tags_raw = (row.get("tags") or "").strip()
+        # Tags are exported joined with " > " (curriculum tags contain commas).
+        # Split on that; fall back to comma only for legacy/hand-edited CSVs.
+        tag_sep = " > " if " > " in tags_raw else ","
         out.append({
             "front_html": front_html,
             "front_text": (row.get("front_text") or "").strip() or None,
             "extra": (row.get("extra") or "").strip() or None,
-            "tags": [t.strip() for t in tags_raw.split(",") if t.strip()],
+            "tags": [t.strip() for t in tags_raw.split(tag_sep) if t.strip()],
             "source_ref": (row.get("source_ref") or "").strip() or None,
             "vignette": (row.get("vignette") or "").strip() or None,
             "teaching_case": (row.get("teaching_case") or "").strip() or None,
