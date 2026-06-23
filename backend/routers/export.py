@@ -1,5 +1,6 @@
 import csv
 import io
+import re
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
@@ -8,6 +9,14 @@ from backend.db import get_db
 from backend.models import Card, Section, TopicTree, Curriculum
 
 router = APIRouter()
+
+
+def _safe_filename(name: str) -> str:
+    """Turn a section/topic name into a safe CSV filename stem."""
+    name = (name or "").strip()
+    name = re.sub(r"[^\w\s-]", "", name)      # drop punctuation/symbols
+    name = re.sub(r"\s+", "_", name).strip("_")
+    return name or "cards"
 
 
 @router.get("/cards")
@@ -21,18 +30,28 @@ def export_cards(
 ):
     q = db.query(Card).options(joinedload(Card.section))
 
+    # Name the download after the scope (section heading / topic leaf / tree name).
+    download_name = "cards"
     if card_ids:
         ids = [int(i) for i in card_ids.split(",") if i.strip().isdigit()]
         q = q.filter(Card.id.in_(ids))
+        download_name = "selected-cards"
     elif section_id:
         q = q.filter(Card.section_id == section_id)
+        sec = db.get(Section, section_id)
+        if sec:
+            download_name = sec.heading
     elif topic_tree_id:
         q = q.join(Card.section).filter(Section.topic_tree_id == topic_tree_id)
+        tt = db.get(TopicTree, topic_tree_id)
+        if tt:
+            download_name = tt.name
     elif topic_path:
         q = q.join(Card.section).filter(
             (Section.curriculum_topic_path == topic_path) |
             Section.curriculum_topic_path.startswith(topic_path + " > ")
         )
+        download_name = topic_path.split(" > ")[-1]
     elif curriculum_id:
         node = db.get(Curriculum, curriculum_id)
         if node:
@@ -40,6 +59,7 @@ def export_cards(
                 (Section.curriculum_topic_path == node.path) |
                 Section.curriculum_topic_path.startswith(node.path + " > ")
             )
+            download_name = node.name
 
     cards = q.all()
 
@@ -71,8 +91,9 @@ def export_cards(
             "curriculum_topic_path": section.curriculum_topic_path if section else "",
         })
     output.seek(0)
+    filename = f"{_safe_filename(download_name)}.csv"
     return StreamingResponse(
         output,
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=cards.csv"},
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )

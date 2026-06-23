@@ -472,6 +472,9 @@ export async function addManualCards(params: {
   section_id: number;
   cards?: { front_html: string; extra?: string | null; tags?: string[] }[];
   raw_text?: string;
+  csv_text?: string;
+  card_version?: string;
+  include_supplementals?: boolean;
   model: string;
   format?: 'pipe';
 }): Promise<{ created: Card[] }> {
@@ -601,10 +604,13 @@ export function exportCardsUrl(params?: {
   curriculum_id?: number;
   topic_path?: string;
   card_ids?: number[];
+  section_id?: number;
 }): string {
   const url = new URL('/api/export/cards', window.location.origin);
   if (params?.card_ids?.length) {
     url.searchParams.set('card_ids', params.card_ids.join(','));
+  } else if (params?.section_id != null) {
+    url.searchParams.set('section_id', String(params.section_id));
   } else if (params?.topic_tree_id != null) {
     url.searchParams.set('topic_tree_id', String(params.topic_tree_id));
   } else if (params?.topic_path) {

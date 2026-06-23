@@ -71,6 +71,11 @@ interface CardsPanelProps {
 
 const columnHelper = createColumnHelper<Card>();
 
+// Cards loaded per page (server-side pagination). Sections usually top out
+// around ~70 cards, so 80 grabs them all in one request. Single source of
+// truth — used for the initial page size and any page-size logic.
+const CARDS_PAGE_SIZE = 80;
+
 // Quick-pick palette for creating a review mark inline from the Actions menu.
 const MARK_COLORS = ['#6b7280', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'];
 
@@ -1109,7 +1114,7 @@ export default function CardsPanel({
   const [totalCards, setTotalCards] = useState(0);
   const [cardsLoading, setCardsLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: CARDS_PAGE_SIZE });
   // Default to 'active' so rejected (soft-deleted) cards don't linger in the
   // view looking "not deleted". They stay recoverable via the filter dropdown.
   const [statusFilter, setStatusFilter] = useState<'all' | CardStatus>('active');
@@ -1150,6 +1155,9 @@ export default function CardsPanel({
   const [newMarkName, setNewMarkName] = useState('');
   const [newMarkColor, setNewMarkColor] = useState(MARK_COLORS[0]);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [exportConfirm, setExportConfirm] = useState<
+    { scope: string; section: string; path: string | null; url: string } | null
+  >(null);
   const [showDeleteMenu, setShowDeleteMenu] = useState(false);
   const [scoring, setScoring] = useState(false);
   const [validating, setValidating] = useState(false);
@@ -1195,7 +1203,10 @@ export default function CardsPanel({
 
   // ── Add manual card(s) ────────────────────────────────────────────────────
   const [showAddCards, setShowAddCards] = useState(false);
-  const [addMode, setAddMode] = useState<'single' | 'paste'>('single');
+  const [addMode, setAddMode] = useState<'single' | 'paste' | 'csv'>('single');
+  const [addCsv, setAddCsv] = useState<{ name: string; text: string } | null>(null);
+  const [addVersion, setAddVersion] = useState<string>('base');     // which version new cards land in
+  const [addIncludeSupp, setAddIncludeSupp] = useState(true);       // import vignette + teaching case
   const [addFront, setAddFront] = useState('');
   const [addExtra, setAddExtra] = useState('');
   const [addTags, setAddTags] = useState('');
@@ -1943,6 +1954,8 @@ export default function CardsPanel({
       const payload: Parameters<typeof addManualCards>[0] = {
         section_id: effectiveSectionId,
         model: selectedModel,
+        card_version: addVersion,
+        include_supplementals: addIncludeSupp,
       };
       if (addMode === 'single') {
         if (!addFront.trim()) { setAddError('Card front is required'); setAddLoading(false); return; }
@@ -1951,6 +1964,9 @@ export default function CardsPanel({
           extra: addExtra.trim() || null,
           tags: addTags.split(',').map(t => t.trim()).filter(Boolean),
         }];
+      } else if (addMode === 'csv') {
+        if (!addCsv?.text.trim()) { setAddError('Choose a CSV file first'); setAddLoading(false); return; }
+        payload.csv_text = addCsv.text;
       } else {
         if (!addPaste.trim()) { setAddError('Paste some card text first'); setAddLoading(false); return; }
         payload.raw_text = addPaste.trim();
@@ -1958,7 +1974,7 @@ export default function CardsPanel({
       const { created } = await addManualCards(payload);
       if (!created.length) { setAddError('No cards were created from that input'); setAddLoading(false); return; }
       setShowAddCards(false);
-      setAddFront(''); setAddExtra(''); setAddTags(''); setAddPaste('');
+      setAddFront(''); setAddExtra(''); setAddTags(''); setAddPaste(''); setAddCsv(null);
       await fetchCards(sectionId, topicPath, true, undefined, sectionIds);
       onReviewChange?.();
       refreshUsage?.();
@@ -1967,7 +1983,7 @@ export default function CardsPanel({
     } finally {
       setAddLoading(false);
     }
-  }, [effectiveSectionId, sectionId, selectedModel, addMode, addFront, addExtra, addTags, addPaste, fetchCards, topicPath, sectionIds, onReviewChange, refreshUsage]);
+  }, [effectiveSectionId, sectionId, selectedModel, addMode, addFront, addExtra, addTags, addPaste, addCsv, addVersion, addIncludeSupp, fetchCards, topicPath, sectionIds, onReviewChange, refreshUsage]);
 
   // Resume polling for active jobs on mount and when topic/section context changes (handles page refresh)
   useEffect(() => {
@@ -2501,11 +2517,27 @@ export default function CardsPanel({
   }
 
   // ── Export URL ────────────────────────────────────────────────────────────
-  const exportUrl = topicTreeId
-    ? exportCardsUrl({ topic_tree_id: topicTreeId })
+  // Human-readable section name for export labels + (server-side) filenames.
+  const scopeSectionName = topicPath ? (topicPath.split(' > ').pop() || 'this section') : 'this section';
+  // "All in scope" export: prefer the single section (so the file is named after
+  // it), then the topic path, then the whole tree.
+  const allScopeUrl = effectiveSectionId != null
+    ? exportCardsUrl({ section_id: effectiveSectionId })
     : topicPath
       ? exportCardsUrl({ topic_path: topicPath })
-      : undefined;
+      : topicTreeId
+        ? exportCardsUrl({ topic_tree_id: topicTreeId })
+        : undefined;
+
+  // Trigger a download, honoring the server's Content-Disposition filename.
+  const triggerDownload = (url: string) => {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -2806,24 +2838,38 @@ export default function CardsPanel({
               Export ▾
             </button>
             {showExportMenu && (
-              <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 min-w-[170px] py-1">
-                <a
-                  href={exportCardsUrl({ card_ids: [...selectedIds] })}
-                  className="block px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
-                  download
-                  onClick={() => setShowExportMenu(false)}
-                >
-                  Selected only ({selectedIds.size})
-                </a>
-                {exportUrl && (
-                  <a
-                    href={exportUrl}
-                    className="block px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
-                    download
-                    onClick={() => setShowExportMenu(false)}
+              <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 min-w-[190px] py-1">
+                {selectedIds.size > 0 && (
+                  <button
+                    className="block w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                    onClick={() => {
+                      setShowExportMenu(false);
+                      setExportConfirm({
+                        scope: `Selected cards (${selectedIds.size})`,
+                        section: scopeSectionName,
+                        path: topicPath ?? null,
+                        url: exportCardsUrl({ card_ids: [...selectedIds] }),
+                      });
+                    }}
                   >
-                    All cards in topic
-                  </a>
+                    Selected only ({selectedIds.size})
+                  </button>
+                )}
+                {allScopeUrl && (
+                  <button
+                    className="block w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                    onClick={() => {
+                      setShowExportMenu(false);
+                      setExportConfirm({
+                        scope: effectiveSectionId != null ? 'All cards in this section' : 'All cards in this topic',
+                        section: scopeSectionName,
+                        path: topicPath ?? null,
+                        url: allScopeUrl,
+                      });
+                    }}
+                  >
+                    {effectiveSectionId != null ? 'All cards in this section' : 'All cards in this topic'}
+                  </button>
                 )}
               </div>
             )}
@@ -2937,7 +2983,7 @@ export default function CardsPanel({
           )}
           {effectiveSectionId && (
             <button
-              onClick={() => { setShowAddCards(true); setAddError(null); }}
+              onClick={() => { setShowAddCards(true); setAddError(null); setAddVersion(activeCardVersion); }}
               disabled={jobRunning}
               className="px-2 py-1.5 text-xs font-medium text-violet-700 bg-white border border-violet-200 rounded-lg hover:bg-violet-50 disabled:opacity-50 transition-colors duration-150"
               title="Add a card by hand, or paste cards from a Claude-chat session"
@@ -3302,6 +3348,12 @@ export default function CardsPanel({
                 >
                   Paste from chat
                 </button>
+                <button
+                  onClick={() => setAddMode('csv')}
+                  className={`px-2 py-1 text-[11px] font-medium rounded-lg ${addMode === 'csv' ? 'bg-violet-100 text-violet-700' : 'text-gray-500 hover:bg-gray-100'}`}
+                >
+                  Import CSV
+                </button>
               </div>
             </div>
             <div className="flex-1 overflow-auto p-4 space-y-3">
@@ -3323,6 +3375,28 @@ export default function CardsPanel({
                       className="w-full mt-1 text-xs border border-gray-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-violet-500" />
                   </div>
                 </>
+              ) : addMode === 'csv' ? (
+                <div>
+                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Import from an exported cards CSV</label>
+                  <p className="text-[11px] text-gray-500 mt-0.5">Select a CSV exported from this app. Cards are added to this section <b>exactly as written</b> (no AI rewording). Rows missing a card front are skipped.</p>
+                  <input
+                    type="file"
+                    accept=".csv,text/csv"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) { setAddCsv(null); return; }
+                      const text = await file.text();
+                      setAddCsv({ name: file.name, text });
+                      setAddError(null);
+                    }}
+                    className="w-full mt-2 text-xs text-gray-600 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-violet-100 file:text-violet-700 file:text-xs file:font-medium hover:file:bg-violet-200"
+                  />
+                  {addCsv && (
+                    <p className="text-[11px] text-emerald-700 mt-2">
+                      Loaded <b>{addCsv.name}</b> — {addCsv.text.split('\n').filter(l => l.trim()).length - 1} row(s) detected.
+                    </p>
+                  )}
+                </div>
               ) : (
                 <div>
                   <label className="text-[11px] font-semibold text-gray-500 uppercase">Paste card(s) — any format</label>
@@ -3330,6 +3404,38 @@ export default function CardsPanel({
                   <textarea value={addPaste} onChange={(e) => setAddPaste(e.target.value)} rows={10}
                     className="w-full mt-1 text-xs border border-gray-200 rounded-lg p-2 font-mono focus:outline-none focus:ring-2 focus:ring-violet-500" />
                 </div>
+              )}
+
+              {/* Shared: which version the new fronts/extra land in + whether to
+                  import the (unversioned, shared) vignette + teaching case. */}
+              <div className="flex flex-wrap items-center gap-4 pt-2 border-t border-gray-100">
+                <label className="flex items-center gap-1.5 text-[11px] font-medium text-gray-600">
+                  Add to version:
+                  <select
+                    value={addVersion}
+                    onChange={(e) => setAddVersion(e.target.value)}
+                    className="text-xs border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-violet-500"
+                  >
+                    <option value="base">Base</option>
+                    <option value="v1">V1</option>
+                    <option value="v2">V2</option>
+                    <option value="v3">V3</option>
+                  </select>
+                </label>
+                <label className="flex items-center gap-1.5 text-[11px] font-medium text-gray-600">
+                  <input
+                    type="checkbox"
+                    checked={addIncludeSupp}
+                    onChange={(e) => setAddIncludeSupp(e.target.checked)}
+                    className="rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+                  />
+                  Import vignette + teaching case
+                </label>
+              </div>
+              {addVersion !== 'base' && (
+                <p className="text-[11px] text-amber-600">
+                  Heads up: these cards go into <b>{addVersion.toUpperCase()}</b> only — their base front stays empty, so they show as version-only cards.
+                </p>
               )}
               {addError && <div className="text-xs text-red-600">{addError}</div>}
             </div>
@@ -3340,7 +3446,37 @@ export default function CardsPanel({
               </button>
               <button onClick={handleAddManualCards} disabled={addLoading}
                 className="px-3 py-1.5 text-xs font-medium text-white bg-violet-700 rounded-lg hover:bg-violet-800 disabled:opacity-50">
-                {addLoading ? (addMode === 'paste' ? 'Parsing…' : 'Adding…') : 'Add card(s)'}
+                {addLoading
+                  ? (addMode === 'paste' ? 'Parsing…' : addMode === 'csv' ? 'Importing…' : 'Adding…')
+                  : (addMode === 'csv' ? 'Import cards' : 'Add card(s)')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Export confirmation — verify scope before the file downloads. */}
+      {exportConfirm && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setExportConfirm(null)} />
+          <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[460px] max-w-[92vw] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
+              <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">Confirm export</h2>
+              <button onClick={() => setExportConfirm(null)} className="text-gray-400 hover:text-gray-700 text-sm">✕</button>
+            </div>
+            <div className="p-4 space-y-2 text-xs text-gray-700">
+              <div><span className="text-gray-400 uppercase text-[10px] font-semibold">Exporting</span><br />{exportConfirm.scope}</div>
+              <div><span className="text-gray-400 uppercase text-[10px] font-semibold">Section</span><br /><b>{exportConfirm.section}</b></div>
+              <div><span className="text-gray-400 uppercase text-[10px] font-semibold">Topic path</span><br />{exportConfirm.path ?? '—'}</div>
+              <p className="text-[11px] text-gray-400 pt-1">The file is named after the section/topic. Check this looks right, then download.</p>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-200">
+              <button onClick={() => setExportConfirm(null)}
+                className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+              <button
+                onClick={() => { triggerDownload(exportConfirm.url); setExportConfirm(null); }}
+                className="px-3 py-1.5 text-xs font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">
+                Download CSV
               </button>
             </div>
           </div>

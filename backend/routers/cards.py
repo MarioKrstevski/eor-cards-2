@@ -1,4 +1,6 @@
 from __future__ import annotations
+import csv
+import io
 import json
 import logging
 import anthropic
@@ -987,8 +989,43 @@ class AddManualCardsRequest(BaseModel):
     section_id: int
     cards: Optional[list[ManualCardInput]] = None  # structured single/multi entry
     raw_text: Optional[str] = None                 # pasted blob
+    csv_text: Optional[str] = None                 # contents of an exported cards CSV
+    card_version: str = "base"                     # base | v1 | v2 | v3 — where fronts/extra land
+    include_supplementals: bool = True             # import vignette + teaching case (shared, not versioned)
     model: str = DEFAULT_MODEL                      # only used to parse raw_text (haiku)
     format: Optional[str] = None                   # 'pipe' → parse with the real card parser; else Haiku
+
+
+def _truthy(v) -> bool:
+    return str(v or "").strip().lower() in ("true", "1", "yes")
+
+
+def _cards_from_csv(csv_text: str) -> list[dict]:
+    """Parse an exported cards CSV (see export.py) back into structured card dicts.
+
+    Exact reproduction — no AI. Recognises the export's column names; a row needs
+    at least front_html to be importable. Tags are comma-joined in the export, so
+    we split them back. note_id/id are intentionally ignored — imported cards get
+    fresh ids to avoid collisions with cards still in the DB.
+    """
+    reader = csv.DictReader(io.StringIO(csv_text))
+    out: list[dict] = []
+    for row in reader:
+        front_html = (row.get("front_html") or "").strip()
+        if not front_html:
+            continue
+        tags_raw = (row.get("tags") or "").strip()
+        out.append({
+            "front_html": front_html,
+            "front_text": (row.get("front_text") or "").strip() or None,
+            "extra": (row.get("extra") or "").strip() or None,
+            "tags": [t.strip() for t in tags_raw.split(",") if t.strip()],
+            "source_ref": (row.get("source_ref") or "").strip() or None,
+            "vignette": (row.get("vignette") or "").strip() or None,
+            "teaching_case": (row.get("teaching_case") or "").strip() or None,
+            "needs_review": _truthy(row.get("needs_review")),
+        })
+    return out
 
 
 @router.post("/manual")
@@ -1020,6 +1057,10 @@ def add_manual_cards(body: AddManualCardsRequest, db: Session = Depends(get_db))
                 "source_ref": None,
             })
 
+    # Exact CSV re-import (no AI) — restore cards from an exported cards CSV.
+    if body.csv_text and body.csv_text.strip():
+        to_create.extend(_cards_from_csv(body.csv_text))
+
     parse_usage = None
     if body.raw_text and body.raw_text.strip():
         if body.format == "pipe":
@@ -1049,19 +1090,39 @@ def add_manual_cards(body: AddManualCardsRequest, db: Session = Depends(get_db))
         .scalar()
     ) or 0
 
+    # Which card version the new cards' front/extra land in (base or v1/v2/v3).
+    target_version = body.card_version if body.card_version in ("v1", "v2", "v3") else "base"
+
     created: list[Card] = []
     for i, cd in enumerate(to_create):
+        fh = cd["front_html"]
         kwargs = dict(
             section_id=section.id,
             card_number=start_num + i + 1,
-            front_html=cd["front_html"],
-            front_text=cd.get("front_text") or strip_card_html(cd["front_html"]),
-            extra=cd.get("extra"),
+            # front_text always reflects the imported text so search/scoring work,
+            # even for version-only cards (base front_html left empty).
+            front_text=cd.get("front_text") or strip_card_html(fh),
             source_ref=cd.get("source_ref"),
             needs_review=cd.get("needs_review", False),
             manually_added=True,
             status=CardStatus.active,
         )
+        if target_version == "base":
+            kwargs["front_html"] = fh
+            kwargs["extra"] = cd.get("extra")
+        else:
+            # Version-only card: base front stays empty, content goes to the
+            # selected version's columns (front_html_vN / extra_vN).
+            kwargs["front_html"] = None
+            kwargs[_front_field(target_version)] = fh
+            kwargs[_extra_field(target_version)] = cd.get("extra")
+        # Vignette + teaching case are shared (not versioned) — import only when
+        # the user opted in, regardless of which version the fronts go to.
+        if body.include_supplementals:
+            if cd.get("vignette"):
+                kwargs["vignette"] = cd["vignette"]
+            if cd.get("teaching_case"):
+                kwargs["teaching_case"] = cd["teaching_case"]
         # Card-specific tags from the paste win; otherwise inherit the section's.
         tags = cd.get("tags") or section_tags
         if cv == "v1":
