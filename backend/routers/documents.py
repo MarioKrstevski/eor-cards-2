@@ -8,7 +8,7 @@ from typing import Optional
 from backend.db import get_db, SessionLocal
 from backend.models import (
     TopicTree, Section, Upload, ProcessingJob, JobStatus,
-    ContentBlock, SectionImage, Curriculum, slugify, utcnow,
+    ContentBlock, SectionImage, Curriculum, Card, slugify, utcnow,
 )
 from backend.config import UPLOAD_DIR
 
@@ -501,16 +501,28 @@ def _run_processing(job_id: int):
 
             if heading in existing_sections:
                 # Merge into existing section. content_html/text are fully REPLACED
-                # by this upload, so the old content blocks + images for this section
-                # are stale — delete them before re-creating, else they accumulate
-                # (block/image doubling on re-upload).
+                # by this upload, so the old content blocks are stale — delete them
+                # before re-creating, else they accumulate (block doubling on
+                # re-upload). Content blocks are never referenced by cards, so this
+                # is card-safe.
                 section = existing_sections[heading]
                 db.query(ContentBlock).filter(ContentBlock.section_id == section.id).delete()
-                db.query(SectionImage).filter(SectionImage.section_id == section.id).delete()
+                # Old images: only clear those NOT referenced by any card (cards
+                # point at images via ref_img_id). A re-upload that fixes section
+                # text must never orphan a card's image reference.
+                referenced_img_ids = {
+                    r[0] for r in db.query(Card.ref_img_id)
+                    .filter(Card.section_id == section.id, Card.ref_img_id.isnot(None)).all()
+                }
+                stale_imgs = db.query(SectionImage).filter(SectionImage.section_id == section.id).all()
+                for img in stale_imgs:
+                    if img.id not in referenced_img_ids:
+                        db.delete(img)
                 section.content_text = content_text
                 section.content_html = content_html
                 section.heading_tree = heading_tree
-                section.image_count = image_count   # set, not accumulate (blocks were cleared)
+                # Count current images = kept (referenced) + new ones added below.
+                section.image_count = image_count + len(referenced_img_ids)
                 section.table_count = table_count
                 section.updated_at = utcnow()
                 if "NO INFORMATION IN ORIGINAL STUDY GUIDE" in content_text.upper():
