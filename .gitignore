@@ -3,6 +3,9 @@ node_modules/
 __pycache__/
 *.pyc
 data/app.db
+data/app.db-wal
+data/app.db-shm
+data/app.db-journal
 data/uploads/
 data/chunk_images/
 data/debug_paste.html
