@@ -2537,11 +2537,11 @@ export default function CardsPanel({
   // "All in scope" export: prefer the single section (so the file is named after
   // it), then the topic path, then the whole tree.
   const allScopeUrl = effectiveSectionId != null
-    ? exportCardsUrl({ section_id: effectiveSectionId })
+    ? exportCardsUrl({ section_id: effectiveSectionId, tag_set: activeTagSet })
     : topicPath
-      ? exportCardsUrl({ topic_path: topicPath })
+      ? exportCardsUrl({ topic_path: topicPath, tag_set: activeTagSet })
       : topicTreeId
-        ? exportCardsUrl({ topic_tree_id: topicTreeId })
+        ? exportCardsUrl({ topic_tree_id: topicTreeId, tag_set: activeTagSet })
         : undefined;
 
   // Download via a blob so the exact client-side filename is used — the plain
@@ -2873,7 +2873,7 @@ export default function CardsPanel({
                         scope: `Selected cards (${selectedIds.size})`,
                         section: scopeSectionName,
                         path: scopePath,
-                        url: exportCardsUrl({ card_ids: [...selectedIds] }),
+                        url: exportCardsUrl({ card_ids: [...selectedIds], tag_set: activeTagSet }),
                         filename: scopeFileName,
                       });
                     }}

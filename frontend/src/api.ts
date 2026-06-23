@@ -605,8 +605,10 @@ export function exportCardsUrl(params?: {
   topic_path?: string;
   card_ids?: number[];
   section_id?: number;
+  tag_set?: 'old' | 'new';
 }): string {
   const url = new URL('/api/export/cards', window.location.origin);
+  if (params?.tag_set) url.searchParams.set('tag_set', params.tag_set);
   if (params?.card_ids?.length) {
     url.searchParams.set('card_ids', params.card_ids.join(','));
   } else if (params?.section_id != null) {

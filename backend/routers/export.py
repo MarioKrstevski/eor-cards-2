@@ -26,6 +26,7 @@ def export_cards(
     curriculum_id: Optional[int] = None,
     topic_path: Optional[str] = None,  # curriculum_topic_path string
     card_ids: Optional[str] = None,  # comma-separated IDs
+    tag_set: Optional[str] = None,  # 'old' → tags column, 'new' → tags_mapped
     db: Session = Depends(get_db),
 ):
     q = db.query(Card).options(joinedload(Card.section))
@@ -78,7 +79,14 @@ def export_cards(
             "id": card.id,
             "front_text": card.front_text,
             "front_html": card.front_html,
-            "tags": ",".join(card.tags or []),
+            # Tags follow the header's selected tag set, matching the table:
+            # 'new' → tags_mapped, otherwise ('old') → tags. Fall back to the
+            # other column if the selected one is empty.
+            "tags": ",".join(
+                (card.tags_mapped or card.tags or [])
+                if tag_set == "new"
+                else (card.tags or card.tags_mapped or [])
+            ),
             "extra": card.extra or "",
             "vignette": card.vignette or "",
             "teaching_case": card.teaching_case or "",
