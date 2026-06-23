@@ -101,12 +101,88 @@ def structured_source_from_html(html: str) -> str:
     return "\n".join(lines)
 
 
+def _inline_md(node) -> str:
+    """Inner text of an element as Markdown inline: <b>/<strong> -> **bold**,
+    <i>/<em> -> *italic*, nested lists skipped (rendered separately). Mirrors what
+    the section modal shows (which renders the same <b>/<i> tags)."""
+    from bs4 import NavigableString, Tag
+    parts = []
+    for child in node.children:
+        if isinstance(child, NavigableString):
+            parts.append(str(child))
+        elif isinstance(child, Tag):
+            if child.name in ("ul", "ol"):
+                continue
+            inner = _inline_md(child)
+            stripped = inner.strip()
+            if not stripped:
+                parts.append(inner)
+            elif child.name in ("b", "strong"):
+                parts.append(f"**{stripped}**")
+            elif child.name in ("i", "em"):
+                parts.append(f"*{stripped}*")
+            else:
+                parts.append(inner)
+    return re.sub(r"\s+", " ", "".join(parts)).strip()
+
+
+def markdown_source_from_html(html: str) -> str:
+    """Render a section's content_html as Markdown that mirrors the section modal:
+    nested bullet lists (2 spaces per level), **bold**/*italic* preserved,
+    headings as #, paragraphs on their own lines. This is what the AI receives, so
+    it sees the same structure and emphasis the reviewer sees."""
+    from bs4 import BeautifulSoup, Tag
+    soup = BeautifulSoup(html or "", "html.parser")
+    lines: list[str] = []
+
+    def walk_list(list_tag, depth):
+        for li in list_tag.find_all("li", recursive=False):
+            text = _inline_md(li)
+            if text:
+                lines.append(f"{'  ' * depth}- {text}")
+            for sub in li.find_all(["ul", "ol"], recursive=False):
+                walk_list(sub, depth + 1)
+
+    for el in soup.children:
+        if isinstance(el, Tag):
+            if el.name in ("ul", "ol"):
+                walk_list(el, 0)
+            elif el.name == "li":  # bare <li> not wrapped in a list
+                text = _inline_md(el)
+                if text:
+                    lines.append(f"- {text}")
+                for sub in el.find_all(["ul", "ol"], recursive=False):
+                    walk_list(sub, 1)
+            elif re.fullmatch(r"h[1-6]", el.name or ""):
+                text = _inline_md(el)
+                if text:
+                    lines.append(f"{'#' * int(el.name[1])} {text}")
+            elif el.name == "div" and "image-placeholder" in (el.get("class") or []):
+                idx = el.get("data-img-index")
+                lines.append(f"[Image {idx}]" if idx else "[Image]")
+            else:
+                # Paragraph — keep its text (incl. any manual bullet glyph), indent
+                # by its margin-left so the modal's visual nesting is preserved.
+                depth = 0
+                m = re.search(r"margin-left:\s*([\d.]+)em", el.get("style", "") or "")
+                if m:
+                    depth = max(0, round(float(m.group(1)) / 1.5))
+                text = _inline_md(el)
+                if text:
+                    lines.append(f"{'  ' * depth}{text}")
+        else:
+            t = re.sub(r"\s+", " ", str(el)).strip()
+            if t:
+                lines.append(t)
+    return "\n".join(lines)
+
+
 def _render_source_text(section_data: dict) -> str:
-    """Source block for the prompt: structure-preserving when content_html is
-    available, else the plain content_text (no numbering either way)."""
+    """Source block for the prompt: Markdown mirroring the section modal when
+    content_html is available, else the plain content_text."""
     html = section_data.get("content_html")
     if html:
-        rendered = structured_source_from_html(html)
+        rendered = markdown_source_from_html(html)
         if rendered.strip():
             return rendered
     return (section_data.get("content_text") or "").strip()
