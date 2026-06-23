@@ -216,6 +216,7 @@ type CardVersion = 'base' | 'v1' | 'v2' | 'v3';
 const EDIT_TABS: { key: string; label: string }[] = [
   { key: 'front_html', label: 'Card Text' },
   { key: 'extra', label: 'Extra' },
+  { key: 'tags', label: 'Tags' },
   { key: 'vignette', label: 'Vignette' },
   { key: 'teaching_case', label: 'Teaching Case' },
 ];
@@ -278,13 +279,14 @@ interface BigEditModalProps {
   cardId: number;
   field: string;
   activeCardVersion: CardVersion;
+  activeTagSet: 'old' | 'new';
   enableCardNav: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onSave: (id: number, patch: any) => void;
   onClose: () => void;
 }
 
-function BigEditModal({ cards, cardId: startId, field: startField, activeCardVersion, enableCardNav, onSave, onClose }: BigEditModalProps) {
+function BigEditModal({ cards, cardId: startId, field: startField, activeCardVersion, activeTagSet, enableCardNav, onSave, onClose }: BigEditModalProps) {
   const [cardId, setCardId] = useState(startId);
   const [fieldKey, setFieldKey] = useState(startField);
   const [draft, setDraft] = useState('');
@@ -293,10 +295,15 @@ function BigEditModal({ cards, cardId: startId, field: startField, activeCardVer
   const idx = cards.findIndex((c) => c.id === cardId);
   const card = idx >= 0 ? cards[idx] : undefined;
 
+  // Tags aren't versioned — they're a list keyed by the active tag set
+  // (old → tags, new → tags_mapped), shown/edited as a "::"-separated string.
+  const tagsString = (c: Card) => joinTags(activeTagSet === 'old' ? (c.tags ?? []) : (c.tags_mapped ?? []));
+  const valueFor = (c: Card) => fieldKey === 'tags' ? tagsString(c) : getFieldValue(c, fieldKey, activeCardVersion);
+
   // Reload the draft when the (card, field) target changes — not on background
   // refreshes, so we never clobber what the user is typing.
   useEffect(() => {
-    if (card) setDraft(getFieldValue(card, fieldKey, activeCardVersion));
+    if (card) setDraft(valueFor(card));
     requestAnimationFrame(() => taRef.current?.focus());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cardId, fieldKey]);
@@ -305,8 +312,14 @@ function BigEditModal({ cards, cardId: startId, field: startField, activeCardVer
 
   function flush() {
     if (!card) return;
-    const orig = getFieldValue(card, fieldKey, activeCardVersion);
-    if (draft !== orig) onSave(card.id, fieldPatch(fieldKey, draft, activeCardVersion));
+    const orig = valueFor(card);
+    if (draft === orig) return;
+    if (fieldKey === 'tags') {
+      const tags = splitTags(draft);
+      onSave(card.id, activeTagSet === 'old' ? { tags } : { tags_mapped: tags });
+    } else {
+      onSave(card.id, fieldPatch(fieldKey, draft, activeCardVersion));
+    }
   }
   function switchField(k: string) { if (k === fieldKey) return; flush(); setFieldKey(k); }
   function gotoCard(dir: -1 | 1) {
@@ -359,7 +372,11 @@ function BigEditModal({ cards, cardId: startId, field: startField, activeCardVer
           spellCheck={false}
         />
         <div className="flex items-center justify-between px-4 py-2.5 border-t border-gray-200 bg-gray-50/60">
-          <span className="text-[11px] text-gray-400">Click outside or Save keeps changes · Esc cancels · ⌘/Ctrl+Enter saves & closes</span>
+          <span className="text-[11px] text-gray-400">
+            {fieldKey === 'tags'
+              ? `Tags for the "${activeTagSet === 'old' ? 'Current' : 'New'}" set — separate with :: (no spaces) · ⌘/Ctrl+Enter saves & closes`
+              : 'Click outside or Save keeps changes · Esc cancels · ⌘/Ctrl+Enter saves & closes'}
+          </span>
           <div className="flex items-center gap-2">
             <button onClick={onClose} className="px-3 py-1.5 text-xs font-medium text-gray-600 rounded-lg hover:bg-gray-100">Cancel</button>
             <button onClick={saveClose} className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">Save &amp; Close</button>
@@ -3516,6 +3533,7 @@ export default function CardsPanel({
           cardId={bigEdit.cardId}
           field={bigEdit.field}
           activeCardVersion={activeCardVersion}
+          activeTagSet={activeTagSet}
           enableCardNav={bigEdit.nav}
           onSave={handleCellSave}
           onClose={() => setBigEdit(null)}
