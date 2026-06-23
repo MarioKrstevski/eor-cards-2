@@ -1114,9 +1114,9 @@ def add_manual_cards(body: AddManualCardsRequest, db: Session = Depends(get_db))
             kwargs["front_html"] = fh
             kwargs["extra"] = cd.get("extra")
         else:
-            # Version-only card: base front stays empty, content goes to the
-            # selected version's columns (front_html_vN / extra_vN).
-            kwargs["front_html"] = None
+            # Version-only card: base front stays empty (front_html is NOT NULL,
+            # so "" not None), content goes to the selected version's columns.
+            kwargs["front_html"] = ""
             kwargs[_front_field(target_version)] = fh
             kwargs[_extra_field(target_version)] = cd.get("extra")
         # Vignette + teaching case are shared (not versioned) — import only when

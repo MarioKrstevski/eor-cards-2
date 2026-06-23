@@ -598,7 +598,7 @@ def _run_generation(
                                 new_card = Card(
                                     section_id=section_data["id"],
                                     card_number=max_num + j + 1,
-                                    front_html=None,
+                                    front_html="",  # base empty (NOT NULL) — version-only card
                                     front_text=card_data.get("front_text", ""),
                                     tags=[],
                                     status=CardStatus.active,
