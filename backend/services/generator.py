@@ -126,14 +126,48 @@ def _inline_md(node) -> str:
     return re.sub(r"\s+", " ", "".join(parts)).strip()
 
 
+_UNIT_PX = {"in": 96.0, "pt": 96 / 72.0, "em": 16.0, "px": 1.0, "cm": 37.8}
+
+
+def _left_indent_px(el) -> float:
+    """Left indentation of an element from its inline style, normalized to px.
+    Handles `margin-left:Xunit` and the `margin: t r b l` shorthand (Outlook/Word
+    paste uses inch margins on flat <li> to express nesting)."""
+    style = el.get("style", "") or ""
+    m = re.search(r"margin-left:\s*([\d.]+)\s*(in|em|px|pt|cm)", style)
+    if not m:
+        m = re.search(
+            r"margin:\s*[\d.]+\s*\w+\s+[\d.]+\s*\w+\s+[\d.]+\s*\w+\s+([\d.]+)\s*(in|em|px|pt|cm)",
+            style,
+        )
+    if not m:
+        return 0.0
+    return float(m.group(1)) * _UNIT_PX.get(m.group(2), 1.0)
+
+
 def markdown_source_from_html(html: str) -> str:
     """Render a section's content_html as Markdown that mirrors the section modal:
     nested bullet lists (2 spaces per level), **bold**/*italic* preserved,
     headings as #, paragraphs on their own lines. This is what the AI receives, so
-    it sees the same structure and emphasis the reviewer sees."""
+    it sees the same structure and emphasis the reviewer sees.
+
+    Nesting comes from real <ul><li> when present, OR — for Outlook/Word paste,
+    which emits flat <li>/<p> with margin-left indentation — from the left margin,
+    ranked per section so each distinct indent becomes one nesting level."""
     from bs4 import BeautifulSoup, Tag
     soup = BeautifulSoup(html or "", "html.parser")
     lines: list[str] = []
+
+    # Rank distinct left-indents of the top-level blocks so margin-based
+    # indentation (paste) maps to 0,1,2,… nesting depth.
+    indents = sorted({
+        round(_left_indent_px(el))
+        for el in soup.children
+        if isinstance(el, Tag) and el.name in ("li", "p", "div")
+        and not (el.name == "div" and "image-placeholder" in (el.get("class") or []))
+    })
+    depth_of = {v: i for i, v in enumerate(indents)}
+    margin_depth = lambda el: depth_of.get(round(_left_indent_px(el)), 0)
 
     def walk_list(list_tag, depth):
         for li in list_tag.find_all("li", recursive=False):
@@ -147,12 +181,12 @@ def markdown_source_from_html(html: str) -> str:
         if isinstance(el, Tag):
             if el.name in ("ul", "ol"):
                 walk_list(el, 0)
-            elif el.name == "li":  # bare <li> not wrapped in a list
+            elif el.name == "li":  # bare <li> not wrapped in a list (paste)
                 text = _inline_md(el)
                 if text:
-                    lines.append(f"- {text}")
+                    lines.append(f"{'  ' * margin_depth(el)}- {text}")
                 for sub in el.find_all(["ul", "ol"], recursive=False):
-                    walk_list(sub, 1)
+                    walk_list(sub, margin_depth(el) + 1)
             elif re.fullmatch(r"h[1-6]", el.name or ""):
                 text = _inline_md(el)
                 if text:
@@ -162,14 +196,10 @@ def markdown_source_from_html(html: str) -> str:
                 lines.append(f"[Image {idx}]" if idx else "[Image]")
             else:
                 # Paragraph — keep its text (incl. any manual bullet glyph), indent
-                # by its margin-left so the modal's visual nesting is preserved.
-                depth = 0
-                m = re.search(r"margin-left:\s*([\d.]+)em", el.get("style", "") or "")
-                if m:
-                    depth = max(0, round(float(m.group(1)) / 1.5))
+                # by its (ranked) left margin so the modal's nesting is preserved.
                 text = _inline_md(el)
                 if text:
-                    lines.append(f"{'  ' * depth}{text}")
+                    lines.append(f"{'  ' * margin_depth(el)}{text}")
         else:
             t = re.sub(r"\s+", " ", str(el)).strip()
             if t:
