@@ -44,7 +44,6 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
   const [sectionCost, setSectionCost] = useState<SectionCost | null>(null);
   const [selectedImage, setSelectedImage] = useState<SectionImage | null>(null);
   const [showImages, setShowImages] = useState(false);
-  const [showBlocks, setShowBlocks] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [pasteHtml, setPasteHtml] = useState('');
   const [pasting, setPasting] = useState(false);
@@ -443,46 +442,6 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
                 className="section-content prose prose-sm max-w-none"
                 dangerouslySetInnerHTML={{ __html: section.content_html }}
               />
-
-              {/* Content blocks listing */}
-              {section.content_blocks && section.content_blocks.length > 0 && (
-                <div className="mt-6 border-t border-gray-200 pt-4">
-                  <button
-                    onClick={() => setShowBlocks(v => !v)}
-                    className="flex items-center gap-2 w-full text-left group mb-1"
-                  >
-                    <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Content Blocks ({section.content_blocks.length})</h3>
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className={`h-3.5 w-3.5 text-gray-400 transition-transform duration-150 ${showBlocks ? 'rotate-180' : ''}`}
-                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                  {showBlocks && (
-                    <div className="space-y-2 mt-3">
-                      {section.content_blocks.map((block) => (
-                        <div
-                          key={block.id}
-                          className={`p-3 rounded-lg border text-xs ${
-                            block.is_duplicate
-                              ? 'border-red-200 bg-red-50/50'
-                              : 'border-gray-200 bg-white'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-600">{block.block_type}</span>
-                            {block.heading_context && <span className="text-gray-400 truncate">{block.heading_context}</span>}
-                            {block.is_duplicate && <span className="text-red-500 font-medium">DUPLICATE</span>}
-                          </div>
-                          <p className="text-gray-700 whitespace-pre-wrap">{block.text}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
 
               {/* Contributing uploads */}
               {section.uploads && section.uploads.length > 0 && (
