@@ -157,13 +157,28 @@ Concrete sites to wrap (verified against the code):
 - `cards.py` other forced/tool or direct-anthropic calls that read `body.model`:
   `score_new_cards` (486), `parse_pasted_cards` (1084), and the line-416 direct
   `messages.create`.
-- `scorer.py` bulk-score and `supplemental_generator.py` — wrap the selected
-  model the same way. (Out of the requested scope; defensive so a Gemini
-  selection can never reach a forced-tool-call path on the wrong client.)
+- `generate.py` supplemental job `_run_supplemental` (~line 817):
+  `generate_supplemental_for_group(client, …, anthropic_model(model))` — this
+  service issues a forced `submit_supplementals` tool call. Coerce **at the call
+  site** and use the coerced value for the usage-log `model=` and `compute_cost`
+  (~879/884) so cost is attributed to the model that actually ran.
+- `generate.py` `bulk_score_cards` — pass `anthropic_model(body.model)` into
+  `score_cards` and use it for the usage-log `model=` and `compute_cost`
+  (~653/655). Same call-site-coercion reason.
+
+**Coerce at the call site, not inside the service.** Doing the coercion where the
+model is passed in (as above) — rather than only inside `scorer.py` /
+`supplemental_generator.py` — keeps the logged `model`/`compute_cost` consistent
+with where the call ran (a Claude-executed call is never priced at Gemini rates).
+Any coercion left inside those services becomes a redundant defensive backstop,
+not the primary mechanism.
 
 This makes the safety net a single, greppable helper instead of scattered
 conditionals, and guarantees a Gemini selection only ever changes the bulk
-generation output.
+generation output. (Verified via grep: no other `body.model` / `messages.create`
+/ `tool_choice` / threaded-`model` site in `cards.py` or `generate.py` reaches
+Anthropic uncovered; the `generate-prompt` / `debug-run` endpoints are explicit
+manual debug tools.)
 
 ### 5. Frontend
 
