@@ -373,7 +373,21 @@ def _complete_google(model, system_text, user_text, temperature, max_tokens):
         "cache_read_input_tokens": 0,
         "cache_creation_input_tokens": 0,
     }
-    return (response.text or ""), usage, stop_reason
+    # `response.text` is a convenience accessor that, in recent google-genai
+    # versions, can raise/warn when the candidate was truncated or blocked
+    # (empty parts). Access it defensively so a truncated Gemini result still
+    # returns partial text + stop_reason rather than throwing.
+    try:
+        text = response.text or ""
+    except Exception:
+        parts = []
+        for c in (getattr(response, "candidates", None) or []):
+            for p in (getattr(getattr(c, "content", None), "parts", None) or []):
+                t = getattr(p, "text", None)
+                if t:
+                    parts.append(t)
+        text = "".join(parts)
+    return text, usage, stop_reason
 ```
 
 > Note: `google-genai`'s exact error class / attribute names should be confirmed against the installed version during Task 7; adjust the `except` clause if the import path differs. The Anthropic branch and all tests that don't import google still pass regardless.
@@ -573,6 +587,8 @@ And for the supplemental usage log/cost at lines ~877-884, change `compute_cost(
 
 Leave the **card_generation** usage log at lines ~698-705 using the raw `model` — generation genuinely ran on the selected (possibly Gemini) model, so the cost attribution there is correct.
 
+> Known, accepted: `_acc_section` folds the per-section *scoring* tokens (which ran on Claude) into the same bucket that's logged once as `card_generation` priced at the generation model. So with Gemini selected, the logged Gemini cost for a section includes its Claude scoring tokens priced at Gemini rates. Cost is informational for this MVP — no change; noted so it isn't surprising.
+
 - [ ] **Step 5: Verify the app imports and the existing test suite passes**
 
 Run: `.venv/bin/python -c "import backend.routers.generate"`
@@ -663,7 +679,20 @@ git commit -m "feat: route inspect/debug-run through complete_text (Gemini side-
 
 ## Task 6: Coerce the selected model everywhere in `cards.py`
 
-**Goal:** Guarantee no Gemini selection reaches a raw `anthropic.Anthropic` client or a forced tool call in `cards.py`. The rule: any model passed into `regenerate_single_card`, `judge_cards`, `split_card`, `score_new_cards`, `parse_pasted_cards`, the direct `messages.create` (line ~416), and their `compute_cost`/usage-log calls is wrapped with `anthropic_model(...)`.
+**Goal:** Guarantee no Gemini selection reaches a raw `anthropic.Anthropic` client or a forced tool call in `cards.py`. The rule: in EVERY handler that makes an AI call with `body.model`, define a local `model = anthropic_model(body.model)` at the top and use that local everywhere (the AI call, `compute_cost`, and the usage-log `model=`).
+
+**Sensitive AI calls in `cards.py` (all forced-tool-call or direct `messages.create` — verified by line):**
+
+| Handler | Line(s) | AI call(s) using the selected model |
+|---|---|---|
+| `regenerate_card` (~330) | 340/351/363/366 | `regenerate_single_card`, log, `compute_cost` |
+| `combine_preview` (~399) | 416/435/438 | direct `messages.create`, log, `compute_cost` |
+| `combine_apply` (~452) | 486/514/519/522 | `score_new_cards`, log, `compute_cost` |
+| `bulk_score_cards` (~597) | **601**/644/653/655 | `score_cards` (forced tool), log, `compute_cost` |
+| `apply_fix_batch` (~683) | 735/776/791/792/799/832/931/934 | `judge_cards`, `regenerate_single_card`, `split_card`, log, `compute_cost` |
+| `add_manual_cards` (~1035) | 1084/1147/1153 | `parse_pasted_cards`, log, `compute_cost` |
+
+> **Blocker fix (was missed in an earlier draft):** `bulk_score_cards` (the Actions → Score Cards endpoint) sets `model_name = body.model` at **line 601** and feeds it to the forced-tool-call `score_cards` (644). Coerce there: `model_name = anthropic_model(body.model)` — the cleanest single-line fix in the file, since the handler already funnels everything through `model_name`.
 
 **Files:**
 - Modify: `backend/routers/cards.py`
@@ -673,23 +702,15 @@ git commit -m "feat: route inspect/debug-run through complete_text (Gemini side-
 
 Extend the config import in `backend/routers/cards.py` to include `anthropic_model` (it already imports `resolve_model, effort_kwargs, compute_cost` from `backend.config`).
 
-- [ ] **Step 2: Apply coercion at each site**
+- [ ] **Step 2: Apply coercion in each handler from the table**
 
-For each occurrence of `body.model` passed to an AI call or cost function in `cards.py`, wrap with `anthropic_model(...)`. The simplest robust approach: at the TOP of each endpoint handler that uses `body.model` for an AI call, add one line:
+In each of the six handlers, add `model = anthropic_model(body.model)` (or, in `bulk_score_cards`, change line 601 to `model_name = anthropic_model(body.model)`) at the top of the handler, then replace every subsequent `body.model` *within that handler* with the local `model`. This covers the AI call, the `compute_cost(...)`, and the usage-log `model=` in one move.
 
-```python
-    model = anthropic_model(body.model)
-```
+> Keep the `anthropic.Anthropic(...)` client constructions as-is — they are correct once the model is Claude. Do NOT touch non-AI uses of `body.model` if any (there are none in these handlers — every `body.model` here feeds an AI call, cost, or log that should reflect the model that actually ran = Claude).
 
-then use the local `model` (not `body.model`) for the `regenerate_single_card`/`judge_cards`/`split_card`/`score_new_cards`/`parse_pasted_cards` calls, the `messages.create` at line ~416, and their `compute_cost(...)` / usage-log `model=` arguments within that handler.
+- [ ] **Step 3: Write a call-aware guard test** (`backend/tests/test_coercion_sites.py`)
 
-Concrete handlers/lines to update (verified): the regenerate endpoints (~340/351/363 and ~503/514/519), the direct `messages.create` (~416/435/438), `score_new_cards` (~486), the `apply_fix_batch` loop (`judge_cards` 735/776/799, `regenerate_single_card` 791, `split_card` 832, usage-log/cost 931/934), and `parse_pasted_cards` (~1084 with cost/log 1147/1153).
-
-> Keep the `anthropic.Anthropic(...)` client constructions as-is — they are correct once the model is Claude.
-
-- [ ] **Step 3: Write a guard test** (`backend/tests/test_coercion_sites.py`)
-
-This test statically asserts no AI-call site in `cards.py` passes raw `body.model` (a cheap regression guard so a future edit can't silently route a forced tool call to Gemini):
+A line-by-line scan misses these sites because the call name and the `body.model` argument sit on *different* lines (e.g. `regenerate_single_card(` on 340, `model=body.model` on 351). This test instead asserts the file contains **no `body.model` token at all** outside of an `anthropic_model(body.model)` wrapper and the field-set check — a coarse but reliable guard that a forced-tool path can never receive a raw selection:
 
 ```python
 import re
@@ -697,29 +718,36 @@ from pathlib import Path
 
 CARDS = Path("backend/routers/cards.py").read_text()
 
-# Functions that must never receive a raw, un-coerced selected model.
-SENSITIVE = ["regenerate_single_card(", "judge_cards(", "split_card(",
-             "score_new_cards(", "parse_pasted_cards("]
 
-
-def test_no_raw_body_model_into_sensitive_calls():
-    # No "body.model" should appear on the same line as a sensitive AI call.
-    for line in CARDS.splitlines():
-        if any(fn in line for fn in SENSITIVE):
-            assert "body.model" not in line, f"raw body.model in: {line.strip()}"
+def test_body_model_only_appears_coerced():
+    """Every `body.model` use must be wrapped in anthropic_model(...).
+    The one allowed bare use is `body.model_fields_set` (a pydantic attr, not
+    the model id)."""
+    # Strip the legitimate, fully-coerced pattern and the pydantic attr, then
+    # assert nothing remains.
+    text = CARDS
+    text = text.replace("anthropic_model(body.model)", "")
+    text = re.sub(r"body\.model_fields_set", "", text)
+    leftover = re.findall(r"body\.model\b", text)
+    assert leftover == [], (
+        f"{len(leftover)} un-coerced `body.model` use(s) remain in cards.py — "
+        "wrap each in anthropic_model(...)"
+    )
 ```
+
+This catches issue #1 (bulk-score) and any future regression regardless of line layout. (Note: it requires each coerced site to literally read `anthropic_model(body.model)`. If you used a local `model = anthropic_model(body.model)` and then `model` everywhere, that ALSO passes — the only `body.model` token left is inside the `anthropic_model(...)` call, which the test strips.)
 
 - [ ] **Step 4: Run to verify pass**
 
 Run: `.venv/bin/python -m pytest backend/tests/test_coercion_sites.py -v`
-Expected: PASS. If it fails, it names the offending line — coerce that site.
+Expected: PASS. If it fails, it reports the count of un-coerced `body.model` uses — find and wrap each.
 Then: `.venv/bin/python -c "import backend.routers.cards"` → no error.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add backend/routers/cards.py backend/tests/test_coercion_sites.py
-git commit -m "feat: coerce selected model to Claude on all cards.py AI call sites"
+git commit -m "feat: coerce selected model to Claude on all cards.py AI call sites (incl. bulk-score)"
 ```
 
 ---
@@ -744,6 +772,19 @@ Expected: installs `google-genai` and its deps.
 
 Run: `.venv/bin/python -c "from google import genai; from google.genai import types, errors; print('ok')"`
 Expected: `ok`. If `errors`/attribute names differ, adjust `backend/services/llm.py`'s `except` clause and re-run.
+
+**Confirm the assumed SDK surface against the installed version** (the wrapper depends on these — adjust `llm.py` if any differ):
+- `genai.Client(api_key=...)` and `client.models.generate_content(model=, contents=, config=...)`.
+- `genai.types.GenerateContentConfig(system_instruction=, temperature=, max_output_tokens=)`.
+- `response.usage_metadata.prompt_token_count` / `.candidates_token_count`.
+- `response.candidates[0].finish_reason` (string or enum — the `"MAX_TOKENS" in finish.upper()` check tolerates both).
+- `genai.errors.APIError` and its status attribute (commonly `.code`; the most likely thing to need a tweak in `_complete_google`'s `except`).
+
+Quick smoke (with the real key set) to lock the surface:
+```bash
+GEMINI_API_KEY=... .venv/bin/python -c "from backend.services.llm import complete_text; print(complete_text('gemini-3.5-flash','You output one line.','Say: 1|{{c1::hi}}|',temperature=0,max_tokens=64))"
+```
+Expected: a `(text, usage, stop_reason)` tuple with non-zero token counts.
 Run: `.venv/bin/python -m pytest backend/tests -v`
 Expected: ALL pass, including the previously-skipped Google branch tests.
 

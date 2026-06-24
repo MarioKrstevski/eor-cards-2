@@ -174,9 +174,18 @@ Concrete sites to wrap (verified against the code):
   service issues a forced `submit_supplementals` tool call. Coerce **at the call
   site** and use the coerced value for the usage-log `model=` and `compute_cost`
   (~879/884) so cost is attributed to the model that actually ran.
-- `generate.py` `bulk_score_cards` — pass `anthropic_model(body.model)` into
-  `score_cards` and use it for the usage-log `model=` and `compute_cost`
-  (~653/655). Same call-site-coercion reason.
+- `cards.py` `bulk_score_cards` (Actions → Score Cards, ~line 601:
+  `model_name = body.model`) — coerce to `anthropic_model(body.model)` so the
+  forced `submit_scores` tool call (644) and its `compute_cost`/log (653/655)
+  stay on Claude. (NOTE: this endpoint lives in `cards.py`, not `generate.py`.)
+- `cards.py` `add_manual_cards` `parse_pasted_cards` (~1084) and its log/cost
+  (1147/1153).
+- `cards.py` `combine_apply` `score_new_cards` (~486) and `combine_preview`
+  direct `messages.create` (~416) — both read `body.model`.
+
+In practice (see plan Task 6) the simplest faithful implementation is one local
+`model = anthropic_model(body.model)` per `cards.py` handler, then use that local
+throughout — covering the AI call, `compute_cost`, and the usage log together.
 
 **Coerce at the call site, not inside the service.** Doing the coercion where the
 model is passed in (as above) — rather than only inside `scorer.py` /
