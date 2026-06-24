@@ -3,8 +3,13 @@
 **Date:** 2026-06-24
 **Status:** Approved (pending implementation)
 **Scope:** Make `gemini-3.5-flash` selectable as the model for the per-section
-card-generation call. Nothing else (scoring, vignettes/teaching cases, vision
-classification, dedup, heading detection) changes provider — all stay on Claude.
+card-generation call AND for the inspect/`debug-run` endpoint (so Claude vs.
+Gemini can be compared side by side on the same section — also card-generation).
+Nothing else (scoring, vignettes/teaching cases, vision classification, dedup,
+heading detection) changes provider — all stay on Claude. Both Gemini-capable
+calls (bulk generation and debug-run) go through the same `complete_text`
+wrapper; the inspect model picker is fed by `model_choices()`, so Gemini appears
+there with no frontend change.
 
 ## Motivation
 
@@ -111,10 +116,17 @@ complete_text(model, system_text, user_text, *, temperature, max_tokens)
 
 Note: no Anthropic prompt caching on the Gemini path. Flash is cheap; acceptable.
 
-### 3. Only ONE call site honors Gemini — `generate_cards_for_section`
+### 3. Two call sites honor Gemini — both pure card-generation
 
-**Gemini is honored by exactly one AI call: the bulk generation call in the
-generation job.** This is the call the reviewer noticed produced good results.
+**Gemini is honored by exactly two AI calls, both routed through
+`complete_text`:**
+1. the **bulk generation** call (`generate_cards_for_section`, in the generation
+   job) — the call the reviewer noticed produced good results;
+2. the **inspect/`debug-run`** call (`generate.py:debug_run`) — a dry-run that
+   renders one model's output for the same section so Claude and Gemini can be
+   compared side by side. Unlike generation, debug-run SHOWS truncated output
+   (does not raise) so the reviewer sees exactly what each model returned.
+
 Every other AI call — including single-card regenerate and the fix-batch repair
 loop — stays on Claude (see the uniform safety rule in Section 4). This keeps the
 integration minimal and removes whole classes of breakage.
