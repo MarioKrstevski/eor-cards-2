@@ -449,7 +449,7 @@ def _parse_alt_text_hint(hint: Optional[str]) -> dict:
 
 def _run_processing(job_id: int):
     """Background task: process an upload into sections and content blocks."""
-    from backend.services.doc_processor import parse_docx, parse_html, split_by_h2, build_heading_tree, build_content_html, DUP_COLLAPSED_FLAG
+    from backend.services.doc_processor import parse_docx, parse_html, split_by_h2, build_heading_tree, build_content_html, DUP_COLLAPSED_FLAG, dup_collapsed_flag
     from backend.services.table_converter import convert_table_elements
 
     db = SessionLocal()
@@ -494,7 +494,8 @@ def _run_processing(job_id: int):
             image_count = sum(1 for e in elems if e.get("type") == "image")
             table_count = sum(1 for e in elems if e.get("type") == "table")
             # Source had verbatim-duplicated content that parsing auto-collapsed.
-            had_dup = any(e.get("_dup_collapsed") for e in elems)
+            # dup_flag is None when nothing was collapsed, else lists the lines.
+            dup_flag = dup_collapsed_flag(elems)
 
             # Match this section's heading to the deepest curriculum node possible
             sec_topic_id, sec_topic_path = _match_section_to_curriculum(db, heading, tt.curriculum_id)
@@ -527,7 +528,10 @@ def _run_processing(job_id: int):
                 section.updated_at = utcnow()
                 if "NO INFORMATION IN ORIGINAL STUDY GUIDE" in content_text.upper():
                     section.section_status = "orange"
-                section.flags = _merge_flag(section.flags, DUP_COLLAPSED_FLAG if had_dup else None)
+                # Content is fully replaced on re-upload, so drop any prior
+                # dup-collapsed flag (its line list is stale) before re-adding.
+                kept = [f for f in (section.flags or []) if not str(f).startswith(DUP_COLLAPSED_FLAG)]
+                section.flags = _merge_flag(kept, dup_flag)
                 # Update topic if set and not already assigned
                 if sec_topic_id and not section.curriculum_topic_id:
                     section.curriculum_topic_id = sec_topic_id
@@ -547,7 +551,7 @@ def _run_processing(job_id: int):
                     curriculum_topic_id=sec_topic_id,
                     curriculum_topic_path=sec_topic_path,
                     section_status=auto_status,
-                    flags=[DUP_COLLAPSED_FLAG] if had_dup else None,
+                    flags=[dup_flag] if dup_flag else None,
                 )
                 db.add(section)
                 db.flush()
@@ -690,7 +694,7 @@ def _run_ai_heading_processing(job_id: int, curriculum_version: str = 'v1'):
     """Background task: re-process with AI-detected headings."""
     from backend.services.heading_detector import parse_docx_with_ai_headings
     from backend.services.table_converter import convert_table_elements
-    from backend.services.doc_processor import split_by_h2, build_heading_tree, build_content_html, DUP_COLLAPSED_FLAG
+    from backend.services.doc_processor import split_by_h2, build_heading_tree, build_content_html, dup_collapsed_flag
     from backend.config import DEFAULT_MODEL
 
     db = SessionLocal()
@@ -728,7 +732,7 @@ def _run_ai_heading_processing(job_id: int, curriculum_version: str = 'v1'):
             content_html = build_content_html(elems)
             image_count = sum(1 for e in elems if e.get("type") == "image")
             table_count = sum(1 for e in elems if e.get("type") == "table")
-            had_dup = any(e.get("_dup_collapsed") for e in elems)
+            dup_flag = dup_collapsed_flag(elems)
 
             # Match this section's heading to the deepest curriculum node possible
             sec_topic_id, sec_topic_path = _match_section_to_curriculum(db, heading, tt.curriculum_id)
@@ -747,7 +751,7 @@ def _run_ai_heading_processing(job_id: int, curriculum_version: str = 'v1'):
                 curriculum_topic_id=sec_topic_id,
                 curriculum_topic_path=sec_topic_path,
                 section_status=auto_status,
-                flags=[DUP_COLLAPSED_FLAG] if had_dup else None,
+                flags=[dup_flag] if dup_flag else None,
             )
             db.add(section)
             db.flush()

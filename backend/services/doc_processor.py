@@ -55,14 +55,40 @@ def _append_element(elements: list, elem: dict, seen: set, current_h2: Optional[
     """
     etype = elem.get("type")
     if etype in ("paragraph", "list_item"):
-        key = (etype, " ".join((elem.get("text") or "").split()))
+        norm = " ".join((elem.get("text") or "").split())
+        key = (etype, norm)
         if key and key[1] and key in seen:
             if current_h2 is not None:
                 current_h2["_dup_collapsed"] = True
+                # Record the actual dropped line so a reviewer can see what was
+                # collapsed (surfaced in the section flag via dup_collapsed_flag).
+                current_h2.setdefault("_dup_collapsed_lines", []).append(norm)
             return False
         seen.add(key)
     elements.append(elem)
     return True
+
+
+def dup_collapsed_flag(elems: list[dict]) -> Optional[str]:
+    """Build the reviewer-facing dedup flag for a section's elements, listing the
+    lines that were auto-collapsed. Returns None if nothing was collapsed.
+
+    e.g. 'Source had duplicated content (auto-collapsed): "Supportive care", "None"'
+    """
+    lines: list[str] = []
+    for e in elems:
+        for line in (e.get("_dup_collapsed_lines") or []):
+            if line not in lines:
+                lines.append(line)
+    if not any(e.get("_dup_collapsed") for e in elems):
+        return None
+    if not lines:
+        return DUP_COLLAPSED_FLAG
+    shown = lines[:10]
+    parts = ", ".join(f'"{(l[:80] + "…") if len(l) > 80 else l}"' for l in shown)
+    if len(lines) > len(shown):
+        parts += f", +{len(lines) - len(shown)} more"
+    return f"{DUP_COLLAPSED_FLAG}: {parts}"
 
 
 def parse_docx(filepath: str) -> list[dict]:
