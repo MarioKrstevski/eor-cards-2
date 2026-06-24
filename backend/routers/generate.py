@@ -13,7 +13,7 @@ from backend.models import (
 )
 from backend.services.generator import generate_cards_for_section, build_generation_prompt
 from backend.services.ai_utils import response_text, usage_dict
-from backend.config import resolve_model, effort_kwargs
+from backend.config import resolve_model, effort_kwargs, anthropic_model
 from backend.services.scorer import score_cards
 from backend.services.cost_estimator import estimate_cost, estimate_supplemental_cost
 from backend.services.ai_utils import RETRYABLE_ERRORS
@@ -487,7 +487,6 @@ def _run_generation(
             for attempt in range(4):
                 try:
                     cards_data, needs_review, usage = generate_cards_for_section(
-                        client,
                         section_data,
                         rules_text,
                         model,
@@ -638,7 +637,7 @@ def _run_generation(
                             client,
                             cards_for_scoring,
                             section_data.get("curriculum_topic_path", ""),
-                            model,
+                            anthropic_model(model),
                         )
                         cards_by_id = {c.id: c for c in created_cards}
                         for score in scores:
@@ -669,7 +668,7 @@ def _run_generation(
                             client,
                             cards_for_scoring,
                             section_data.get("curriculum_topic_path", ""),
-                            model,
+                            anthropic_model(model),
                         )
                         cards_by_id = {c.id: c for (c, _) in version_cards}
                         for score in scores:
@@ -814,7 +813,9 @@ def _run_supplemental(
             topic_path = group_paths.get(condition, condition)
             for attempt in range(4):
                 try:
-                    return generate_supplemental_for_group(client, topic_path, group_cards, rules_text, model)
+                    return generate_supplemental_for_group(
+                        client, topic_path, group_cards, rules_text, anthropic_model(model)
+                    )
                 except RETRYABLE_ERRORS as e:
                     if attempt == 3:
                         raise
@@ -876,12 +877,12 @@ def _run_supplemental(
             if u["input"] or u["output"]:
                 db.add(AIUsageLog(
                     operation="supplemental_generation",
-                    model=model,
+                    model=anthropic_model(model),
                     input_tokens=u["input"],
                     output_tokens=u["output"],
                     cache_write_tokens=u["cw"],
                     cache_read_tokens=u["cr"],
-                    cost_usd=compute_cost(model, u["input"], u["output"], u["cw"], u["cr"]),
+                    cost_usd=compute_cost(anthropic_model(model), u["input"], u["output"], u["cw"], u["cr"]),
                     section_id=sid,
                     job_id=job_id,
                 ))
