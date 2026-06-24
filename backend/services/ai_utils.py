@@ -6,11 +6,20 @@ import anthropic
 
 logger = logging.getLogger(__name__)
 
+
+class RetryableError(Exception):
+    """Provider-agnostic transient error. The Gemini path in llm.py re-raises
+    Google's transient (429/5xx/connection) errors as this so the existing
+    RETRYABLE_ERRORS retry loop catches them without importing google SDK
+    error classes into Anthropic call sites."""
+
+
 # 429 rate limit, connection/timeout errors, and 5xx (includes 529 overloaded)
 RETRYABLE_ERRORS = (
     anthropic.RateLimitError,
     anthropic.APIConnectionError,
     anthropic.InternalServerError,
+    RetryableError,
 )
 
 # Cloze with optional Anki hint: {{c1::term}} or {{c1::term::hint}} -> term
