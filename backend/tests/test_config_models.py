@@ -11,9 +11,12 @@ def test_gemini_in_models():
 
 
 def test_gemini_has_no_effort_variants():
+    # Gemini models must not be effort-capable, so each appears exactly once in
+    # the dropdown (no :effort variants).
     assert "gemini-3.5-flash" not in EFFORT_CAPABLE
+    assert "gemini-2.5-flash" not in EFFORT_CAPABLE
     gemini_choices = [c for c in model_choices() if c["id"].startswith("gemini")]
-    assert [c["id"] for c in gemini_choices] == ["gemini-3.5-flash"]
+    assert [c["id"] for c in gemini_choices] == ["gemini-3.5-flash", "gemini-2.5-flash"]
 
 
 def test_compute_cost_for_gemini():

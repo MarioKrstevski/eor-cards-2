@@ -54,10 +54,27 @@ def _complete_anthropic(model, system_text, user_text, temperature, max_tokens):
     return text, usage_dict(response), response.stop_reason
 
 
+def _google_client():
+    """A genai client with the SDK's internal retry DISABLED (attempts=1) so a
+    transient 503 fails fast and our own retry loop (generate.py) controls the
+    backoff cadence. Without this, the SDK silently retries for ~30-60s per call
+    on top of our backoff, making an overloaded model feel hung."""
+    http_options = None
+    try:
+        http_options = genai_types.HttpOptions(
+            retry_options=genai_types.HttpRetryOptions(attempts=1)
+        )
+    except Exception:  # older/newer SDK without these fields — fall back to default
+        http_options = None
+    if http_options is not None:
+        return genai.Client(api_key=GEMINI_API_KEY, http_options=http_options)
+    return genai.Client(api_key=GEMINI_API_KEY)
+
+
 def _complete_google(model, system_text, user_text, temperature, max_tokens):
     if genai is None:
         raise RuntimeError("google-genai not installed")
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    client = _google_client()
     base = resolve_model(model)[0]
     try:
         response = client.models.generate_content(

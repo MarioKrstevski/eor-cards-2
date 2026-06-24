@@ -110,10 +110,35 @@ def debug_run(section_id: int, body: DebugRunRequest, db: Session = Depends(get_
 
     # Route through the provider wrapper so Gemini can be compared side-by-side.
     # Unlike generation, the debug tool SHOWS truncated output (it does not raise)
-    # so the reviewer can see exactly what each model returned.
-    raw, usage, stop_reason = complete_text(
-        body.model, system_text, user_text, temperature=0, max_tokens=16384,
-    )
+    # so the reviewer can see exactly what each model returned. A couple quick
+    # retries ride out brief 503 spikes; if the model is genuinely overloaded we
+    # return a readable message (not a 500) so the inspect column shows what
+    # happened for that model instead of a generic request failure.
+    raw = stop_reason = None
+    usage = {"input_tokens": 0, "output_tokens": 0,
+             "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+    for attempt in range(3):
+        try:
+            raw, usage, stop_reason = complete_text(
+                body.model, system_text, user_text, temperature=0, max_tokens=16384,
+            )
+            break
+        except RETRYABLE_ERRORS as e:
+            if attempt == 2:
+                logger.warning("Inspect run for '%s' gave up (overloaded): %s",
+                               body.model, str(e)[:200])
+                return {
+                    "model": body.model,
+                    "raw_response": (
+                        f"⚠️ {body.model} is overloaded right now (server returned 503 "
+                        "— high demand). No output generated; try again in a moment."
+                    ),
+                    "stop_reason": "overloaded",
+                    "usage": usage,
+                    "cost_usd": 0.0,
+                }
+            time.sleep(3)
+
     cost = compute_cost(
         body.model,
         usage["input_tokens"],
@@ -489,12 +514,28 @@ def _run_generation(
                     )
                     return section_data, cards_data, needs_review, usage
                 except RETRYABLE_ERRORS as e:
+                    heading = section_data.get("heading", f"id {section_data['id']}")
+                    detail = str(e) or type(e).__name__
+                    overloaded = (
+                        "503" in detail
+                        or "high demand" in detail.lower()
+                        or "overloaded" in detail.lower()
+                    )
+                    what = "model overloaded (503, server busy)" if overloaded else type(e).__name__
                     if attempt == 3:
+                        logger.error(
+                            "❌ Section '%s' FAILED after 4 attempts — %s on model '%s'. Detail: %s",
+                            heading, what, model, detail[:300],
+                        )
                         raise
-                    wait = 20 * (2 ** attempt)
+                    # Short backoff (5/10/20s). The Gemini SDK's own internal
+                    # retry is disabled (see llm._google_client), so each attempt
+                    # fails fast and these waits are the only delay — an overloaded
+                    # model surfaces in ~35s with clear logs instead of hanging.
+                    wait = 5 * (2 ** attempt)
                     logger.warning(
-                        "Retryable API error on section %d (%s), retrying in %ds (attempt %d/4)",
-                        section_data["id"], type(e).__name__, wait, attempt + 1,
+                        "⏳ Section '%s' — %s on model '%s'. Retrying in %ds (attempt %d/4)…",
+                        heading, what, model, wait, attempt + 1,
                     )
                     time.sleep(wait)
 
@@ -530,9 +571,15 @@ def _run_generation(
                     # Fatal for every section — stop the whole job with a friendly message
                     executor.shutdown(wait=False, cancel_futures=True)
                     raise
-                except Exception:
-                    logger.exception("Section '%s' failed", submitted_section.get("heading", "?"))
-                    failed_sections.append(submitted_section.get("heading", f"id {submitted_section['id']}"))
+                except Exception as e:
+                    heading = submitted_section.get("heading", f"id {submitted_section['id']}")
+                    detail = str(e) or type(e).__name__
+                    if "503" in detail or "high demand" in detail.lower() or "overloaded" in detail.lower():
+                        reason = "model overloaded (503) — Google returned high-demand on every retry"
+                    else:
+                        reason = f"{type(e).__name__}: {detail[:120]}"
+                    logger.exception("❌ Section '%s' failed — %s", heading, reason)
+                    failed_sections.append(f"{heading} — {reason}")
                     job.processed_sections += 1
                     db.commit()
                     continue

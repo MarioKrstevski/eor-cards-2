@@ -35,6 +35,11 @@ MODELS = {
         "input_per_1m": 0.30,
         "output_per_1m": 2.50,
     },
+    "gemini-2.5-flash": {
+        "display": "Gemini 2.5 Flash",
+        "input_per_1m": 0.30,
+        "output_per_1m": 2.50,
+    },
     # "claude-opus-4-6": {
     #     "display": "Claude Opus 4.6",
     #     "input_per_1m": 5.0,
