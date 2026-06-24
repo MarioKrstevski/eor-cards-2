@@ -78,3 +78,34 @@ def test_google_branch_normalizes_truncation():
             "gemini-3.5-flash", "SYS", "USER", temperature=0, max_tokens=8192,
         )
     assert stop == "max_tokens"
+
+
+from unittest.mock import patch as _patch
+from backend.services import generator
+from backend.services.ai_utils import OutputTruncated
+
+
+def test_generate_cards_uses_complete_text_and_parses():
+    section = {"heading": "Headaches", "content_text": "Migraine is unilateral.",
+               "curriculum_topic_path": "Neuro > Headache"}
+    with _patch.object(generator, "complete_text",
+                       return_value=("1|{{c1::Migraine}} is unilateral.|", {
+                           "input_tokens": 3, "output_tokens": 4,
+                           "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+                       }, "end_turn")) as m:
+        cards, needs_review, usage = generator.generate_cards_for_section(
+            section, "RULES", "gemini-3.5-flash",
+        )
+    assert len(cards) == 1 and "{{c1::Migraine}}" in cards[0]["front_html"]
+    assert usage["output_tokens"] == 4
+    assert m.call_args.kwargs["max_tokens"] == 8192
+
+
+def test_generate_cards_raises_on_persistent_truncation():
+    section = {"heading": "X", "content_text": "y"}
+    with _patch.object(generator, "complete_text",
+                       return_value=("1|partial", {"input_tokens": 1, "output_tokens": 1,
+                                     "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+                                     "max_tokens")):
+        with pytest.raises(OutputTruncated):
+            generator.generate_cards_for_section(section, "RULES", "gemini-3.5-flash")
