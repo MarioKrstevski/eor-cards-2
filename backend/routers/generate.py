@@ -13,6 +13,7 @@ from backend.models import (
 )
 from backend.services.generator import generate_cards_for_section, build_generation_prompt
 from backend.services.ai_utils import response_text, usage_dict
+from backend.services.llm import complete_text
 from backend.config import resolve_model, effort_kwargs, anthropic_model
 from backend.services.scorer import score_cards
 from backend.services.cost_estimator import estimate_cost, estimate_supplemental_cost
@@ -107,17 +108,12 @@ def debug_run(section_id: int, body: DebugRunRequest, db: Session = Depends(get_
     rules_text = _debug_rules_text(body.rule_set_id, db)
     system_text, user_text = build_generation_prompt(_debug_section_data(section), rules_text)
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    response = client.messages.create(
-        model=resolve_model(body.model)[0],
-        **effort_kwargs(body.model),
-        max_tokens=16384,
-        temperature=0,
-        system=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": user_text}],
+    # Route through the provider wrapper so Gemini can be compared side-by-side.
+    # Unlike generation, the debug tool SHOWS truncated output (it does not raise)
+    # so the reviewer can see exactly what each model returned.
+    raw, usage, stop_reason = complete_text(
+        body.model, system_text, user_text, temperature=0, max_tokens=16384,
     )
-    raw = response_text(response)
-    usage = usage_dict(response)
     cost = compute_cost(
         body.model,
         usage["input_tokens"],
@@ -141,7 +137,7 @@ def debug_run(section_id: int, body: DebugRunRequest, db: Session = Depends(get_
     return {
         "model": body.model,
         "raw_response": raw,
-        "stop_reason": response.stop_reason,
+        "stop_reason": stop_reason,
         "usage": usage,
         "cost_usd": cost,
     }
