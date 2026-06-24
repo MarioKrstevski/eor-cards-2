@@ -56,8 +56,14 @@ pipeline byte-for-byte unchanged.
     },
     ```
     Pricing values are best-estimate Flash rates, clearly commented as editable.
-  - Add a provider helper, e.g. `def provider_for(model: str) -> str:` returning
-    `"google"` if the (base) id starts with `gemini`, else `"anthropic"`.
+  - Add a provider helper `def provider_for(model: str) -> str:` returning
+    `"google"` if the **base** id (after stripping any `:effort` suffix via
+    `resolve_model(model)[0]` / `rpartition(":")`) starts with `gemini`, else
+    `"anthropic"`.
+  - Add a coercion helper `def anthropic_model(selection: str) -> str:` returning
+    `selection` when `provider_for(selection) == "anthropic"`, else
+    `DEFAULT_MODEL`. This is the single chokepoint that keeps every
+    Anthropic-only path on Claude (see "Uniform safety rule" below).
 - The model id is centralized so if Google's API expects a different string than
   `gemini-3.5-flash`, it is a one-line change in `MODELS`.
 - `model_choices()` lists Gemini automatically with no effort variants
@@ -89,38 +95,75 @@ complete_text(model, system_text, user_text, *, temperature, max_tokens)
   `cache_creation_input_tokens: 0`). Normalizes `finish_reason == MAX_TOKENS`
   → `stop_reason = "max_tokens"`, otherwise `"end_turn"`, so callers' truncation
   logic is provider-agnostic.
-- **Retry translation:** Gemini transient errors (HTTP 429 / 5xx / connection)
-  are re-raised as the shared retryable error type the generation loop already
-  catches, so backoff behavior is unchanged. (Either extend `RETRYABLE_ERRORS`
-  in `ai_utils.py` to include the relevant `google.genai` error classes, or wrap
-  them — implementation detail for the plan.)
+- **Truncation contract:** `complete_text` always returns a normalized
+  `stop_reason`; it does NOT raise on truncation. The *caller*
+  (`generate_cards_for_section`) decides — it keeps its existing loop and, when
+  the final attempt is still `"max_tokens"`, raises `OutputTruncated` (matching
+  today's `response_text` behavior) so a truncated result is never committed.
+- **Retry translation (decided, not deferred):** add
+  `class RetryableError(Exception)` to `ai_utils.py` and append it to the
+  `RETRYABLE_ERRORS` tuple. The Gemini branch of `complete_text` catches
+  Google's transient errors (HTTP 429 / 5xx / connection) and re-raises as
+  `RetryableError`. This keeps the existing `RETRYABLE_ERRORS` retry loop working
+  without importing `google.genai` error classes into any Anthropic call site —
+  the Anthropic paths stay decoupled from the Google SDK. Makes the retry test
+  trivially writable.
 
 Note: no Anthropic prompt caching on the Gemini path. Flash is cheap; acceptable.
 
-### 3. `backend/services/generator.py`
+### 3. Only ONE call site honors Gemini — `generate_cards_for_section`
 
-- `generate_cards_for_section` and `regenerate_single_card` call
-  `llm.complete_text(...)` instead of taking and using a raw `anthropic.Anthropic`
-  client. They keep their existing logic:
+**Gemini is honored by exactly one AI call: the bulk generation call in the
+generation job.** This is the call the reviewer noticed produced good results.
+Every other AI call — including single-card regenerate and the fix-batch repair
+loop — stays on Claude (see the uniform safety rule in Section 4). This keeps the
+integration minimal and removes whole classes of breakage.
+
+`backend/services/generator.py`:
+- `generate_cards_for_section` routes through `llm.complete_text(...)` instead of
+  a raw `anthropic.Anthropic` client. It keeps its existing logic:
   - Truncation-retry loop (`for max_tokens in (8192, 16384)`) driven by the
-    returned `stop_reason == "max_tokens"`.
+    returned `stop_reason == "max_tokens"`; raises `OutputTruncated` if the final
+    attempt is still truncated.
   - `parse_card_output` and all validation untouched.
-- The two functions no longer take a `client` parameter. The ~6 call sites
-  (`generate.py`, `cards.py`) drop that argument (mechanical). Any
-  `anthropic.Anthropic(...)` construction lines that become unused *for
-  generation* are removed only if not used for anything else nearby.
+  - Drops its `client` parameter; its sole caller (`generate.py:489`) stops
+    passing one.
+- `regenerate_single_card` is **left unchanged** — it keeps its `client`
+  parameter, its single `max_tokens=1024` call, and its `response_text` (which
+  raises `OutputTruncated` on truncation). It is never reached with a Gemini
+  model because all its callers coerce the model via `anthropic_model(...)`
+  (Section 4). This dissolves the truncation-contract mismatch the reviewer
+  flagged: the no-retry 1024-cap path stays purely Anthropic.
 
-### 4. Scoring stays on Claude (safety wire)
+### 4. Uniform safety rule: every non-generation AI call coerces to Claude
 
-- In the generation job (`generate.py`), compute a scoring model:
-  `score_model = model if provider_for(model) == "anthropic" else DEFAULT_MODEL`.
-  Pass `score_model` to `score_cards`, which keeps using the already-constructed
-  `anthropic.Anthropic` client. The forced `submit_scores` tool call is unaffected.
-- Apply the same guard to any other forced-tool-call path that reads the user's
-  selected model (scorer bulk-score, supplemental generator): if the selected
-  model is Gemini, fall back to `DEFAULT_MODEL` (Claude). This guarantees a Gemini
-  selection can never route a tool-call path to Google. (Supplementals are out of
-  the requested scope; this is a defensive fallback, not a feature.)
+The model selection (`body.model` / job `model`) is shared across many endpoints,
+several of which interleave forced Anthropic tool calls with the raw
+`anthropic.Anthropic` client. Rather than guard each individually, apply one rule:
+
+> **Anywhere other than the bulk `generate_cards_for_section` call, wrap the
+> selected model in `anthropic_model(model)` before use.** A Gemini selection
+> becomes `DEFAULT_MODEL` (Claude); a Claude selection passes through untouched.
+
+Concrete sites to wrap (verified against the code):
+- `generate.py` — scoring: `score_cards(client, …, anthropic_model(model))`
+  (~lines 637 and 668).
+- `cards.py` regenerate endpoints — lines 340/351/363 and 503/514/519: pass
+  `anthropic_model(body.model)` to `regenerate_single_card`, the usage-log
+  `model=`, and `compute_cost`.
+- `cards.py` `apply_fix_batch` (~line 690) loop — wrap `body.model` for **every**
+  call inside it: `judge_cards` (735, 776, 799), `regenerate_single_card` (791),
+  `split_card` (832), and the usage-log/`compute_cost` (931, 934).
+- `cards.py` other forced/tool or direct-anthropic calls that read `body.model`:
+  `score_new_cards` (486), `parse_pasted_cards` (1084), and the line-416 direct
+  `messages.create`.
+- `scorer.py` bulk-score and `supplemental_generator.py` — wrap the selected
+  model the same way. (Out of the requested scope; defensive so a Gemini
+  selection can never reach a forced-tool-call path on the wrong client.)
+
+This makes the safety net a single, greppable helper instead of scattered
+conditionals, and guarantees a Gemini selection only ever changes the bulk
+generation output.
 
 ### 5. Frontend
 
@@ -138,7 +181,9 @@ generation job as `model` exactly like a Claude selection.
 5. Scoring: `score_model = DEFAULT_MODEL` (Claude) → `score_cards` on the
    Anthropic client → scores saved (unchanged).
 6. Usage/cost: Gemini usage dict → `compute_cost("gemini-3.5-flash", …)` using
-   the `MODELS` pricing.
+   the `MODELS` pricing. (Post-hoc logged cost is accurate. The **pre-flight
+   estimate** in `cost_estimator.py` is Anthropic-cache-aware, so a Gemini
+   estimate will read low — accepted; cost is informational for this MVP.)
 
 ## Error handling
 
@@ -160,8 +205,10 @@ generation job as `model` exactly like a Claude selection.
 - Unit: `llm.complete_text` Google branch maps a stubbed `generate_content`
   response (usage_metadata + finish_reason) to the normalized
   `(text, usage, stop_reason)` shape; MAX_TOKENS → `"max_tokens"`.
-- Unit: scoring-model selection picks `DEFAULT_MODEL` when `model` is Gemini and
-  the selected Claude model otherwise.
+- Unit: `anthropic_model("gemini-3.5-flash") == DEFAULT_MODEL` and
+  `anthropic_model("claude-sonnet-4-6:medium")` passes through unchanged — the
+  one helper every non-generation path relies on.
+- Unit: `provider_for` strips a `:effort` suffix before prefix-matching.
 - Integration (manual, requires key): run a real section through generation with
   `gemini-3.5-flash`, confirm cards parse and save, scoring runs on Claude, cost
   logged.
