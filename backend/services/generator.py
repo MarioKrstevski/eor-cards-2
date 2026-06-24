@@ -4,7 +4,8 @@ import re
 import logging
 import anthropic
 from backend.config import DEFAULT_MODEL, resolve_model, effort_kwargs
-from backend.services.ai_utils import CLOZE_RE, response_text, usage_dict
+from backend.services.ai_utils import CLOZE_RE, response_text, usage_dict, OutputTruncated
+from backend.services.llm import complete_text
 
 logger = logging.getLogger(__name__)
 
@@ -412,51 +413,39 @@ def build_generation_prompt(section_data: dict, rules_text: str) -> tuple[str, s
 
 
 def generate_cards_for_section(
-    client: anthropic.Anthropic,
     section_data: dict,
     rules_text: str,
     model: str = DEFAULT_MODEL,
 ) -> tuple[list[dict], bool, dict]:
-    """Generate cards for a single section using Claude.
-
-    section_data should have: content_text, heading, curriculum_topic_path, heading_tree (optional)
-    Returns (cards, needs_review, usage).
-    """
+    """Generate cards for a single section. Routes to Claude or Gemini via
+    complete_text. Returns (cards, needs_review, usage)."""
     system_text, chunk_prompt = build_generation_prompt(section_data, rules_text)
 
-    # Retry once with a higher cap if the output hits max_tokens — a truncated
-    # response would otherwise silently drop the cards on its final line.
     total_usage = None
+    stop_reason = None
+    raw = ""
     for max_tokens in (8192, 16384):
-        response = client.messages.create(
-            model=resolve_model(model)[0],
-            **effort_kwargs(model),
-            max_tokens=max_tokens,
-            temperature=0,
-            system=[{
-                "type": "text",
-                "text": system_text,
-                "cache_control": {"type": "ephemeral"},
-            }],
-            messages=[{
-                "role": "user",
-                "content": chunk_prompt,
-            }],
+        raw, usage, stop_reason = complete_text(
+            model, system_text, chunk_prompt,
+            temperature=0, max_tokens=max_tokens,
         )
-        usage = usage_dict(response)
         if total_usage:
             for k in total_usage:
                 total_usage[k] += usage[k]
         else:
             total_usage = usage
-        if response.stop_reason != "max_tokens":
+        if stop_reason != "max_tokens":
             break
         logger.warning(
             "Section '%s' output truncated at %d tokens, retrying with higher cap",
             section_data.get("heading", "?"), max_tokens,
         )
 
-    raw = response_text(response)
+    if stop_reason == "max_tokens":
+        raise OutputTruncated(
+            "Card generation output truncated at max_tokens — refusing partial result"
+        )
+
     cards, needs_review = parse_card_output(raw)
     return cards, needs_review, total_usage
 

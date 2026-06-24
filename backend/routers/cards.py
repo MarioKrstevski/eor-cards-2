@@ -15,7 +15,7 @@ from backend.services.generator import strip_card_html, regenerate_single_card, 
 from backend.services.ai_utils import response_text
 from backend.services.card_ops import assign_note_ids, score_new_cards
 from backend.services.manual_card_parser import parse_pasted_cards
-from backend.config import ANTHROPIC_API_KEY, DEFAULT_MODEL, compute_cost, resolve_model, effort_kwargs
+from backend.config import ANTHROPIC_API_KEY, DEFAULT_MODEL, compute_cost, resolve_model, effort_kwargs, anthropic_model
 
 logger = logging.getLogger(__name__)
 
@@ -337,6 +337,7 @@ def regenerate_card(card_id: int, body: RegenerateCardRequest, db: Session = Dep
     rs = db.query(RuleSet).filter_by(rule_type='generation', is_default=True).first()
     rules = rs.content if rs else "Generate cloze cards. Use {{c1::term}} format."
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    model = anthropic_model(body.model)
     cards_data, needs_review, usage = regenerate_single_card(
         client,
         section_data={
@@ -348,7 +349,7 @@ def regenerate_card(card_id: int, body: RegenerateCardRequest, db: Session = Dep
         existing_card_html=_read_front(card, body.card_version),
         rules_text=rules,
         extra_prompt=body.prompt or None,
-        model=body.model,
+        model=model,
     )
     if cards_data:
         _write_front(card, body.card_version, cards_data[0]["front_html"])
@@ -360,10 +361,10 @@ def regenerate_card(card_id: int, body: RegenerateCardRequest, db: Session = Dep
     if usage:
         db.add(AIUsageLog(
             operation="card_regen",
-            model=body.model,
+            model=model,
             input_tokens=usage.get("input_tokens", 0),
             output_tokens=usage.get("output_tokens", 0),
-            cost_usd=compute_cost(body.model, usage.get("input_tokens", 0), usage.get("output_tokens", 0)),
+            cost_usd=compute_cost(model, usage.get("input_tokens", 0), usage.get("output_tokens", 0)),
             card_id=card_id,
             section_id=card.section_id,
         ))
@@ -412,9 +413,10 @@ def combine_preview(body: CombinePreviewRequest, db: Session = Depends(get_db)):
         "\n\nReturn the combined card as JSON only."
     )
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    model = anthropic_model(body.model)
     resp = client.messages.create(
-        model=resolve_model(body.model)[0],
-        **effort_kwargs(body.model),
+        model=resolve_model(model)[0],
+        **effort_kwargs(model),
         max_tokens=2048,
         temperature=0,
         system=_COMBINE_SYSTEM,
@@ -432,10 +434,10 @@ def combine_preview(body: CombinePreviewRequest, db: Session = Depends(get_db)):
     u = resp.usage
     db.add(AIUsageLog(
         operation="combine",
-        model=body.model,
+        model=model,
         input_tokens=u.input_tokens,
         output_tokens=u.output_tokens,
-        cost_usd=compute_cost(body.model, u.input_tokens, u.output_tokens),
+        cost_usd=compute_cost(model, u.input_tokens, u.output_tokens),
         section_id=cards[0].section_id if cards else None,
     ))
     db.commit()
@@ -483,7 +485,7 @@ def combine_apply(body: CombineApplyRequest, db: Session = Depends(get_db)):
     # Accuracy + EOR-yield score pass on the combined card (best-effort).
     sec = db.get(Section, new.section_id)
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    score_new_cards(db, client, [new], sec.curriculum_topic_path if sec else "", body.model)
+    score_new_cards(db, client, [new], sec.curriculum_topic_path if sec else "", anthropic_model(body.model))
     return card_to_dict(new, db)
 
 
@@ -500,6 +502,7 @@ def regenerate_card_preview(card_id: int, body: RegenerateCardRequest, db: Sessi
     rs = db.query(RuleSet).filter_by(rule_type='generation', is_default=True).first()
     rules = rs.content if rs else "Generate cloze cards. Use {{c1::term}} format."
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    model = anthropic_model(body.model)
     cards_data, _needs_review, usage = regenerate_single_card(
         client,
         section_data={
@@ -511,15 +514,15 @@ def regenerate_card_preview(card_id: int, body: RegenerateCardRequest, db: Sessi
         existing_card_html=_read_front(card, body.card_version),
         rules_text=rules,
         extra_prompt=body.prompt or None,
-        model=body.model,
+        model=model,
     )
     if usage:
         db.add(AIUsageLog(
             operation="card_regen_preview",
-            model=body.model,
+            model=model,
             input_tokens=usage.get("input_tokens", 0),
             output_tokens=usage.get("output_tokens", 0),
-            cost_usd=compute_cost(body.model, usage.get("input_tokens", 0), usage.get("output_tokens", 0)),
+            cost_usd=compute_cost(model, usage.get("input_tokens", 0), usage.get("output_tokens", 0)),
             card_id=card_id,
             section_id=card.section_id,
         ))
@@ -598,7 +601,7 @@ def bulk_score_cards(body: BulkScoreRequest, db: Session = Depends(get_db)):
     """Score cards for accuracy and EOR yield."""
     if not body.card_ids:
         raise HTTPException(400, "No card_ids provided")
-    model_name = body.model
+    model_name = anthropic_model(body.model)
     ver = body.card_version
 
     def _ver_front_raw(c):
@@ -691,6 +694,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
     from backend.services.generator import regenerate_single_card
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    model = anthropic_model(body.model)
     cards = db.query(Card).filter(Card.id.in_(body.card_ids)).all()
     cards_by_id = {c.id: c for c in cards}
 
@@ -732,7 +736,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
         sec = sections.get(sid)
         cpath = (sec.curriculum_topic_path or "") if sec else ""
         try:
-            results, usage = judge_cards(client, payload, body.model, cpath)
+            results, usage = judge_cards(client, payload, model, cpath)
             total_input += usage.get("input_tokens", 0)
             total_output += usage.get("output_tokens", 0)
             _acc_sec(sid, usage.get("input_tokens", 0), usage.get("output_tokens", 0))
@@ -773,7 +777,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
         result = initial_result
         if result is None:
             try:
-                rj, ju = judge_cards(client, [{"id": temp_id, "front_html": front_html, "extra": extra}], body.model, cpath)
+                rj, ju = judge_cards(client, [{"id": temp_id, "front_html": front_html, "extra": extra}], model, cpath)
                 u["input_tokens"] += ju.get("input_tokens", 0)
                 u["output_tokens"] += ju.get("output_tokens", 0)
                 result = rj[0] if rj else None
@@ -789,14 +793,14 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                 break
             try:
                 cards_data, _nr, fu = regenerate_single_card(
-                    client, section_data, front_html, rules_text, extra_prompt=fix_guidance(failed), model=body.model
+                    client, section_data, front_html, rules_text, extra_prompt=fix_guidance(failed), model=model
                 )
                 u["input_tokens"] += fu.get("input_tokens", 0)
                 u["output_tokens"] += fu.get("output_tokens", 0)
                 if cards_data:
                     front_html = ensure_cloze_styling(cards_data[0]["front_html"])
                     extra = cards_data[0].get("extra")
-                rj, ju = judge_cards(client, [{"id": temp_id, "front_html": front_html, "extra": extra}], body.model, cpath)
+                rj, ju = judge_cards(client, [{"id": temp_id, "front_html": front_html, "extra": extra}], model, cpath)
                 u["input_tokens"] += ju.get("input_tokens", 0)
                 u["output_tokens"] += ju.get("output_tokens", 0)
                 if rj:
@@ -829,7 +833,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
         )
         if needs_split:
             try:
-                siblings_raw, su = split_card(client, section_data, front_html, extra, rules_text, body.model)
+                siblings_raw, su = split_card(client, section_data, front_html, extra, rules_text, model)
                 u["input_tokens"] += su.get("input_tokens", 0)
                 u["output_tokens"] += su.get("output_tokens", 0)
                 valid_sibs = [s for s in siblings_raw if (s.get("front_html") or "").strip()]
@@ -928,10 +932,10 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
             sec = sections.get(sid)
             db.add(AIUsageLog(
                 operation="card_validation",
-                model=body.model,
+                model=model,
                 input_tokens=u["i"],
                 output_tokens=u["o"],
-                cost_usd=compute_cost(body.model, u["i"], u["o"]),
+                cost_usd=compute_cost(model, u["i"], u["o"]),
                 section_id=sid,
                 topic_tree_id=sec.topic_tree_id if sec else None,
             ))
@@ -1039,6 +1043,7 @@ def add_manual_cards(body: AddManualCardsRequest, db: Session = Depends(get_db))
     section = db.get(Section, body.section_id)
     if not section:
         raise HTTPException(404, "Section not found")
+    model = anthropic_model(body.model)
 
     # Resolve which tag column this section's curriculum version writes to.
     cv = None
@@ -1081,7 +1086,7 @@ def add_manual_cards(body: AddManualCardsRequest, db: Session = Depends(get_db))
                 })
         else:
             client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-            parsed, parse_usage = parse_pasted_cards(client, body.raw_text, body.model)
+            parsed, parse_usage = parse_pasted_cards(client, body.raw_text, model)
             to_create.extend(parsed)
 
     if not to_create:
@@ -1144,13 +1149,13 @@ def add_manual_cards(body: AddManualCardsRequest, db: Session = Depends(get_db))
     if parse_usage:
         db.add(AIUsageLog(
             operation="manual_card_parse",
-            model=body.model,
+            model=model,
             input_tokens=parse_usage.get("input_tokens", 0),
             output_tokens=parse_usage.get("output_tokens", 0),
             cache_write_tokens=parse_usage.get("cache_creation_input_tokens", 0),
             cache_read_tokens=parse_usage.get("cache_read_input_tokens", 0),
             cost_usd=compute_cost(
-                body.model,
+                model,
                 parse_usage.get("input_tokens", 0),
                 parse_usage.get("output_tokens", 0),
                 parse_usage.get("cache_creation_input_tokens", 0),

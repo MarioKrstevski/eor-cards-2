@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
 
 MODELS = {
@@ -24,6 +25,15 @@ MODELS = {
         "display": "Claude Sonnet 4.5",
         "input_per_1m": 3.0,
         "output_per_1m": 15.0,
+    },
+    # Google Gemini — only honored for the bulk card-generation call (see
+    # services/llm.py). Pricing is a best-estimate for Flash and is editable;
+    # cost display is informational for this MVP. If Google's API expects a
+    # different id string, change ONLY this key.
+    "gemini-3.5-flash": {
+        "display": "Gemini 3.5 Flash",
+        "input_per_1m": 0.30,
+        "output_per_1m": 2.50,
     },
     # "claude-opus-4-6": {
     #     "display": "Claude Opus 4.6",
@@ -106,6 +116,20 @@ AVG_OUTPUT_TOKENS_PER_SECTION = 800
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 SEED_DIR = os.path.join(os.path.dirname(__file__), "..", "seed")
+
+
+def provider_for(selection: str) -> str:
+    """Which SDK a model selection routes to. Strips any :effort suffix first."""
+    base, _ = resolve_model(selection or "")
+    return "google" if base.startswith("gemini") else "anthropic"
+
+
+def anthropic_model(selection: str) -> str:
+    """Coerce a selection to a Claude model for every call EXCEPT bulk card
+    generation. A Gemini selection becomes DEFAULT_MODEL; Claude passes through.
+    This is the single chokepoint that keeps forced-tool-call and editing paths
+    on Anthropic."""
+    return selection if provider_for(selection) == "anthropic" else DEFAULT_MODEL
 
 
 def compute_cost(
