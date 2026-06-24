@@ -45,26 +45,18 @@ def iter_block_items(parent):
 
 
 def _append_element(elements: list, elem: dict, seen: set, current_h2: Optional[dict]) -> bool:
-    """Append ``elem``, collapsing verbatim content duplicates within a section.
+    """Append ``elem`` to the section verbatim — the document is read as-is.
 
-    A corrupted source .docx (e.g. content pasted between Word and web list
-    tools) can carry the same paragraph/bullet twice. We drop a paragraph or
-    list_item whose normalized text was already seen in the current H2 section,
-    and mark the section's H2 heading so a reviewer-facing flag can be raised.
-    Headings, images and tables are never deduped. Returns True if appended.
+    Dedup DISABLED: a previous version collapsed a paragraph/list_item whose
+    normalized text matched one already seen in the same H2 section. That was too
+    aggressive — a sub-bullet like "Presentation" legitimately repeats under
+    different parent bullets (Disease 1 / Disease 2), and the dedup destroyed the
+    second one. We now reproduce the source faithfully and never drop content.
+
+    Signature (seen / current_h2) is kept so callers don't change; to re-enable a
+    SAFER dedup later, key on (heading_context, parent-bullet, text), not text
+    alone. ``dup_collapsed_flag`` stays a no-op while this is disabled.
     """
-    etype = elem.get("type")
-    if etype in ("paragraph", "list_item"):
-        norm = " ".join((elem.get("text") or "").split())
-        key = (etype, norm)
-        if key and key[1] and key in seen:
-            if current_h2 is not None:
-                current_h2["_dup_collapsed"] = True
-                # Record the actual dropped line so a reviewer can see what was
-                # collapsed (surfaced in the section flag via dup_collapsed_flag).
-                current_h2.setdefault("_dup_collapsed_lines", []).append(norm)
-            return False
-        seen.add(key)
     elements.append(elem)
     return True
 
