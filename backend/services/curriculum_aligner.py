@@ -5,6 +5,10 @@ as plain dicts so this module is trivially unit-testable.
 """
 from __future__ import annotations
 import re
+from difflib import SequenceMatcher
+
+FUZZY_THRESHOLD = 0.8
+FUZZY_MARGIN = 0.05
 
 _WEIGHT_SUFFIX = re.compile(r"\s*[—–-]\s*\d+\s*%\s*$")  # em "— 18%" / en "– 18%" / hyphen "- 10%"
 
@@ -32,32 +36,57 @@ def align(outline: list[dict], main_topic: dict, nodes: list[dict]) -> dict:
     missing: list[dict] = []
     matched_node_ids: set[int] = set()
     warnings: list[str] = []
+    fuzzy: list[dict] = []
     present_by_depth: dict[int, int] = {}
 
-    def walk(heading_nodes: list[dict], parent_node: dict | None, depth: int):
-        seen_norm: set[str] = set()
+    def walk(heading_nodes, parent_node, depth):
+        cands = [c for c in (_children(nodes_by_parent, parent_node["id"]) if parent_node else [])
+                 if c["level"] == depth]
+        claimed: set = set()        # candidate node ids claimed in THIS group
+        decided: dict = {}          # hid -> matched candidate dict (or None)
+
+        # Pass 1: exact (normalized) — claim greedily in document order
         for h in heading_nodes:
             present_by_depth[depth] = present_by_depth.get(depth, 0) + 1
+            norm = normalize_topic(h["text"])
             match = None
             if parent_node is not None:
-                norm = normalize_topic(h["text"])
-                for cand in _children(nodes_by_parent, parent_node["id"]):
-                    if cand["level"] == depth and normalize_topic(cand["name"]) == norm:
-                        if norm in seen_norm:
-                            warnings.append(f"Duplicate heading '{h['text']}' at depth {depth}")
-                        match = cand
-                        seen_norm.add(norm)
+                for c in cands:
+                    if c["id"] not in claimed and normalize_topic(c["name"]) == norm:
+                        match = c
+                        claimed.add(c["id"])
                         break
+            decided[h["hid"]] = match
+
+        # Pass 2: fuzzy on still-unmatched headings vs still-unclaimed candidates
+        for h in heading_nodes:
+            if decided[h["hid"]] is not None or parent_node is None:
+                continue
+            norm = normalize_topic(h["text"])
+            scored = sorted(
+                ((SequenceMatcher(None, norm, normalize_topic(c["name"])).ratio(), c)
+                 for c in cands if c["id"] not in claimed),
+                key=lambda x: x[0], reverse=True,
+            )
+            if scored and scored[0][0] >= FUZZY_THRESHOLD and (
+                    len(scored) == 1 or scored[0][0] - scored[1][0] >= FUZZY_MARGIN):
+                c = scored[0][1]
+                claimed.add(c["id"])
+                decided[h["hid"]] = c
+                fuzzy.append({"hid": h["hid"], "node_id": c["id"], "doc_name": h["text"],
+                              "curr_name": c["name"], "score": round(scored[0][0], 3)})
+
+        # Resolve + recurse
+        for h in heading_nodes:
+            match = decided[h["hid"]]
             if match:
                 resolution[h["hid"]] = match["id"]
                 matched_node_ids.add(match["id"])
                 walk(h["children"], match, depth + 1)
             else:
                 resolution[h["hid"]] = None
-                missing.append({
-                    "hid": h["hid"], "name": h["text"], "depth": depth,
-                    "parent_id": parent_node["id"] if parent_node else None,
-                })
+                missing.append({"hid": h["hid"], "name": h["text"], "depth": depth,
+                                "parent_id": parent_node["id"] if parent_node else None})
                 walk(h["children"], None, depth + 1)
 
     walk(outline, main_topic, 1)
@@ -82,4 +111,5 @@ def align(outline: list[dict], main_topic: dict, nodes: list[dict]) -> dict:
         "missing_in_curriculum": missing,
         "not_in_document": not_in_doc,
         "warnings": warnings,
+        "fuzzy": fuzzy,
     }

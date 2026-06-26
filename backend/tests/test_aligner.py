@@ -67,3 +67,43 @@ def test_align_levels_expected_vs_present():
     assert by_depth[1]["present"] == 1
     assert by_depth[3]["present"] == 2
     assert by_depth[3]["expected"] >= 1
+
+
+def test_fuzzy_matches_near_miss_and_reports_diff():
+    main = {"id": 1, "parent_id": None, "name": "EM", "level": 0, "path": "EM"}
+    nodes = [main,
+        {"id": 2, "parent_id": 1, "name": "Atrial Fibrillation", "level": 1, "path": "EM > Atrial Fibrillation"}]
+    from backend.services.doc_processor import parse_heading_outline
+    outline = parse_heading_outline([{"type": "heading", "level": 1, "text": "Atrial Fibrillation (AFib)"}])
+    r = align(outline, main, nodes)
+    assert r["resolution"][0] == 2
+    f = {x["hid"]: x for x in r["fuzzy"]}
+    assert 0 in f and f[0]["node_id"] == 2
+    assert f[0]["doc_name"] == "Atrial Fibrillation (AFib)"
+    assert f[0]["curr_name"] == "Atrial Fibrillation"
+
+
+def test_exact_beats_fuzzy_no_steal():
+    main = {"id": 1, "parent_id": None, "name": "EM", "level": 0, "path": "EM"}
+    nodes = [main,
+        {"id": 2, "parent_id": 1, "name": "Atrial Fibrillation", "level": 1, "path": "EM > Atrial Fibrillation"},
+        {"id": 3, "parent_id": 1, "name": "Atrial Flutter", "level": 1, "path": "EM > Atrial Flutter"}]
+    from backend.services.doc_processor import parse_heading_outline
+    outline = parse_heading_outline([
+        {"type": "heading", "level": 1, "text": "Atrial Fibrilation"},
+        {"type": "heading", "level": 1, "text": "Atrial Flutter"}])
+    r = align(outline, main, nodes)
+    assert r["resolution"][1] == 3
+    assert r["resolution"][0] == 2
+    assert not any(x["node_id"] == 3 for x in r["fuzzy"])
+
+
+def test_ambiguous_fuzzy_stays_new():
+    main = {"id": 1, "parent_id": None, "name": "EM", "level": 0, "path": "EM"}
+    nodes = [main,
+        {"id": 2, "parent_id": 1, "name": "Cardio A", "level": 1, "path": "EM > Cardio A"},
+        {"id": 3, "parent_id": 1, "name": "Cardio B", "level": 1, "path": "EM > Cardio B"}]
+    from backend.services.doc_processor import parse_heading_outline
+    outline = parse_heading_outline([{"type": "heading", "level": 1, "text": "Cardio C"}])
+    r = align(outline, main, nodes)
+    assert r["resolution"][0] is None
