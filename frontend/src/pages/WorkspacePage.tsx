@@ -31,7 +31,8 @@ import ConfirmModal from '../components/ConfirmModal';
 import ReconcileModal from '../components/ReconcileModal';
 import CurriculumPicker from '../components/CurriculumPicker';
 import CurriculumSectionPreview from '../components/CurriculumSectionPreview';
-import { buildAggregatedCounts, sortTree } from '../utils';
+import { buildAggregatedCounts, sortTree, curriculumOrderByPath } from '../utils';
+import type { TopicSortMode } from '../utils';
 import { useSettings } from '../context/SettingsContext';
 
 // ── TopicNode: read-only collapsible curriculum node for sidebar tree ─────────
@@ -83,6 +84,38 @@ function buildSectionTree<T extends SectionLike>(sections: T[], treeName: string
     node.sections.push(section);
   }
   return root;
+}
+
+// Return a sorted copy of a section tree: child groups + sections ordered by
+// curriculum order (via orderByPath) or alphabetically. parentPath accumulates
+// the path so a group's full path can be looked up in the curriculum order map.
+function sortSectionTree<T extends SectionLike>(
+  node: SectionTreeNode<T>,
+  mode: TopicSortMode,
+  orderByPath: Map<string, number>,
+  parentPath: string,
+): SectionTreeNode<T> {
+  const ord = (p: string) => orderByPath.get(p) ?? Number.MAX_SAFE_INTEGER;
+  const byName = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base' });
+
+  const entries = Array.from(node.children.entries()).sort(([la], [lb]) => {
+    if (mode === 'alpha') return byName(la, lb);
+    const pa = parentPath ? `${parentPath} > ${la}` : la;
+    const pb = parentPath ? `${parentPath} > ${lb}` : lb;
+    return (ord(pa) - ord(pb)) || byName(la, lb);
+  });
+  const children = new Map<string, SectionTreeNode<T>>();
+  for (const [label, child] of entries) {
+    const childPath = parentPath ? `${parentPath} > ${label}` : label;
+    children.set(label, sortSectionTree(child, mode, orderByPath, childPath));
+  }
+
+  const sections = [...node.sections].sort((a, b) => {
+    if (mode === 'alpha') return byName(a.heading, b.heading);
+    return (ord(a.curriculum_topic_path ?? '') - ord(b.curriculum_topic_path ?? '')) || byName(a.heading, b.heading);
+  });
+
+  return { label: node.label, sections, children };
 }
 
 function SectionTreeGroup<T extends SectionLike>({
@@ -1045,6 +1078,10 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
 
   const sortedCurriculum = useMemo(() => sortTree(curriculum, topicSort), [curriculum, topicSort]);
 
+  // Per-document sort for the Documents tab (each document remembers its own order).
+  const [docSort, setDocSort] = useState<Record<number, TopicSortMode>>({});
+  const curriculumOrder = useMemo(() => curriculumOrderByPath(curriculum), [curriculum]);
+
   // Flat curriculum for search
   const flatCurriculumForSearch = useMemo(() => flattenCurriculum(curriculum), [curriculum]);
 
@@ -1291,6 +1328,19 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
+                          setDocSort((prev) => ({
+                            ...prev,
+                            [tree.id]: (prev[tree.id] ?? 'curriculum') === 'alpha' ? 'curriculum' : 'alpha',
+                          }));
+                        }}
+                        title="Order topics & sections: curriculum order vs A–Z"
+                        className="shrink-0 px-1.5 py-0.5 text-[9px] font-semibold rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors duration-150"
+                      >
+                        {(docSort[tree.id] ?? 'curriculum') === 'alpha' ? 'A–Z' : 'Curr'}
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setConfirmDelete({ id: tree.id, name: tree.name });
                         }}
                         className="opacity-0 group-hover:opacity-100 p-1 text-gray-300 hover:text-red-500 transition-all duration-150"
@@ -1305,7 +1355,12 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                     {expandedTreeId === tree.id && expandedTree?.sections && (
                       <div className="ml-5">
                         <SectionTreeGroup
-                          node={buildSectionTree(expandedTree.sections, expandedTree.name)}
+                          node={sortSectionTree(
+                            buildSectionTree(expandedTree.sections, expandedTree.name),
+                            docSort[tree.id] ?? 'curriculum',
+                            curriculumOrder,
+                            '',
+                          )}
                           depth={0}
                           treeName={expandedTree.name}
                           selectedSectionId={selectedSectionId}
