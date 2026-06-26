@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import re
+import json
 import uuid
+import shutil
 import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy import or_
@@ -13,7 +15,7 @@ from backend.models import (
     TopicTree, Section, Upload, ProcessingJob, JobStatus,
     ContentBlock, SectionImage, Curriculum, Card, slugify, utcnow,
 )
-from backend.config import UPLOAD_DIR
+from backend.config import UPLOAD_DIR, SCAN_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -332,6 +334,98 @@ def paste_document(
         "topic_tree_id": tt.id,
         "topic_tree": topic_tree_to_dict(tt),
     }
+
+
+@router.post("/scan")
+async def scan_document(
+    file: UploadFile = File(...),
+    topic_tree_name: Optional[str] = Form(None),
+    topic_tree_id: Optional[int] = Form(None),
+    curriculum_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """Ephemeral scan of a .docx: parse headings, diff against curriculum, return
+    a merged tree. Creates NO DB rows — state lives as a temp file + sidecar JSON
+    keyed by scan_token. A later /continue step commits."""
+    if not file.filename.endswith(".docx"):
+        raise HTTPException(400, "Only .docx files are supported")
+
+    # Resolve the main curriculum topic id + version.
+    if topic_tree_id:
+        tt = db.get(TopicTree, topic_tree_id)
+        if not tt:
+            raise HTTPException(404, "Topic tree not found")
+        main_id = tt.curriculum_id
+    else:
+        main_id = curriculum_id
+
+    if not main_id:
+        raise HTTPException(400, "Pick a main curriculum topic for this upload")
+
+    main = db.get(Curriculum, main_id)
+    if not main:
+        raise HTTPException(400, "Main curriculum topic not found")
+
+    os.makedirs(SCAN_DIR, exist_ok=True)
+    scan_token = uuid.uuid4().hex
+    docx_path = os.path.join(SCAN_DIR, scan_token + ".docx")
+    content = await file.read()
+    with open(docx_path, "wb") as f:
+        f.write(content)
+
+    from backend.services.doc_processor import parse_docx, parse_heading_outline
+    elements = parse_docx(docx_path)
+    outline = parse_heading_outline(elements)
+
+    # Restrict to the main topic + its descendants (same as _build_reconcile).
+    subtree = db.query(Curriculum).filter(
+        Curriculum.version == main.version,
+        or_(Curriculum.id == main.id, Curriculum.path.startswith(main.path + " > ")),
+    ).all()
+    nodes = [
+        {"id": n.id, "parent_id": n.parent_id, "name": n.name, "level": n.level, "path": n.path}
+        for n in subtree
+    ]
+    main_dict = {
+        "id": main.id, "parent_id": main.parent_id, "name": main.name,
+        "level": main.level, "path": main.path,
+    }
+
+    from backend.services.curriculum_aligner import align, build_merged_tree
+    result = align(outline, main_dict, nodes)
+    tree = build_merged_tree(outline, main_dict, nodes, result)
+
+    json_path = os.path.join(SCAN_DIR, scan_token + ".json")
+    sidecar = {
+        "outline": outline,
+        "main_topic_id": main.id,
+        "version": main.version,
+        "topic_tree_id": topic_tree_id,
+        "topic_tree_name": topic_tree_name,
+        "original_name": file.filename,
+        "created_at": utcnow().isoformat(),
+    }
+    with open(json_path, "w") as f:
+        json.dump(sidecar, f)
+
+    return {
+        "scan_token": scan_token,
+        "tree": tree,
+        "summary": result["levels"],
+        "fuzzy": result["fuzzy"],
+        "main_topic": main_dict,
+    }
+
+
+@router.delete("/scan/{scan_token}", status_code=204)
+def delete_scan(scan_token: str):
+    for ext in (".docx", ".json"):
+        p = os.path.join(SCAN_DIR, scan_token + ext)
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
 
 
 @router.get("")
