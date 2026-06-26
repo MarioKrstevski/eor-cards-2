@@ -390,6 +390,33 @@ def build_heading_tree(elements: list[dict]) -> list[dict]:
     return tree
 
 
+def parse_heading_outline(elements: list[dict]) -> list[dict]:
+    """Nested H1–H4 outline from a flat element list. Each heading node is
+    {"hid": int, "level": int, "text": str, "children": [...]}. `hid` is the
+    heading's 0-based index in document order — the SAME counter
+    attach_content_to_curriculum uses, so the aligner can key decisions by hid.
+
+    Headings attach to the nearest previous heading of a shallower level (so a
+    skipped level just nests under whatever is open)."""
+    roots: list[dict] = []
+    stack: list[dict] = []  # open ancestor heading nodes, increasing level
+    hid = 0
+    for elem in elements:
+        if elem.get("type") != "heading":
+            continue
+        level = elem.get("level", 1)
+        node = {"hid": hid, "level": level, "text": elem.get("text", ""), "children": []}
+        hid += 1
+        while stack and stack[-1]["level"] >= level:
+            stack.pop()
+        if stack:
+            stack[-1]["children"].append(node)
+        else:
+            roots.append(node)
+        stack.append(node)
+    return roots
+
+
 def compare_heading_trees(existing: list[dict], new: list[dict]) -> dict:
     """Compare two heading trees and find matches, new headings, and missing headings.
 
@@ -502,3 +529,49 @@ def _table_to_html(rows: list[list[str]]) -> str:
         html_parts.append("</tr>")
     html_parts.append("</table>")
     return "".join(html_parts)
+
+
+def attach_content_to_curriculum(elements: list, resolution: dict,
+                                 main_topic_id: int) -> list:
+    """Group elements by the deepest matched curriculum node along each block's
+    heading ancestry (rolling up; pre-heading content → main_topic_id). Returns
+    [{"node_id": int, "elements": [...]}], groups in first-seen order, elements
+    within a group in original document order (so build_content_html image
+    numbering and SectionImage.position stay aligned).
+
+    A MATCHED heading (resolution[hid] is a real node) defines a section title and
+    is NOT emitted into the body; an UNMATCHED heading (None) is kept as
+    sub-structure. A matched node with no content produces no group."""
+    groups: dict = {}
+    order: list = []
+    stack: list = []  # (level, hid) of open headings
+    hid = 0
+
+    def emit(node_id: int, elem: dict) -> None:
+        if node_id not in groups:
+            groups[node_id] = []
+            order.append(node_id)
+        groups[node_id].append(elem)
+
+    for elem in elements:
+        if elem.get("type") == "heading":
+            level = elem.get("level", 1)
+            while stack and stack[-1][0] >= level:
+                stack.pop()
+            cur_hid = hid
+            stack.append((level, cur_hid))
+            hid += 1
+            if resolution.get(cur_hid) is None:
+                emit(_resolve_node(stack, resolution, main_topic_id), elem)
+        else:
+            emit(_resolve_node(stack, resolution, main_topic_id), elem)
+
+    return [{"node_id": nid, "elements": groups[nid]} for nid in order]
+
+
+def _resolve_node(stack: list, resolution: dict, main_topic_id: int) -> int:
+    for _level, h in reversed(stack):
+        nid = resolution.get(h)
+        if nid is not None:
+            return nid
+    return main_topic_id

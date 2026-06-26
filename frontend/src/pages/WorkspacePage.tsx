@@ -18,7 +18,7 @@ import {
   createCurriculumNode,
   updateSection,
 } from '../api';
-import type { GenerationJob, CurriculumSection, CostEstimate, SectionDetail } from '../types';
+import type { GenerationJob, CurriculumSection, CostEstimate, SectionDetail, ReconcileDiff } from '../types';
 import type {
   CurriculumNode,
   TopicCoverageStats,
@@ -28,6 +28,7 @@ import type {
 import CardsPanel from './CardsPanel';
 import SectionViewer from './SectionViewer';
 import ConfirmModal from '../components/ConfirmModal';
+import ReconcileModal from '../components/ReconcileModal';
 import CurriculumPicker from '../components/CurriculumPicker';
 import CurriculumSectionPreview from '../components/CurriculumSectionPreview';
 import { buildAggregatedCounts, sortTree } from '../utils';
@@ -819,6 +820,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [processingJobId, setProcessingJobId] = useState<number | null>(null);
   const [processingStep, setProcessingStep] = useState<string | null>(null);
+  const [reconcile, setReconcile] = useState<{ uploadId: number; diff: ReconcileDiff } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Section viewer
@@ -980,6 +982,14 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
         topicTreeName: uploadName || undefined,
         curriculumId: uploadCurriculumId ?? undefined,
       });
+      if (result.reconcile) {
+        // Curriculum-aligned flow: job is parked at the reconcile gate.
+        setReconcile({ uploadId: result.upload_id, diff: result.reconcile });
+        setUploadFile(null);
+        setUploading(false);
+        return;  // do NOT setProcessingJobId — job is parked
+      }
+      // Legacy/paste path fallback
       setProcessingJobId(result.processing_job_id);
       setUploadFile(null);
     } catch (err: unknown) {
@@ -1446,6 +1456,20 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
         <SectionViewer
           sectionId={viewingSectionId}
           onClose={() => setViewingSectionId(null)}
+        />
+      )}
+
+      {/* Curriculum reconcile gate — appears after a curriculum-aligned upload */}
+      {reconcile && (
+        <ReconcileModal
+          uploadId={reconcile.uploadId}
+          diff={reconcile.diff}
+          onClose={() => setReconcile(null)}
+          onContinue={(jobId) => {
+            setReconcile(null);
+            setUploading(true);
+            setProcessingJobId(jobId);
+          }}
         />
       )}
 

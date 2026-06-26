@@ -197,6 +197,10 @@ def _sweep_orphaned_jobs():
             stuck = db.query(model_cls).filter(
                 model_cls.status.in_([JobStatus.pending, JobStatus.running])
             ).all()
+            if model_cls is ProcessingJob:
+                # Reconcile jobs park as 'running' while waiting on a human —
+                # they must survive a restart, not be swept as orphaned.
+                stuck = [j for j in stuck if j.pipeline_step != "awaiting_reconcile"]
             for job in stuck:
                 job.status = JobStatus.failed
                 job.error_message = "Interrupted by server restart"

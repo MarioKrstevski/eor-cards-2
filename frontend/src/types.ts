@@ -8,6 +8,45 @@ export interface CurriculumNode {
   children: CurriculumNode[];
 }
 
+// ── Curriculum-aligned upload reconcile diff ──────────────────────────────────
+
+export interface ReconcileLevel {
+  depth: number;
+  expected: number;
+  present: number;
+}
+
+export interface ReconcileMissing {
+  hid: number;
+  name: string;
+  depth: number;
+  parent_id: number | null;
+}
+
+export interface ReconcileNotInDoc {
+  node_id: number;
+  name: string;
+  depth: number;
+}
+
+export interface ReconcileSubtreeNode {
+  id: number;
+  parent_id: number | null;
+  name: string;
+  level: number;
+  path: string;
+}
+
+export interface ReconcileDiff {
+  resolution: Record<string, number | null>;
+  levels: ReconcileLevel[];
+  missing_in_curriculum: ReconcileMissing[];
+  not_in_document: ReconcileNotInDoc[];
+  warnings: string[];
+  subtree: ReconcileSubtreeNode[];
+  main_topic: ReconcileSubtreeNode;
+}
+
 export interface CurriculumMapping {
   id: number;
   from_node_id: number;

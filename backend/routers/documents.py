@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import os
 import re
 import uuid
 import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from typing import Optional
 from backend.db import get_db, SessionLocal
@@ -157,6 +160,12 @@ async def upload_document(
         db.add(tt)
         db.flush()
 
+    # A main curriculum topic is required to align the document's headings.
+    # Applies to a freshly-created tree without curriculum_id AND an existing
+    # topic_tree_id whose curriculum_id is null.
+    if tt.curriculum_id is None:
+        raise HTTPException(400, "Pick a main curriculum topic for this upload")
+
     upload = Upload(
         topic_tree_id=tt.id,
         original_name=file.filename,
@@ -166,21 +175,99 @@ async def upload_document(
     db.add(upload)
     db.flush()
 
-    # Auto-start processing
-    job = ProcessingJob(upload_id=upload.id, status=JobStatus.pending)
+    # Headings-only scan + park at reconcile gate (do NOT process yet).
+    from backend.services.doc_processor import parse_docx, parse_heading_outline
+    elements = parse_docx(filepath)
+    upload.heading_outline = parse_heading_outline(elements)
+
+    job = ProcessingJob(upload_id=upload.id, status=JobStatus.running)
+    job.pipeline_step = "awaiting_reconcile"
     db.add(job)
     db.commit()
     db.refresh(upload)
     db.refresh(tt)
 
-    background_tasks.add_task(_run_processing, job.id)
+    reconcile = _build_reconcile(db, upload)
 
     return {
         "upload_id": upload.id,
         "processing_job_id": job.id,
         "topic_tree_id": tt.id,
         "topic_tree": topic_tree_to_dict(tt),
+        "reconcile": reconcile,
     }
+
+
+def _build_reconcile(db: Session, upload: Upload) -> dict:
+    """Run the curriculum alignment for an upload's stored heading outline against
+    the live subtree of its topic tree's main curriculum topic. Re-runs align each
+    call so newly-added curriculum nodes are reflected."""
+    from backend.services.curriculum_aligner import align
+
+    tt = db.get(TopicTree, upload.topic_tree_id)
+    main = db.get(Curriculum, tt.curriculum_id)
+
+    # Restrict to the main topic + its descendants. The "<path> > " suffix avoids
+    # sibling-prefix collisions (e.g. "Cardio" vs "Cardiology").
+    subtree = db.query(Curriculum).filter(
+        Curriculum.version == main.version,
+        or_(Curriculum.id == main.id, Curriculum.path.startswith(main.path + " > ")),
+    ).all()
+
+    nodes = [
+        {"id": n.id, "parent_id": n.parent_id, "name": n.name, "level": n.level, "path": n.path}
+        for n in subtree
+    ]
+    main_dict = {
+        "id": main.id, "parent_id": main.parent_id, "name": main.name,
+        "level": main.level, "path": main.path,
+    }
+    outline = upload.heading_outline or []
+    result = align(outline, main_dict, nodes)
+    return {**result, "subtree": nodes, "main_topic": main_dict}
+
+
+@router.get("/{upload_id}/reconcile")
+def get_reconcile(upload_id: int, db: Session = Depends(get_db)):
+    """Return the live curriculum-alignment diff for a parked upload. Re-runs
+    align, so curriculum nodes added since the upload appear here."""
+    upload = db.get(Upload, upload_id)
+    if not upload:
+        raise HTTPException(404, "Upload not found")
+    return _build_reconcile(db, upload)
+
+
+@router.post("/{upload_id}/continue")
+def continue_processing(
+    upload_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """Resume a reconcile-gated upload: recompute the resolution map and run the
+    real processing pipeline against it."""
+    upload = db.get(Upload, upload_id)
+    if not upload:
+        raise HTTPException(404, "Upload not found")
+
+    job = (
+        db.query(ProcessingJob)
+        .filter(ProcessingJob.upload_id == upload.id)
+        .order_by(ProcessingJob.id.desc())
+        .first()
+    )
+    if not job:
+        raise HTTPException(404, "Processing job not found")
+    if job.pipeline_step != "awaiting_reconcile":
+        raise HTTPException(409, "not awaiting reconcile")
+
+    reconcile = _build_reconcile(db, upload)
+
+    job.pipeline_step = "parsing"
+    db.commit()
+
+    background_tasks.add_task(_run_processing, job.id, reconcile["resolution"])
+
+    return {"processing_job_id": job.id}
 
 
 @router.post("/paste")
@@ -447,9 +534,17 @@ def _parse_alt_text_hint(hint: Optional[str]) -> dict:
     return {"command": None, "intended_position": None, "category_hint": None}
 
 
-def _run_processing(job_id: int):
-    """Background task: process an upload into sections and content blocks."""
-    from backend.services.doc_processor import parse_docx, parse_html, split_by_h2, build_heading_tree, build_content_html, DUP_COLLAPSED_FLAG, dup_collapsed_flag
+def _run_processing(job_id: int, resolution: dict | None = None):
+    """Background task: process an upload into sections and content blocks.
+
+    When ``resolution`` (hid -> curriculum node_id|None) is provided, sections are
+    built by attaching content to curriculum nodes (reconcile-gated upload flow).
+    When None, the legacy split-by-H2 path runs (used by /paste and ai-headings).
+    """
+    from backend.services.doc_processor import (
+        parse_docx, parse_html, split_by_h2, build_heading_tree, build_content_html,
+        attach_content_to_curriculum, DUP_COLLAPSED_FLAG, dup_collapsed_flag,
+    )
     from backend.services.table_converter import convert_table_elements
 
     db = SessionLocal()
@@ -475,114 +570,191 @@ def _run_processing(job_id: int):
         db.commit()
         elements = convert_table_elements(elements)
 
-        # Step 3: Split by H2 into sections
+        # Step 3: Build section groups.
+        # When a resolution map is supplied, attach content to curriculum nodes;
+        # otherwise fall back to legacy split-by-H2.
         job.pipeline_step = "splitting"
         db.commit()
-        section_groups = split_by_h2(elements)
 
-        # Step 4: Create sections and content blocks
-        job.pipeline_step = "merging"
-        db.commit()
+        if resolution is not None:
+            groups = attach_content_to_curriculum(
+                elements, {int(k): v for k, v in resolution.items()}, tt.curriculum_id
+            )
 
-        existing_sections = {s.heading: s for s in tt.sections}
+            # Step 4: Create sections and content blocks (curriculum-aligned).
+            job.pipeline_step = "merging"
+            db.commit()
 
-        for idx, (heading, elems) in enumerate(section_groups):
-            heading_tree = build_heading_tree(elems)
-            content_text = "\n".join(e["text"] for e in elems if e.get("text"))
-            content_html = build_content_html(elems)
+            for idx, group in enumerate(groups):
+                node = db.get(Curriculum, group["node_id"])
+                elems = group["elements"]
 
-            image_count = sum(1 for e in elems if e.get("type") == "image")
-            table_count = sum(1 for e in elems if e.get("type") == "table")
-            # Source had verbatim-duplicated content that parsing auto-collapsed.
-            # dup_flag is None when nothing was collapsed, else lists the lines.
-            dup_flag = dup_collapsed_flag(elems)
+                heading = node.name
+                curriculum_topic_id = node.id
+                curriculum_topic_path = node.path
 
-            # Match this section's heading to the deepest curriculum node possible
-            sec_topic_id, sec_topic_path = _match_section_to_curriculum(db, heading, tt.curriculum_id)
+                heading_tree = build_heading_tree(elems)
+                content_html = build_content_html(elems)
+                content_text = "\n".join(e["text"] for e in elems if e.get("text"))
 
-            if heading in existing_sections:
-                # Merge into existing section. content_html/text are fully REPLACED
-                # by this upload, so the old content blocks are stale — delete them
-                # before re-creating, else they accumulate (block doubling on
-                # re-upload). Content blocks are never referenced by cards, so this
-                # is card-safe.
-                section = existing_sections[heading]
-                db.query(ContentBlock).filter(ContentBlock.section_id == section.id).delete()
-                # Old images: only clear those NOT referenced by any card (cards
-                # point at images via ref_img_id). A re-upload that fixes section
-                # text must never orphan a card's image reference.
-                referenced_img_ids = {
-                    r[0] for r in db.query(Card.ref_img_id)
-                    .filter(Card.section_id == section.id, Card.ref_img_id.isnot(None)).all()
-                }
-                stale_imgs = db.query(SectionImage).filter(SectionImage.section_id == section.id).all()
-                for img in stale_imgs:
-                    if img.id not in referenced_img_ids:
-                        db.delete(img)
-                section.content_text = content_text
-                section.content_html = content_html
-                section.heading_tree = heading_tree
-                # Count current images = kept (referenced) + new ones added below.
-                section.image_count = image_count + len(referenced_img_ids)
-                section.table_count = table_count
-                section.updated_at = utcnow()
-                if "NO INFORMATION IN ORIGINAL STUDY GUIDE" in content_text.upper():
-                    section.section_status = "orange"
-                # Content is fully replaced on re-upload, so drop any prior
-                # dup-collapsed flag (its line list is stale) before re-adding.
-                kept = [f for f in (section.flags or []) if not str(f).startswith(DUP_COLLAPSED_FLAG)]
-                section.flags = _merge_flag(kept, dup_flag)
-                # Update topic if set and not already assigned
-                if sec_topic_id and not section.curriculum_topic_id:
-                    section.curriculum_topic_id = sec_topic_id
-                    section.curriculum_topic_path = sec_topic_path
-            else:
+                image_count = sum(1 for e in elems if e.get("type") == "image")
+                table_count = sum(1 for e in elems if e.get("type") == "table")
+                dup_flag = dup_collapsed_flag(elems)
+
                 auto_status = "orange" if "NO INFORMATION IN ORIGINAL STUDY GUIDE" in content_text.upper() else "normal"
                 section = Section(
                     topic_tree_id=tt.id,
                     heading=heading,
-                    slug=slugify(heading),
+                    slug=slugify(f"{node.id}-{node.name}"),
                     heading_tree=heading_tree,
                     content_text=content_text,
                     content_html=content_html,
                     image_count=image_count,
                     table_count=table_count,
                     sort_order=idx,
-                    curriculum_topic_id=sec_topic_id,
-                    curriculum_topic_path=sec_topic_path,
+                    curriculum_topic_id=curriculum_topic_id,
+                    curriculum_topic_path=curriculum_topic_path,
                     section_status=auto_status,
                     flags=[dup_flag] if dup_flag else None,
                 )
                 db.add(section)
                 db.flush()
 
-            # Create content blocks
-            position = 0
-            for elem in elems:
-                block_type = elem.get("type", "paragraph")
-                if block_type == "image":
-                    # Store as SectionImage
-                    if elem.get("data_uri"):
-                        img = SectionImage(
+                # Create content blocks
+                position = 0
+                for elem in elems:
+                    block_type = elem.get("type", "paragraph")
+                    if block_type == "image":
+                        if elem.get("data_uri"):
+                            img = SectionImage(
+                                section_id=section.id,
+                                upload_id=upload.id,
+                                data_uri=elem["data_uri"],
+                                alt_text_hint=elem.get("alt_text"),
+                                position=position,
+                            )
+                            db.add(img)
+                    else:
+                        cb = ContentBlock(
                             section_id=section.id,
                             upload_id=upload.id,
-                            data_uri=elem["data_uri"],
-                            alt_text_hint=elem.get("alt_text"),
+                            text=elem.get("text", ""),
+                            html=elem.get("html", elem.get("text", "")),
+                            block_type=block_type,
+                            heading_context=elem.get("heading_context"),
                             position=position,
                         )
-                        db.add(img)
+                        db.add(cb)
+                    position += 1
+
+            db.commit()
+            # Fall through to Step 5 (image classification).
+        else:
+            section_groups = split_by_h2(elements)
+
+            # Step 4: Create sections and content blocks
+            job.pipeline_step = "merging"
+            db.commit()
+
+            existing_sections = {s.heading: s for s in tt.sections}
+
+            for idx, (heading, elems) in enumerate(section_groups):
+                heading_tree = build_heading_tree(elems)
+                content_text = "\n".join(e["text"] for e in elems if e.get("text"))
+                content_html = build_content_html(elems)
+
+                image_count = sum(1 for e in elems if e.get("type") == "image")
+                table_count = sum(1 for e in elems if e.get("type") == "table")
+                # Source had verbatim-duplicated content that parsing auto-collapsed.
+                # dup_flag is None when nothing was collapsed, else lists the lines.
+                dup_flag = dup_collapsed_flag(elems)
+
+                # Match this section's heading to the deepest curriculum node possible
+                sec_topic_id, sec_topic_path = _match_section_to_curriculum(db, heading, tt.curriculum_id)
+
+                if heading in existing_sections:
+                    # Merge into existing section. content_html/text are fully REPLACED
+                    # by this upload, so the old content blocks are stale — delete them
+                    # before re-creating, else they accumulate (block doubling on
+                    # re-upload). Content blocks are never referenced by cards, so this
+                    # is card-safe.
+                    section = existing_sections[heading]
+                    db.query(ContentBlock).filter(ContentBlock.section_id == section.id).delete()
+                    # Old images: only clear those NOT referenced by any card (cards
+                    # point at images via ref_img_id). A re-upload that fixes section
+                    # text must never orphan a card's image reference.
+                    referenced_img_ids = {
+                        r[0] for r in db.query(Card.ref_img_id)
+                        .filter(Card.section_id == section.id, Card.ref_img_id.isnot(None)).all()
+                    }
+                    stale_imgs = db.query(SectionImage).filter(SectionImage.section_id == section.id).all()
+                    for img in stale_imgs:
+                        if img.id not in referenced_img_ids:
+                            db.delete(img)
+                    section.content_text = content_text
+                    section.content_html = content_html
+                    section.heading_tree = heading_tree
+                    # Count current images = kept (referenced) + new ones added below.
+                    section.image_count = image_count + len(referenced_img_ids)
+                    section.table_count = table_count
+                    section.updated_at = utcnow()
+                    if "NO INFORMATION IN ORIGINAL STUDY GUIDE" in content_text.upper():
+                        section.section_status = "orange"
+                    # Content is fully replaced on re-upload, so drop any prior
+                    # dup-collapsed flag (its line list is stale) before re-adding.
+                    kept = [f for f in (section.flags or []) if not str(f).startswith(DUP_COLLAPSED_FLAG)]
+                    section.flags = _merge_flag(kept, dup_flag)
+                    # Update topic if set and not already assigned
+                    if sec_topic_id and not section.curriculum_topic_id:
+                        section.curriculum_topic_id = sec_topic_id
+                        section.curriculum_topic_path = sec_topic_path
                 else:
-                    cb = ContentBlock(
-                        section_id=section.id,
-                        upload_id=upload.id,
-                        text=elem.get("text", ""),
-                        html=elem.get("html", elem.get("text", "")),
-                        block_type=block_type,
-                        heading_context=elem.get("heading_context"),
-                        position=position,
+                    auto_status = "orange" if "NO INFORMATION IN ORIGINAL STUDY GUIDE" in content_text.upper() else "normal"
+                    section = Section(
+                        topic_tree_id=tt.id,
+                        heading=heading,
+                        slug=slugify(heading),
+                        heading_tree=heading_tree,
+                        content_text=content_text,
+                        content_html=content_html,
+                        image_count=image_count,
+                        table_count=table_count,
+                        sort_order=idx,
+                        curriculum_topic_id=sec_topic_id,
+                        curriculum_topic_path=sec_topic_path,
+                        section_status=auto_status,
+                        flags=[dup_flag] if dup_flag else None,
                     )
-                    db.add(cb)
-                position += 1
+                    db.add(section)
+                    db.flush()
+
+                # Create content blocks
+                position = 0
+                for elem in elems:
+                    block_type = elem.get("type", "paragraph")
+                    if block_type == "image":
+                        # Store as SectionImage
+                        if elem.get("data_uri"):
+                            img = SectionImage(
+                                section_id=section.id,
+                                upload_id=upload.id,
+                                data_uri=elem["data_uri"],
+                                alt_text_hint=elem.get("alt_text"),
+                                position=position,
+                            )
+                            db.add(img)
+                    else:
+                        cb = ContentBlock(
+                            section_id=section.id,
+                            upload_id=upload.id,
+                            text=elem.get("text", ""),
+                            html=elem.get("html", elem.get("text", "")),
+                            block_type=block_type,
+                            heading_context=elem.get("heading_context"),
+                            position=position,
+                        )
+                        db.add(cb)
+                    position += 1
 
         # Step 5: Classify and process images
         images_to_process = (
