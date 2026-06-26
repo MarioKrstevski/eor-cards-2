@@ -390,6 +390,33 @@ def build_heading_tree(elements: list[dict]) -> list[dict]:
     return tree
 
 
+def parse_heading_outline(elements: list[dict]) -> list[dict]:
+    """Nested H1–H4 outline from a flat element list. Each heading node is
+    {"hid": int, "level": int, "text": str, "children": [...]}. `hid` is the
+    heading's 0-based index in document order — the SAME counter
+    attach_content_to_curriculum uses, so the aligner can key decisions by hid.
+
+    Headings attach to the nearest previous heading of a shallower level (so a
+    skipped level just nests under whatever is open)."""
+    roots: list[dict] = []
+    stack: list[dict] = []  # open ancestor heading nodes, increasing level
+    hid = 0
+    for elem in elements:
+        if elem.get("type") != "heading":
+            continue
+        level = elem.get("level", 1)
+        node = {"hid": hid, "level": level, "text": elem.get("text", ""), "children": []}
+        hid += 1
+        while stack and stack[-1]["level"] >= level:
+            stack.pop()
+        if stack:
+            stack[-1]["children"].append(node)
+        else:
+            roots.append(node)
+        stack.append(node)
+    return roots
+
+
 def compare_heading_trees(existing: list[dict], new: list[dict]) -> dict:
     """Compare two heading trees and find matches, new headings, and missing headings.
 
