@@ -113,3 +113,56 @@ def align(outline: list[dict], main_topic: dict, nodes: list[dict]) -> dict:
         "warnings": warnings,
         "fuzzy": fuzzy,
     }
+
+
+def build_merged_tree(outline: list[dict], main_topic: dict, nodes: list[dict],
+                      align_result: dict) -> dict:
+    """One tree rooted at the main topic. Curriculum nodes tagged matched/fuzzy/
+    missing; new document headings grafted under their parent treenode (nested).
+    Depth = nesting depth (root=0). Pure."""
+    resolution = align_result["resolution"]
+    fuzzy = align_result.get("fuzzy", [])
+    fuzzy_node_ids = {f["node_id"]: f for f in fuzzy}
+    matched_node_ids = {v for v in resolution.values() if v is not None}
+
+    by_id: dict[int, dict] = {}
+    for n in nodes:
+        if n["id"] == main_topic["id"]:
+            status = "matched"
+        elif n["id"] in fuzzy_node_ids:
+            status = "fuzzy"
+        elif n["id"] in matched_node_ids:
+            status = "matched"
+        else:
+            status = "missing"
+        by_id[n["id"]] = {"status": status, "name": n["name"], "depth": n["level"],
+                          "node_id": n["id"], "hid": None, "doc_name": None,
+                          "score": None, "children": []}
+    for f in fuzzy:
+        tn = by_id.get(f["node_id"])
+        if tn:
+            tn["doc_name"] = f["doc_name"]; tn["score"] = f["score"]
+    for n in nodes:
+        if n["id"] == main_topic["id"]:
+            continue
+        parent = by_id.get(n["parent_id"])
+        if parent:
+            parent["children"].append(by_id[n["id"]])
+
+    root = by_id[main_topic["id"]]
+
+    def graft(heading_nodes, parent_tn):
+        for h in heading_nodes:
+            nid = resolution.get(h["hid"])
+            if nid is not None:
+                tn = by_id.get(nid, parent_tn)
+                graft(h["children"], tn)
+            else:
+                tn = {"status": "new", "name": h["text"], "depth": parent_tn["depth"] + 1,
+                      "node_id": None, "hid": h["hid"], "doc_name": None,
+                      "score": None, "children": []}
+                parent_tn["children"].append(tn)
+                graft(h["children"], tn)
+
+    graft(outline, root)
+    return root
