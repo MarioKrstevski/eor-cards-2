@@ -62,7 +62,7 @@ function SearchNode({ node, matchIds, ancestorIds, cardCounts }: SearchNodeProps
         className={`flex items-center gap-1.5 py-1.5 pr-2 rounded-lg ${isDimmed ? 'hover:bg-gray-50' : 'hover:bg-gray-50'}`}
         style={{ paddingLeft: `${8 + node.level * 14}px` }}
       >
-        <span className={`text-[9px] font-bold w-4 text-center rounded shrink-0 py-px ${levelBadge}`}>{node.level + 1}</span>
+        <span className={`text-[9px] font-bold w-4 text-center rounded shrink-0 py-px ${levelBadge}`}>{node.level}</span>
         <span className={`flex-1 text-xs truncate ${isDimmed ? 'text-gray-400' : 'font-semibold text-gray-800'}`}>{node.name}</span>
         {!isDimmed && stats.active > 0 && (
           <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold tabular-nums shrink-0 ${stats.unreviewed === 0 ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>

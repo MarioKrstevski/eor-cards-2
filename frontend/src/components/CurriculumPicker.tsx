@@ -94,7 +94,7 @@ function PickerNode({
 
         {/* Level badge */}
         <span className={`text-[9px] font-bold w-4 text-center rounded shrink-0 py-px ${levelStyle}`}>
-          {node.level + 1}
+          {node.level}
         </span>
 
         {/* Name */}

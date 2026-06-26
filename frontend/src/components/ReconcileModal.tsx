@@ -43,7 +43,7 @@ function TreeNodeRow({ node, baseLevel }: { node: TreeNode; baseLevel: number })
         style={{ paddingLeft: `${depth * 16}px` }}
       >
         <span className={`text-[9px] font-bold w-4 text-center rounded shrink-0 py-px ${levelStyle}`}>
-          {node.level + 1}
+          {node.level}
         </span>
         <span className="text-xs truncate">{node.name}</span>
       </div>
