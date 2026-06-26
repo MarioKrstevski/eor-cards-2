@@ -157,7 +157,12 @@ direct path, unchanged.
     unchecks descendants).
 - **Toggle: All / Differences.** All = full tree. Differences = only
   fuzzy/missing/new nodes, each with its ancestor chain shown greyed for context.
-- Honest per-depth **summary** bar (matched / fuzzy / new / missing).
+- **Single tree view — no separate lists.** The old modal's standalone "headings
+  missing from curriculum" list (and any separate new/missing list) is **removed**;
+  everything — matched, fuzzy, new (with Include), missing — is shown inline in the
+  one tree. The Differences toggle is how the reviewer focuses on just the deltas.
+- Honest per-depth **summary** bar (matched / fuzzy / new / missing) — counts only,
+  not a list.
 - **Continue** → `continueProcessing(scan_token, includedHids)`; on success set
   the returned `processing_job_id` to resume the existing poller. **Cancel** →
   `DELETE scan` + close.
