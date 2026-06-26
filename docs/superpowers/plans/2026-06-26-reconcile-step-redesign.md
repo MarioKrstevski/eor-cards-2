@@ -33,7 +33,7 @@
 - Modify `backend/config.py` — `SCAN_DIR`.
 - Modify `backend/routers/documents.py` — `POST /scan`, `POST /continue` (new shape), `DELETE /scan/{token}`; retire old gated path.
 - Modify `backend/main.py` — temp-scan cleanup in lifespan.
-- Rewrite `frontend/src/components/ReconcileModal.tsx`; modify `api.ts`, `types.ts`, `WorkspacePage.tsx`.
+- Rewrite `frontend/src/components/ReconcileModal.tsx`; modify `api.ts`, `types.ts`, `WorkspacePage.tsx`, `LibraryPage.tsx`.
 - Tests under `backend/tests/`.
 
 ---
@@ -361,14 +361,19 @@ def expand_includes(included_hids, outline: list[dict]) -> list[int]:
   1. Load sidecar JSON + confirm `SCAN_DIR/{token}.docx` exists (404 "scan expired" if not).
   2. `from backend.services.curriculum_aligner import expand_includes, align`. `ordered = expand_includes(body.included_hids, sidecar["outline"])`.
   3. Build helpers from the outline: a `hid -> heading node` map and `hid -> parent_hid`. Re-run `align(outline, main_dict, current_subtree_nodes)` to get `resolution` (so each ordered hid knows whether its parent hid is matched→node_id).
-  4. **Create included nodes parents-first.** Maintain `minted: dict[hid, new_node_id]`. For each hid in `ordered` (skip any that already resolve to a node — they're not new): parent_node_id = (resolution[parent_hid] if parent_hid resolves) else minted[parent_hid] else main_topic_id. Create via the same logic as `create_node` (level = parent.level+1, path = parent.path+" > "+name, version = main.version), name = the raw heading text. `minted[hid] = new.id`. Commit.
+  4. **Create included nodes parents-first.** Load the main topic ORM row `main = db.get(Curriculum, sidecar["main_topic_id"])` (do NOT rely on a plain dict for version). Build `parent_of` from the **outline** (hid → parent_hid, None for top-level) exactly as `expand_includes` does — parent linkage comes from the outline, NEVER from `align`'s `missing[].parent_id`. Maintain `minted: dict[hid, new_node_id]`. For each hid in `ordered` (skip any whose `resolution[hid]` is already a node — not new):
+     - `parent_hid = parent_of.get(hid)` (may be `None`).
+     - Resolve the **parent Curriculum row**: if `parent_hid is None` → the parent is `main`; elif `resolution.get(parent_hid)` is a node id → `db.get(Curriculum, that_id)`; else → `db.get(Curriculum, minted[parent_hid])`.
+     - Create the node deriving from that parent ORM row (`level = parent.level + 1`, `path = parent.path + " > " + name`, `version = parent.version`), `name` = the **raw heading text** (`outline` node's `text`). `minted[hid] = new.id`. (Mirror `create_node` in `curriculum.py`.)
+     - Commit after the loop.
   5. **Re-align** `align(outline, main_dict, refreshed_subtree_nodes)` → `resolution2` (now resolves the newly-created headings).
   6. Resolve/create the topic tree: if `sidecar.topic_tree_id` → load it; else create (name from `topic_tree_name`/original_name, slug, `curriculum_id = main_topic_id`) — reuse the slug-collision 409 logic from `upload_document`.
   7. Move the temp docx into `UPLOAD_DIR`: `stored_name = f"{uuid.hex}_{original_name}"`, `shutil.move(scan.docx, UPLOAD_DIR/stored_name)`. Create `Upload(topic_tree_id, original_name, filename=stored_name, status="processing")`, flush. Create `ProcessingJob(upload_id, status=pending, pipeline_step="parsing")`. Commit.
   8. `background_tasks.add_task(_run_processing, job.id, resolution2)`. Remove the sidecar `.json` (docx already moved). Return `{"processing_job_id": job.id, "topic_tree_id": tt.id}`.
   > Order matters: tt+upload+job committed and docx in UPLOAD_DIR BEFORE the background task runs (it loads them from DB/disk).
 
-- [ ] **Step 2: Retire the old gated path.** Remove `upload_document`'s reconcile parking (or delete the `/upload` route entirely if nothing else uses it — check `/paste` and `ai-headings` use their own functions; `_run_processing` stays). Remove `GET /{upload_id}/reconcile` and the old `POST /{upload_id}/continue`. Keep `_build_reconcile` only if still referenced (else remove). Keep the orphan-sweep `awaiting_reconcile` exemption (harmless).
+- [ ] **Step 2: Retire the old gated path.** **Delete the `POST /upload` route entirely** — both its consumers (`WorkspacePage`, `LibraryPage`) migrate to `scanDocument` in Task 9. Remove `GET /{upload_id}/reconcile`, the old `POST /{upload_id}/continue`, and `_build_reconcile` (no longer referenced). `/paste` and `ai-headings` use their own functions; `_run_processing` stays. Keep the orphan-sweep `awaiting_reconcile` exemption (harmless).
+- [ ] **Imports:** add `import shutil` and `import json` to `documents.py` if not present.
 
 - [ ] **Step 3: Verify** import + existing tests green on both interpreters. Confirm `/paste` and `ai-headings` still work (unchanged path).
 - [ ] **Step 4: Commit** `feat: /continue creates included nodes, re-aligns, processes; retire gated upload`.
@@ -387,7 +392,9 @@ def expand_includes(included_hids, outline: list[dict]) -> list[int]:
 
 ## Task 7: Frontend — api.ts + types.ts
 
-**Files:** Modify `frontend/src/api.ts`, `frontend/src/types.ts`.
+> **Frontend Tasks 7–9 are ONE build unit.** The TS build is intentionally RED after Tasks 7 and 8 (consumers not yet updated) and only goes green after Task 9. The per-task commits in 7/8 are WIP checkpoints — do not deploy between them. Verify `npm run build` only at the end of Task 9.
+
+**Files:** Modify `frontend/src/api.ts`, `frontend/src/types.ts`. Also remove the now-dead `ReconcileSubtreeNode` interface from `types.ts` (it's only used by the old modal).
 
 - [ ] **Step 1: types.ts.** Add:
 ```ts
@@ -429,20 +436,21 @@ Props: `{ scanToken: string; tree: MergedNode; summary; onClose; onContinue: (jo
 - [ ] **Toggle All / Differences.** In `diff` view, render only nodes whose subtree contains a fuzzy/missing/new descendant OR is itself one; show matched ancestors greyed for context.
 - [ ] **Summary bar** (per depth) from `summary` + counts of statuses computed by walking the tree (matched/fuzzy/new/missing).
 - [ ] **Continue** → `continueProcessing(scanToken, [...includedHids])`, then `onContinue(res.processing_job_id)`. **Cancel** → `deleteScan(scanToken)` then `onClose()`.
-- [ ] Do NOT read `missing_in_curriculum`/`not_in_document` (removed).
+- [ ] Do NOT read `missing_in_curriculum`/`not_in_document` (removed). Drop the old imports: `ReconcileDiff`, `ReconcileSubtreeNode`, `getReconcile`, `createCurriculumNode` (creation now happens in backend Continue; the modal only uses `updateCurriculumNode`, `continueProcessing`, `deleteScan`).
 - [ ] **Commit** `feat: rewrite ReconcileModal as merged diff-tree`.
 
 ---
 
-## Task 9: Frontend — wire `WorkspacePage.tsx`
+## Task 9: Frontend — wire `WorkspacePage.tsx` AND `LibraryPage.tsx`
 
-**Files:** Modify `frontend/src/pages/WorkspacePage.tsx`.
+**Files:** Modify `frontend/src/pages/WorkspacePage.tsx`, `frontend/src/pages/LibraryPage.tsx`.
 
-- [ ] In the upload handler, call `scanDocument(file, {...})` instead of `uploadDocument`. On success set `reconcile` state to `{scanToken, tree, summary}` and open `<ReconcileModal>`; do NOT set `processingJobId` (nothing parked).
-- [ ] `ReconcileModal onContinue={(jobId) => { setReconcile(null); setUploading(true); setProcessingJobId(jobId); }}` resumes the existing poller. `onClose={() => setReconcile(null)}`.
-- [ ] Remove old reconcile state keyed on `uploadId`.
-- [ ] **Build:** `cd frontend && npm run build` → success (fix any type errors across Tasks 7–9).
-- [ ] **Commit** `feat: wire scan/continue upload flow in WorkspacePage`.
+Both pages have a `handleUploadConfirm` that calls `uploadDocument` + `setProcessingJobId(result.processing_job_id)` (LibraryPage never opened a modal — it's already broken by the shipped gated upload, which this fixes). Apply the same change to BOTH:
+- [ ] Replace the `uploadDocument(...)` call with `scanDocument(file, {...})`. On success set a `reconcile` state to `{scanToken, tree, summary}` and render `<ReconcileModal>`; do NOT set `processingJobId` (nothing parked). `LibraryPage` must import `ReconcileModal` + `scanDocument` (it currently imports neither).
+- [ ] `ReconcileModal onContinue={(jobId) => { setReconcile(null); setUploading(true); setProcessingJobId(jobId); }}` resumes the existing poller (whose completion handler already calls `loadTopicTrees`, so a brand-new tree appears). `onClose={() => setReconcile(null)}`.
+- [ ] In `WorkspacePage.tsx`: change the `ReconcileDiff` type import (line ~21) and the `reconcile` state type (line ~823, currently `{uploadId; diff}`) to `{scanToken: string; tree: MergedNode; summary: ...}`. Remove the `uploadDocument`/`getReconcile` imports if now unused.
+- [ ] **Build:** `cd frontend && npm run build` → success (resolve all type errors across Tasks 7–9 here). This is the first green build of the frontend trio.
+- [ ] **Commit** `feat: wire scan/continue upload flow in WorkspacePage + LibraryPage`.
 
 ---
 
