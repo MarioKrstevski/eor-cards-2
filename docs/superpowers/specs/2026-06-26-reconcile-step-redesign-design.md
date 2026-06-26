@@ -60,9 +60,9 @@ as:
 - **exact** — normalized-equal to a child candidate (current behavior).
 - **fuzzy** — no exact match, but `difflib.SequenceMatcher` ratio (on normalized
   names) ≥ `FUZZY_THRESHOLD` (0.85) against the unmatched sibling candidates at
-  depth D, with a single clear best (the top score must beat the runner-up by a
-  margin, else treat as new to avoid ambiguous grabs). `difflib` is stdlib — no
-  new dependency.
+  depth D, AND the best score beats the runner-up by `FUZZY_MARGIN` (0.05) — else
+  treat as **new** (don't make an ambiguous grab). `difflib` is stdlib — no new
+  dependency. Both constants live at module top, testable.
 - **new** — neither.
 
 `align` output gains:
@@ -102,10 +102,19 @@ data. A `summary` (per-depth counts of each status) is derived from this tree.
   sidecar `data/scans/<scan_token>.json` holding `{outline, main_topic_id,
   version, topic_tree_id|topic_tree_name, original_name, created_at}`.
   `scan_token` is a uuid. **No DB rows.**
-- Parse **headings only** (a lightweight `parse_headings_only(filepath)` that
-  reads heading styles without decoding images — fast for big docs), run `align`
-  + `build_merged_tree`.
-- Return `{scan_token, tree, summary, fuzzy, main_topic}`.
+- Parse with the **same `parse_docx`** the real pipeline uses, then
+  `parse_heading_outline(elements)`. **Do NOT introduce a separate
+  `parse_headings_only`** — `hid` numbering must be identical between scan and
+  Continue, and the only safe guarantee is that both derive from `parse_docx`.
+  The parsed **outline is stored in the sidecar and is authoritative**; Continue's
+  re-align uses the *sidecar* outline (never a re-derived one), and
+  `_run_processing` re-parses the same file with `parse_docx`, so the hids the
+  resolution is keyed on line up exactly with the elements `attach` walks. (A
+  headings-only fast path can be added LATER only behind a test asserting
+  `parse_heading_outline(parse_docx(f))` hids == the fast path's hids on a fixture
+  with empty-text headings, content-controls, and a heading near a table.)
+- Run `align` + `build_merged_tree`. Return `{scan_token, tree, summary, fuzzy,
+  main_topic}`.
 - The modal holds Include selection client-side and re-fetches nothing (no
   per-Add round trip). **Edit-leaf** (fuzzy) uses the existing curriculum rename
   endpoint immediately (persistent); the modal updates that row locally.
@@ -114,13 +123,21 @@ data. A `summary` (per-depth counts of each status) is derived from this tree.
 
 Body: `{scan_token, included_hids: [int]}`.
 1. Load the sidecar + temp docx (404 if the token expired/missing).
-2. **Expand** `included_hids` to include any new ancestors (auto-include) using
-   the stored outline.
-3. **Update the curriculum first:** create the included new nodes, **parents
-   before children**, via the curriculum model (deriving level/path/version from
-   the parent — a curriculum node id for top new nodes, or a freshly-created id
-   for nested ones). Persistent.
-4. **Re-align** the stored outline against the now-updated curriculum subtree.
+2. **Expand** `included_hids` to include any new ancestors via a **pure helper**
+   `expand_includes(included_hids, outline) -> ordered_hids` (parents before
+   children, walking the **outline** parent chain). Unit-testable in isolation.
+3. **Update the curriculum first:** create the included new nodes in that order.
+   **Parent linkage comes from the OUTLINE parent chain, NOT from `align`'s
+   `missing[].parent_id`** (which is `None` for a new-node-under-a-new-node, so it
+   cannot reconstruct nested new chains). For each included new hid, its parent is
+   the nearest outline ancestor that is either (a) matched/fuzzy → that ancestor's
+   `resolution[hid]` curriculum node id, or (b) new+included → the id just minted
+   for that ancestor hid. Maintain an `hid → new_node_id` map as you create them.
+   Derive level/path/version from the resolved parent node. Create nodes with the
+   **raw document heading text** (so the post-create re-align matches them via
+   normalization). Persistent.
+4. **Re-align** the *sidecar* outline against the now-updated curriculum subtree
+   (the new nodes now resolve the previously-new headings to their fresh ids).
 5. **Create** the topic tree (if new) + upload row (move the temp docx into
    `uploads/`), create a `ProcessingJob`, and run the existing pipeline
    `_run_processing(job_id, resolution)` (full `parse_docx` →
@@ -140,8 +157,13 @@ immediately (best-effort).
 The `awaiting_reconcile`-parked `POST /upload` + `GET /{upload_id}/reconcile` +
 the old `POST /{upload_id}/continue` are replaced by scan/continue. Remove the
 `awaiting_reconcile` job state usage from upload (the orphan-sweep exemption can
-stay harmlessly, or be removed). `/paste` and `ai-headings` remain on the legacy
-direct path, unchanged.
+stay harmlessly). `/paste` and `ai-headings` remain on the legacy direct path,
+unchanged. The `uploads.heading_outline` column becomes unused (scan keeps the
+outline in the sidecar) — leave it; harmless.
+
+**Deploy note:** any upload currently parked at `awaiting_reconcile` on `main`
+will be stranded when the old `/continue` is removed — delete/drain such parked
+uploads before shipping (two-user MVP; trivial).
 
 ### 7. Frontend: redesigned `ReconcileModal.tsx`
 
@@ -169,6 +191,19 @@ direct path, unchanged.
 - `WorkspacePage` upload handler calls `scanDocument(...)` (not `uploadDocument`)
   and opens the modal with `{scan_token, tree, summary}`.
 
+**Breaking type/API changes (frontend must change in lockstep — list `types.ts`
+in the plan):**
+- `api.ts`: add `scanDocument(...) -> {scan_token, tree, summary, fuzzy, main_topic}`,
+  `deleteScan(scan_token)`; **change** `continueProcessing` signature from
+  `(uploadId)` to `(scan_token, included_hids)`. Edit-leaf reuses existing
+  `updateCurriculumNode` (`PATCH /curriculum/{id}`).
+- `types.ts`: the old `ReconcileDiff` (`missing_in_curriculum` / `not_in_document`)
+  is **replaced** by `{tree: MergedNode[], summary, fuzzy}`. `MergedNode` carries
+  `status/name/depth/node_id/hid/doc_name/score/children`.
+- `ReconcileModal.tsx` is rewritten (single tree, statuses, toggle, Include);
+  remove its reads of `diff.missing_in_curriculum` / `diff.not_in_document`.
+- `WorkspacePage.tsx` reconcile state keys on `scan_token` (not `uploadId`).
+
 ## Data flow
 
 Scan → modal (client-side Include selection; Edit-leaf persists immediately) →
@@ -194,8 +229,14 @@ tree/upload/sections created → poller resumes → cards inherit corrected path
 - `build_merged_tree`: curriculum + grafted new headings produce correct statuses
   and nesting; per-depth summary counts; Differences-filter still yields ancestor
   context.
-- Auto-include expansion: selecting a nested new hid expands to its new ancestors,
-  parents-before-children ordering.
+- `expand_includes(included_hids, outline)`: selecting a nested new hid expands to
+  its new ancestors, parents-before-children ordering.
+- **hid consistency:** `parse_heading_outline(parse_docx(fixture))` hids match what
+  `attach_content_to_curriculum` derives walking the same `parse_docx(fixture)`
+  elements (the linchpin — guards content mis-routing).
+- **Re-align after include:** a new heading carrying an exam-weight suffix
+  (`"Foo — 18%"`), once created and re-aligned, resolves to its fresh node id
+  (both sides strip the suffix) — pins issue that node names are stored raw.
 - Integration: scan (no DB rows created) → continue with a chosen include set →
   curriculum gains exactly those nodes → sections attach to matched/fuzzy/new-
   included leaves; unincluded new headings roll up. Assert no topic-tree/upload
