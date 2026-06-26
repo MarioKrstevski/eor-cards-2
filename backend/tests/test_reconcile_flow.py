@@ -1,7 +1,8 @@
 """Integration coverage for the curriculum-aligned ingestion flow.
 
-(a) reconcile diff: _build_reconcile flags an unmatched H3 as missing and
-    resolves a matched H3 to its curriculum node.
+(a) align/merge diff: against a curriculum subtree, the aligner flags an
+    unmatched H3 as a `new` node and resolves a matched H3 to its curriculum
+    node — surfaced via build_merged_tree statuses.
 (b) processing: _run_processing(job_id, resolution) creates curriculum-aligned
     sections — matched leaf gets its own section, unmatched content rolls up to
     the parent — with clean content_text / heading_tree.
@@ -11,9 +12,12 @@ with a monkeypatched parse_docx returning a fixed element list (and the test
 SessionLocal). This exercises the actual attach_content_to_curriculum +
 Section/ContentBlock creation code path (least brittle: no docx file on disk, no
 AI calls since the fixture has no images), rather than re-implementing it.
+
+The reconcile resolution map is built with the pure aligner (`align`) — the same
+function /scan and /continue use — rather than the removed `_build_reconcile`.
 """
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, or_
 from sqlalchemy.orm import sessionmaker
 
 import backend.routers.documents as docs_mod
@@ -23,6 +27,7 @@ from backend.models import (
     Curriculum, TopicTree, Upload, ProcessingJob, JobStatus, Section,
 )
 from backend.services.doc_processor import parse_heading_outline
+from backend.services.curriculum_aligner import align, build_merged_tree
 
 
 def _h(level, text):
@@ -104,31 +109,68 @@ def _seed(db):
     return upload, ids
 
 
+def _align_against_main(db, main_id, outline):
+    """Build aligner inputs (main_dict + node dicts) from the seeded curriculum
+    subtree under ``main_id`` and run the pure aligner. Mirrors /scan & /continue.
+    Returns (align_result, main_dict, nodes)."""
+    main = db.get(Curriculum, main_id)
+    subtree = db.query(Curriculum).filter(
+        Curriculum.version == main.version,
+        or_(Curriculum.id == main.id,
+            Curriculum.path.startswith(main.path + " > ")),
+    ).all()
+    nodes = [
+        {"id": n.id, "parent_id": n.parent_id, "name": n.name,
+         "level": n.level, "path": n.path}
+        for n in subtree
+    ]
+    main_dict = {"id": main.id, "parent_id": main.parent_id, "name": main.name,
+                 "level": main.level, "path": main.path}
+    return align(outline, main_dict, nodes), main_dict, nodes
+
+
+def _find_hid(outline, text):
+    for n in outline:
+        if n["text"] == text:
+            return n["hid"]
+        found = _find_hid(n["children"], text)
+        if found is not None:
+            return found
+    return None
+
+
 def test_reconcile_diff(env):
     db, _ = env
     upload, ids = _seed(db)
 
-    reconcile = docs_mod._build_reconcile(db, upload)
-
-    # Giardiasis/GI Parasites has no curriculum node -> reported missing.
-    missing_names = [m["name"] for m in reconcile["missing_in_curriculum"]]
-    assert "Giardiasis/GI Parasites" in missing_names
-
-    # Toxoplasmosis heading resolves to the Toxoplasmosis node id.
     outline = upload.heading_outline
-    # find the hid of the Toxoplasmosis heading
-    toxo_hid = None
+    # Main topic for this upload is Emergency Medicine (the TopicTree's
+    # curriculum_id) — the same root /scan & _run_processing align against.
+    result, main_dict, nodes = _align_against_main(db, ids["em"], outline)
+    tree = build_merged_tree(outline, main_dict, nodes, result)
 
-    def _find(nodes):
-        nonlocal toxo_hid
-        for n in nodes:
-            if n["text"] == "Toxoplasmosis":
-                toxo_hid = n["hid"]
-            _find(n["children"])
+    # Walk the merged tree collecting (name -> status).
+    status_by_name: dict[str, str] = {}
 
-    _find(outline)
+    def _collect(node):
+        status_by_name.setdefault(node["name"], node["status"])
+        for c in node["children"]:
+            _collect(c)
+
+    _collect(tree)
+
+    # Giardiasis/GI Parasites has no curriculum node -> grafted as `new`.
+    assert status_by_name.get("Giardiasis/GI Parasites") == "new"
+    # Toxoplasmosis heading resolves to its curriculum node -> matched.
+    assert status_by_name.get("Toxoplasmosis") == "matched"
+
+    # And the raw resolution agrees: Toxoplasmosis hid -> toxo node id.
+    toxo_hid = _find_hid(outline, "Toxoplasmosis")
     assert toxo_hid is not None
-    assert reconcile["resolution"][toxo_hid] == ids["toxo"]
+    assert result["resolution"][toxo_hid] == ids["toxo"]
+    # Giardiasis hid resolves to None (no node).
+    giar_hid = _find_hid(outline, "Giardiasis/GI Parasites")
+    assert result["resolution"][giar_hid] is None
 
 
 def test_processing_creates_curriculum_aligned_sections(env, monkeypatch):
@@ -142,8 +184,8 @@ def test_processing_creates_curriculum_aligned_sections(env, monkeypatch):
     db.commit()
     job_id = job.id
 
-    reconcile = docs_mod._build_reconcile(db, upload)
-    resolution = reconcile["resolution"]
+    result, _, _ = _align_against_main(db, ids["em"], upload.heading_outline)
+    resolution = result["resolution"]
 
     # parse_docx is imported inside _run_processing from this module — patch there.
     monkeypatch.setattr(dp_mod, "parse_docx", lambda _fp: list(ELEMENTS))
