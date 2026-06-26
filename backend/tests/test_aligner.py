@@ -7,9 +7,16 @@ def test_normalize_basic():
 
 
 def test_normalize_strips_exam_weight_suffix():
-    assert normalize_topic("Cardiovascular – 18%") == "cardiovascular"
+    assert normalize_topic("Cardiovascular – 18%") == "cardiovascular"   # en-dash
     assert normalize_topic("EENOT – 7%") == "eenot"
-    assert normalize_topic("Pulmonary - 10%") == "pulmonary"
+    assert normalize_topic("Pulmonary - 10%") == "pulmonary"             # hyphen
+
+
+def test_normalize_em_dash_matches_en_dash():
+    # Documents use an EM-dash ("— 18%"); curriculum uses an EN-dash ("– 18%").
+    # Both must normalize equal or depth-1 bands never match.
+    assert normalize_topic("CARDIOVASCULAR — 18%") == normalize_topic("Cardiovascular – 18%")
+    assert normalize_topic("CARDIOVASCULAR — 18%") == "cardiovascular"
 
 
 from backend.services.curriculum_aligner import align

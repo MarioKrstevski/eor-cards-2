@@ -6,7 +6,7 @@ as plain dicts so this module is trivially unit-testable.
 from __future__ import annotations
 import re
 
-_WEIGHT_SUFFIX = re.compile(r"\s*[–-]\s*\d+\s*%\s*$")  # " – 18%" / " - 10%"
+_WEIGHT_SUFFIX = re.compile(r"\s*[—–-]\s*\d+\s*%\s*$")  # em "— 18%" / en "– 18%" / hyphen "- 10%"
 
 
 def normalize_topic(s: str) -> str:
