@@ -48,6 +48,8 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
   const [pasteHtml, setPasteHtml] = useState('');
   const [pasting, setPasting] = useState(false);
   const pasteAreaRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
   const [showCreateLeaf, setShowCreateLeaf] = useState(false);
   const [leafName, setLeafName] = useState('');
   const [leafParentId, setLeafParentId] = useState<number | null>(null);
@@ -97,6 +99,18 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
       setVerifying(false);
     }
   }, [sectionId, loadSection]);
+
+  // Copy the section's rendered text — same result as selecting all + copy.
+  const handleCopyText = useCallback(async () => {
+    const text = contentRef.current?.innerText ?? '';
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // ignore (clipboard blocked)
+    }
+  }, []);
 
   const handleToggleDone = useCallback(async () => {
     if (!section) return;
@@ -202,6 +216,16 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
               className="px-3 py-1.5 text-xs font-medium text-emerald-700 bg-white border border-emerald-200 rounded-lg hover:bg-emerald-50 transition-colors duration-150"
             >
               $ Cost
+            </button>
+          )}
+
+          {section && (
+            <button
+              onClick={handleCopyText}
+              title="Copy the section text (same as select-all + copy)"
+              className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+            >
+              {copied ? '✓ Copied' : 'Copy Text'}
             </button>
           )}
 
@@ -439,6 +463,7 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
 
               {/* Content HTML */}
               <div
+                ref={contentRef}
                 className="section-content prose prose-sm max-w-none"
                 dangerouslySetInnerHTML={{ __html: section.content_html }}
               />

@@ -15,6 +15,22 @@ export function sortTree(nodes: CurriculumNode[], mode: TopicSortMode): Curricul
   }));
 }
 
+/** Map each curriculum node's full path → its pre-order index in curriculum
+ * order. Used to sort the document section tree by curriculum order. */
+export function curriculumOrderByPath(curriculum: CurriculumNode[]): Map<string, number> {
+  const sorted = sortTree(curriculum, 'curriculum');
+  const map = new Map<string, number>();
+  let i = 0;
+  const walk = (nodes: CurriculumNode[]) => {
+    for (const n of nodes) {
+      map.set(n.path, i++);
+      walk(n.children);
+    }
+  };
+  walk(sorted);
+  return map;
+}
+
 export function flattenTree(nodes: CurriculumNode[]): CurriculumNode[] {
   const result: CurriculumNode[] = [];
   function walk(list: CurriculumNode[]) {
