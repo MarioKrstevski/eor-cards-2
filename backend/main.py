@@ -116,6 +116,8 @@ def _migrate_db():
             "ALTER TABLE cards ADD COLUMN validation_change TEXT",
             "ALTER TABLE ai_usage_log ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE ai_usage_log ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0",
+            # Curriculum-aligned ingestion: parsed H1-H4 outline stored at upload scan time.
+            "ALTER TABLE uploads ADD COLUMN heading_outline JSON",
             # Indexes for the most common filters (no-ops if they already exist)
             "CREATE INDEX IF NOT EXISTS ix_cards_section_id ON cards(section_id)",
             "CREATE INDEX IF NOT EXISTS ix_cards_status ON cards(status)",
