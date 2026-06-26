@@ -102,32 +102,6 @@ export async function getTopicTree(id: number): Promise<TopicTree> {
   return res.data;
 }
 
-export async function uploadDocument(
-  file: File,
-  opts?: { topicTreeId?: number; topicTreeName?: string; curriculumId?: number }
-): Promise<{
-  upload_id: number;
-  processing_job_id: number;
-  topic_tree_id?: number;
-  topic_tree?: TopicTree;
-}> {
-  const form = new FormData();
-  form.append('file', file);
-  if (opts?.topicTreeId != null) form.append('topic_tree_id', String(opts.topicTreeId));
-  if (opts?.topicTreeName) form.append('topic_tree_name', opts.topicTreeName);
-  if (opts?.curriculumId != null) form.append('curriculum_id', String(opts.curriculumId));
-  const res = await http.post<{
-    upload_id: number;
-    processing_job_id: number;
-    topic_tree_id?: number;
-    topic_tree?: TopicTree;
-  }>(
-    '/topic-trees/upload',
-    form
-  );
-  return res.data;
-}
-
 // Scan a document against the curriculum WITHOUT creating any DB rows. Returns a
 // merged diff-tree + a scan_token used to continue processing later.
 export async function scanDocument(
