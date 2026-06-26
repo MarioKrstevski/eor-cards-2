@@ -347,19 +347,20 @@ def align(outline: list[dict], main_topic: dict, nodes: list[dict]) -> dict:
 
     walk(outline, main_topic, 1)
 
-    # not_in_document: curriculum nodes whose parent was matched (or main topic)
-    # but no heading matched them. Expected counts per depth (under matched parents).
-    not_in_doc: list[dict] = []
+    # expected_by_depth: FULL subtree node count at each depth (the summary table's
+    # "N expected" — independent of matching; at depth 1 parent is always the main
+    # topic so expected == full count there too).
+    # not_in_document: curriculum nodes whose parent WAS matched (or main topic)
+    # but no heading matched them — the actionable "informational" list.
     expected_by_depth: dict[int, int] = {}
+    not_in_doc: list[dict] = []
     matched_parents = {main_topic["id"]} | matched_node_ids
     for n in nodes:
         if n["id"] == main_topic["id"]:
             continue
-        if n["parent_id"] in matched_parents:
-            d = n["level"]
-            expected_by_depth[d] = expected_by_depth.get(d, 0) + 1
-            if n["id"] not in matched_node_ids:
-                not_in_doc.append({"node_id": n["id"], "name": n["name"], "depth": d})
+        expected_by_depth[n["level"]] = expected_by_depth.get(n["level"], 0) + 1
+        if n["parent_id"] in matched_parents and n["id"] not in matched_node_ids:
+            not_in_doc.append({"node_id": n["id"], "name": n["name"], "depth": n["level"]})
 
     depths = sorted(set(present_by_depth) | set(expected_by_depth))
     levels = [{"depth": d, "expected": expected_by_depth.get(d, 0),
@@ -389,7 +390,12 @@ Group content blocks by deepest matched node, rolling up, preserving document or
 
 **Files:** Modify `backend/services/doc_processor.py`; Test `backend/tests/test_attach.py`
 
-**Contract:** `attach_content_to_curriculum(elements, resolution, main_topic_id) -> list[dict]` where each group is `{"node_id": int, "elements": [...]}`. Walk `elements` with the SAME hid counter as the outline; maintain a stack of `(level, hid)`; for each **non-heading** element, find the deepest ancestor heading whose `resolution[hid]` is not None → that node; else `main_topic_id`. Group elements by resolved node id, **preserving original document order within each group**. Heading elements themselves are not content but may be retained for `build_heading_tree`/context per group (include them in their own group so heading_tree still builds).
+**Contract:** `attach_content_to_curriculum(elements, resolution, main_topic_id) -> list[dict]` where each group is `{"node_id": int, "elements": [...]}`. Walk `elements` with the SAME hid counter as the outline; maintain a stack of `(level, hid)`; for each element, resolve to the deepest ancestor heading whose `resolution[hid]` is not None → that node; else `main_topic_id`. Group elements by resolved node id, **preserving original document order within each group**.
+
+**Heading emission rule (critical — prevents body/heading-tree corruption):**
+- A **matched** heading (its own `resolution[hid]` is a real node id) *defines* a section — it becomes that section's title (the node name in Task 7a), so it is **NOT emitted** into the group body. Otherwise the section's own name leaks into `content_text` and `build_heading_tree` re-lists it as a spurious self-child.
+- An **unmatched** heading (`resolution[hid] is None`, rolled up) IS meaningful sub-structure (e.g. "Giardiasis/GI Parasites" under Parasitic Infections) — **emit it**, so `build_heading_tree`/content show the grouping.
+- A matched node with no content under it produces **no group** (no empty section).
 
 - [ ] **Step 1: Write failing test** (`backend/tests/test_attach.py`):
 
@@ -428,13 +434,25 @@ def test_attach_preamble_goes_to_main_topic():
     assert groups[MAIN_ID]["elements"][0]["text"] == "intro before any heading"
 
 def test_attach_preserves_document_order_within_group():
-    # interleave so node 3 gathers non-contiguous blocks; order must hold
-    els = [_h(2, "Parasitic Infections"), _p("a"), _h(3, "Toxoplasmosis"), _p("t"),
-           _p("b")]  # 'b' has no heading after toxo? it's under Toxoplasmosis
+    # 'a' is under Parasitic Infections; 't' and 'b' are both under the still-open
+    # Toxoplasmosis heading (b has no heading of its own). Order must hold.
+    els = [_h(2, "Parasitic Infections"), _p("a"), _h(3, "Toxoplasmosis"), _p("t"), _p("b")]
     res = {0: 3, 1: 4}
     groups = {g["node_id"]: g for g in attach_content_to_curriculum(els, res, MAIN_ID)}
     assert [e["text"] for e in groups[3]["elements"] if e["type"] == "paragraph"] == ["a"]
     assert [e["text"] for e in groups[4]["elements"] if e["type"] == "paragraph"] == ["t", "b"]
+
+
+def test_attach_matched_heading_is_title_not_body():
+    groups = {g["node_id"]: g for g in attach_content_to_curriculum(ELEMENTS, RES, MAIN_ID)}
+    # Toxoplasmosis (matched H3, hid 3) defines node 4 → not in its body, no heading els
+    assert all(e["type"] != "heading" for e in groups[4]["elements"])
+    assert "Toxoplasmosis" not in [e["text"] for e in groups[4]["elements"]]
+    # Giardiasis/GI Parasites (UNMATCHED H3, hid 2) stays as sub-structure in node 3
+    node3_headings = [e["text"] for e in groups[3]["elements"] if e["type"] == "heading"]
+    assert node3_headings == ["Giardiasis/GI Parasites"]
+    # node 2 (Infectious Disease H1, matched, no direct content) → no group at all
+    assert 2 not in groups
 ```
 
 - [ ] **Step 2: Run → FAIL.**
@@ -468,13 +486,13 @@ def attach_content_to_curriculum(elements: list[dict], resolution: dict,
             cur_hid = hid
             stack.append((level, cur_hid))
             hid += 1
-            # Resolve this heading to its own node if matched, else nearest matched
-            # ancestor, else main topic — so the heading row lands with its content.
-            node_id = _resolve_node(stack, resolution, main_topic_id)
-            emit(node_id, elem)
+            # A MATCHED heading defines a section (its node becomes the title) —
+            # skip it from the body. An UNMATCHED heading is sub-structure that
+            # rolled up — keep it so build_heading_tree/content show the grouping.
+            if resolution.get(cur_hid) is None:
+                emit(_resolve_node(stack, resolution, main_topic_id), elem)
         else:
-            node_id = _resolve_node(stack, resolution, main_topic_id)
-            emit(node_id, elem)
+            emit(_resolve_node(stack, resolution, main_topic_id), elem)
 
     return [{"node_id": nid, "elements": groups[nid]} for nid in order]
 
@@ -500,15 +518,14 @@ git commit -m "feat: attach_content_to_curriculum — deepest-match grouping wit
 
 **Files:** Modify `backend/main.py` (`_sweep_orphaned_jobs`, ~line 196)
 
-- [ ] **Step 1:** Read `_sweep_orphaned_jobs`. It marks `ProcessingJob`/`GenerationJob` rows with `status.in_([pending, running])` as failed. For the `ProcessingJob` query ONLY, add a predicate so parked jobs survive:
+- [ ] **Step 1:** Read `_sweep_orphaned_jobs` (it loops over the two job models and marks `status.in_([pending, running])` rows failed). After the `stuck` rows are fetched for `ProcessingJob`, exclude parked ones in Python — simplest and clearly readable:
 
 ```python
-                model_cls.status.in_([JobStatus.pending, JobStatus.running]),
-                # parked reconcile jobs are waiting on a human — don't fail them
-                *( [ProcessingJob.pipeline_step != "awaiting_reconcile"] if model_cls is ProcessingJob else [] ),
+            if model_cls is ProcessingJob:
+                stuck = [j for j in stuck if j.pipeline_step != "awaiting_reconcile"]
 ```
 
-(Adjust to the actual loop shape — if the function handles the two job types separately, just add `ProcessingJob.pipeline_step != "awaiting_reconcile"` to the ProcessingJob filter. Read the function first and integrate cleanly.)
+(Integrate against the actual variable names; the goal is: a `ProcessingJob` with `pipeline_step == "awaiting_reconcile"` is never marked failed by the sweep.)
 
 - [ ] **Step 2: Verify import.** `.venv/bin/python3.12 -c "import backend.main; print('ok')"` → `ok`.
 - [ ] **Step 3: Commit.**
@@ -520,6 +537,15 @@ git commit -m "feat: keep awaiting_reconcile jobs out of the startup orphan swee
 ---
 
 ## Task 7: Endpoints + pipeline integration (`documents.py`)
+
+> **⚠️ ATOMICITY — Tasks 7 and 8 are ONE shippable unit.** After 7b stops
+> backgrounding `_run_processing`, the upload parks at `awaiting_reconcile`
+> (`status=running`); the existing `WorkspacePage` poller only stops on
+> `done`/`failed`, so it would spin forever and no content would process. Upload
+> is **knowingly non-functional between Task 7 and Task 8c** (which branches the
+> upload handler to open the modal instead of polling). Do NOT manually verify or
+> deploy after Task 7 alone — per-task commits here are local checkpoints. Verify
+> only after Task 8.
 
 This is the wiring. Read `documents.py` fully first. Sub-steps:
 
@@ -537,10 +563,17 @@ This is the wiring. Read `documents.py` fully first. Sub-steps:
 - [ ] In `POST /upload`: after saving file + creating `tt`/`upload`/`job`, do NOT background `_run_processing`. Instead:
   - `elements = parse_docx(filepath)` (headings present), `outline = parse_heading_outline(elements)`, store `upload.heading_outline = outline`.
   - `job.status = running; job.pipeline_step = "awaiting_reconcile"`. Commit.
-  - Return `{upload_id, processing_job_id, topic_tree_id, reconcile: <diff>}` where `<diff>` comes from a shared `_build_reconcile(db, upload)` helper (below). The main topic is `tt.curriculum_id` — **require it** (400 if missing: "Pick a main curriculum topic for this upload").
+  - Return `{upload_id, processing_job_id, topic_tree_id, reconcile: <diff>}` where `<diff>` comes from a shared `_build_reconcile(db, upload)` helper (below). The main topic is `tt.curriculum_id` — **require it** (400 if missing: "Pick a main curriculum topic for this upload"). This guard reads `tt.curriculum_id` AFTER resolving the tree, so it fires for BOTH a new tree created without `curriculum_id` AND an existing `topic_tree_id` whose `curriculum_id` is null.
 
 **7c — `_build_reconcile(db, upload)` helper + `GET /documents/{upload_id}/reconcile`.**
-- [ ] Helper: load `tt`, main topic node + its subtree (`Curriculum.path.startswith(main.path)`, same version), build `nodes` dicts, `outline = upload.heading_outline`, return `align(outline, main_dict, nodes)` plus the curriculum subtree (so the modal can render the tree). Endpoint returns it fresh (re-runs align → reflects nodes just added).
+- [ ] Helper: load `tt`, the main topic node (`db.get(Curriculum, tt.curriculum_id)`), and its subtree. **Subtree query must avoid sibling-prefix collisions** (the existing `path.startswith(parent.path)` in `_match_section_to_curriculum` is buggy for names where one is a prefix of another): use
+  ```python
+  subtree = db.query(Curriculum).filter(
+      Curriculum.version == main.version,
+      or_(Curriculum.id == main.id, Curriculum.path.startswith(main.path + " > ")),
+  ).all()
+  ```
+  (add `from sqlalchemy import or_` to documents.py if not present.) Build `nodes` dicts (`id, parent_id, name, level, path`), `outline = upload.heading_outline`, return `align(outline, main_dict, nodes)` plus the curriculum subtree (so the modal can render the tree). Endpoint returns it fresh (re-runs align → reflects nodes just added).
 
 **7d — `POST /documents/{upload_id}/continue`.**
 - [ ] Validate job is `awaiting_reconcile`. Recompute `align` (fresh, post-edits) to get `resolution`. Set `job.pipeline_step = "parsing"`, background `_run_processing(job.id, resolution)`. Return `{processing_job_id}`.
@@ -561,7 +594,7 @@ This is the wiring. Read `documents.py` fully first. Sub-steps:
   - The curriculum subtree (reuse the existing tree-node rendering pattern from `LibraryPage`/`CurriculumPicker`), annotating each node as matched / not-in-document, and each `missing_in_curriculum` heading with an **Add node** button that calls the existing `createCurriculumNode({name, parent_id})` then re-fetches `getReconcile` and updates state.
   - A "N headings will roll up to their parent" note (count of `resolution`→None, i.e. `missing_in_curriculum.length`).
   - **Continue** (calls `continueProcessing`, then closes + starts polling the processing job like the current flow) and **Cancel**.
-- [ ] **8c — `WorkspacePage.tsx`:** after a successful upload, open `ReconcileModal` with the returned `diff` instead of immediately polling. On Continue, resume the existing processing-job polling/badge logic.
+- [ ] **8c — `WorkspacePage.tsx` (resolves the parked-poller blocker):** in the upload handler (`handleUploadConfirm`, ~line 983), branch on the response: if `result.reconcile` is present, open `ReconcileModal` with that diff and **do NOT** `setProcessingJobId` (so the poller never starts on the parked job). Only on the modal's **Continue** (after `continueProcessing` returns `{processing_job_id}`) set `processingJobId` to resume the existing polling/badge logic. This is what makes upload functional again after Task 7.
 - [ ] **Step: build check.** `cd frontend && npm run build` → succeeds.
 - [ ] **Commit.** `git commit -am "feat: ReconcileModal + curriculum-aligned upload flow (frontend)"`
 
@@ -569,7 +602,7 @@ This is the wiring. Read `documents.py` fully first. Sub-steps:
 
 ## Task 9: Integration test + manual verification
 
-- [ ] **9a — Integration test** (`backend/tests/test_reconcile_flow.py`, uses a temp SQLite + FastAPI `TestClient`): seed a tiny curriculum (main topic + Parasitic Infections + Toxoplasmosis), insert an `Upload` with a `heading_outline` matching the Parasitic Infections example, call `GET /reconcile` → assert the diff (Giardiasis in `missing_in_curriculum`, Toxoplasmosis matched). Then drive `_run_processing(job_id, resolution)` directly with a stub element list and assert sections are created with the right `curriculum_topic_path` (Toxoplasmosis section → `…>Toxoplasmosis`; Giardiasis content → `…>Parasitic Infections`). Run on both interpreters.
+- [ ] **9a — Integration test** (`backend/tests/test_reconcile_flow.py`, uses a temp SQLite + FastAPI `TestClient`): seed a tiny curriculum (main topic + Parasitic Infections + Toxoplasmosis), insert an `Upload` with a `heading_outline` matching the Parasitic Infections example, call `GET /reconcile` → assert the diff (Giardiasis in `missing_in_curriculum`, Toxoplasmosis matched). Then drive `_run_processing(job_id, resolution)` directly with a stub element list and assert sections are created with the right `curriculum_topic_path` (Toxoplasmosis section → `…>Toxoplasmosis`; Giardiasis content → `…>Parasitic Infections`). **Also assert content cleanliness** (guards blocker #2): the Toxoplasmosis section's `content_text` does NOT start with/contain the bare title "Toxoplasmosis" as its own line, and its `heading_tree` is empty (no self-reference); the Parasitic Infections section's `heading_tree` DOES contain "Giardiasis/GI Parasites". Run on both interpreters.
 - [ ] **9b — Orphan-sweep test:** insert a `ProcessingJob` with `pipeline_step="awaiting_reconcile", status=running`, call `_sweep_orphaned_jobs()`, assert it is still `running` (not failed); a normal running job IS failed.
 - [ ] **9c — Manual:** wipe DB (`rm data/app.db`), restart backend, upload a real doc into a main topic, confirm the reconcile modal shows correct expected/present counts, add a missing leaf, Continue, and confirm cards generated from the Toxoplasmosis section are tagged to the Toxoplasmosis leaf.
 - [ ] **Commit.** `git commit -am "test: integration + orphan-sweep coverage for reconcile flow"`
