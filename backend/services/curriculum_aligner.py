@@ -166,3 +166,25 @@ def build_merged_tree(outline: list[dict], main_topic: dict, nodes: list[dict],
 
     graft(outline, root)
     return root
+
+
+def expand_includes(included_hids, outline: list[dict]) -> list[int]:
+    """Expand selected new-node hids to include their outline ancestors, ordered
+    parents-before-children (so curriculum nodes can be created in order)."""
+    parent_of: dict[int, int | None] = {}
+    order: list[int] = []  # document order of all heading hids
+
+    def walk(nodes, parent_hid):
+        for h in nodes:
+            parent_of[h["hid"]] = parent_hid
+            order.append(h["hid"])
+            walk(h["children"], h["hid"])
+    walk(outline, None)
+
+    wanted: set[int] = set()
+    for hid in included_hids:
+        cur = hid
+        while cur is not None and cur not in wanted:
+            wanted.add(cur)
+            cur = parent_of.get(cur)
+    return [hid for hid in order if hid in wanted]
