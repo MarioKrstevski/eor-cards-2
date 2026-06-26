@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { ReconcileDiff, ReconcileSubtreeNode } from '../types';
-import { createCurriculumNode, getReconcile, continueProcessing } from '../api';
+import type { MergedNode, ScanResult } from '../types';
+import { updateCurriculumNode, continueProcessing, deleteScan } from '../api';
 
 interface ReconcileModalProps {
-  uploadId: number;
-  diff: ReconcileDiff;
+  scanToken: string;
+  tree: MergedNode;
+  summary: ScanResult['summary'];
   onClose: () => void;
   onContinue: (processingJobId: number) => void;
 }
 
-// Level badge palette (mirrors CurriculumPicker / LibraryPage)
+// Level badge palette (mirrors CurriculumPicker)
 const LEVEL_STYLES = [
   'bg-purple-50 text-purple-700',
   'bg-blue-50 text-blue-700',
@@ -17,46 +18,61 @@ const LEVEL_STYLES = [
   'bg-orange-50 text-orange-700',
 ];
 
-interface TreeNode extends ReconcileSubtreeNode {
-  children: TreeNode[];
+// ── Tree helpers ──────────────────────────────────────────────────────────────
+
+// Does this node, or any descendant, have a non-matched status?
+function hasNonMatched(node: MergedNode): boolean {
+  if (node.status !== 'matched') return true;
+  return node.children.some(hasNonMatched);
 }
 
-// Build a nested tree from the flat subtree, rooted at main_topic.
-function buildTree(subtree: ReconcileSubtreeNode[], rootId: number): TreeNode | null {
-  const byId = new Map<number, TreeNode>();
-  for (const n of subtree) byId.set(n.id, { ...n, children: [] });
-  for (const n of subtree) {
-    if (n.parent_id != null && byId.has(n.parent_id) && n.id !== rootId) {
-      byId.get(n.parent_id)!.children.push(byId.get(n.id)!);
-    }
+// Collect every `new` hid in a subtree (including the node itself if `new`).
+function collectNewHids(node: MergedNode, acc: number[] = []): number[] {
+  if (node.status === 'new' && node.hid != null) acc.push(node.hid);
+  for (const c of node.children) collectNewHids(c, acc);
+  return acc;
+}
+
+// Does this `new` node have any `new` descendant?
+function hasNewDescendant(node: MergedNode): boolean {
+  return node.children.some((c) => (c.status === 'new' && c.hid != null) || hasNewDescendant(c));
+}
+
+// Walk-up: build a map hid → chain of `new` ancestor hids (for include-with-parents).
+function buildNewParentChains(
+  node: MergedNode,
+  ancestorNewHids: number[],
+  out: Map<number, number[]>
+): void {
+  if (node.status === 'new' && node.hid != null) {
+    out.set(node.hid, [...ancestorNewHids]);
+    const nextAncestors = [...ancestorNewHids, node.hid];
+    for (const c of node.children) buildNewParentChains(c, nextAncestors, out);
+  } else {
+    // A non-new node resets the `new` ancestor chain for its subtree.
+    for (const c of node.children) buildNewParentChains(c, [], out);
   }
-  return byId.get(rootId) ?? null;
 }
 
-function TreeNodeRow({ node, baseLevel }: { node: TreeNode; baseLevel: number }) {
-  const depth = node.level - baseLevel;
-  const levelStyle = LEVEL_STYLES[Math.min(node.level, LEVEL_STYLES.length - 1)];
-  return (
-    <div>
-      <div
-        className="flex items-center gap-1.5 py-1 text-gray-700"
-        style={{ paddingLeft: `${depth * 16}px` }}
-      >
-        <span className={`text-[9px] font-bold w-4 text-center rounded shrink-0 py-px ${levelStyle}`}>
-          {node.level}
-        </span>
-        <span className="text-xs truncate">{node.name}</span>
-      </div>
-      {node.children.map((child) => (
-        <TreeNodeRow key={child.id} node={child} baseLevel={baseLevel} />
-      ))}
-    </div>
-  );
+// Rename a node by node_id in a fresh copy of the tree.
+function renameNode(node: MergedNode, nodeId: number, newName: string): MergedNode {
+  if (node.node_id === nodeId) {
+    return { ...node, name: newName, children: node.children };
+  }
+  return { ...node, children: node.children.map((c) => renameNode(c, nodeId, newName)) };
 }
 
-export default function ReconcileModal({ uploadId, diff: initialDiff, onClose, onContinue }: ReconcileModalProps) {
-  const [diff, setDiff] = useState<ReconcileDiff>(initialDiff);
-  const [addingHid, setAddingHid] = useState<number | null>(null);
+export default function ReconcileModal({
+  scanToken,
+  tree: initialTree,
+  summary,
+  onClose,
+  onContinue,
+}: ReconcileModalProps) {
+  const [tree, setTree] = useState<MergedNode>(initialTree);
+  const [included, setIncluded] = useState<Set<number>>(new Set());
+  const [view, setView] = useState<'all' | 'diff'>('all');
+  const [editingNodeId, setEditingNodeId] = useState<number | null>(null);
   const [continuing, setContinuing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -68,46 +84,105 @@ export default function ReconcileModal({ uploadId, diff: initialDiff, onClose, o
     return () => document.removeEventListener('keydown', handleKey);
   }, [onClose]);
 
-  const tree = useMemo(
-    () => buildTree(diff.subtree, diff.main_topic.id),
-    [diff.subtree, diff.main_topic.id]
-  );
+  // Map of new-hid → its `new` ancestor hids (so a child can't be included without its new parent)
+  const newParentChains = useMemo(() => {
+    const out = new Map<number, number[]>();
+    buildNewParentChains(tree, [], out);
+    return out;
+  }, [tree]);
 
-  // Count missing / not-in-doc per depth for the level summary
-  const missingByDepth = useMemo(() => {
-    const m = new Map<number, number>();
-    for (const item of diff.missing_in_curriculum) m.set(item.depth, (m.get(item.depth) ?? 0) + 1);
+  // All `new` hids in the tree.
+  const allNewHids = useMemo(() => collectNewHids(tree), [tree]);
+
+  // Counts per status per depth, computed by walking the tree.
+  const countsByDepth = useMemo(() => {
+    const m = new Map<number, { matched: number; fuzzy: number; new: number; missing: number }>();
+    function walk(node: MergedNode) {
+      const row = m.get(node.depth) ?? { matched: 0, fuzzy: 0, new: 0, missing: 0 };
+      row[node.status] += 1;
+      m.set(node.depth, row);
+      node.children.forEach(walk);
+    }
+    walk(tree);
     return m;
-  }, [diff.missing_in_curriculum]);
+  }, [tree]);
 
-  const notInDocByDepth = useMemo(() => {
-    const m = new Map<number, number>();
-    for (const item of diff.not_in_document) m.set(item.depth, (m.get(item.depth) ?? 0) + 1);
-    return m;
-  }, [diff.not_in_document]);
+  const totalNotIncluded = allNewHids.length - included.size;
 
-  async function handleAddNode(hid: number, name: string, parentId: number | null) {
-    setAddingHid(hid);
+  // ── Include logic ──────────────────────────────────────────────────────────
+
+  function includeOn(hid: number) {
+    setIncluded((prev) => {
+      const next = new Set(prev);
+      next.add(hid);
+      // Walk up: add any `new` ancestor hids.
+      for (const ancestor of newParentChains.get(hid) ?? []) next.add(ancestor);
+      return next;
+    });
+  }
+
+  function includeOff(node: MergedNode) {
+    const descendants = collectNewHids(node); // includes node itself
+    setIncluded((prev) => {
+      const next = new Set(prev);
+      for (const hid of descendants) next.delete(hid);
+      return next;
+    });
+  }
+
+  function toggleInclude(node: MergedNode) {
+    if (node.hid == null) return;
+    if (included.has(node.hid)) includeOff(node);
+    else includeOn(node.hid);
+  }
+
+  function includeAllUnder(node: MergedNode) {
+    const hids = collectNewHids(node);
+    setIncluded((prev) => {
+      const next = new Set(prev);
+      // Add this subtree's new hids plus the node's own new ancestors.
+      if (node.hid != null) for (const a of newParentChains.get(node.hid) ?? []) next.add(a);
+      for (const hid of hids) next.add(hid);
+      return next;
+    });
+  }
+
+  function includeAllNew() {
+    setIncluded(new Set(allNewHids));
+  }
+
+  // ── Edit-leaf rename ────────────────────────────────────────────────────────
+
+  async function handleRename(node: MergedNode) {
+    if (node.node_id == null) return;
+    const newName = window.prompt('Rename curriculum node:', node.name);
+    if (newName == null) return;
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === node.name) return;
+    setEditingNodeId(node.node_id);
     setError(null);
     try {
-      await createCurriculumNode({
-        name,
-        parent_id: parentId ?? diff.main_topic.id,
-      });
-      const fresh = await getReconcile(uploadId);
-      setDiff(fresh);
+      await updateCurriculumNode(node.node_id, { name: trimmed });
+      setTree((prev) => renameNode(prev, node.node_id!, trimmed));
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to add node');
+      setError(err instanceof Error ? err.message : 'Failed to rename node');
     } finally {
-      setAddingHid(null);
+      setEditingNodeId(null);
     }
+  }
+
+  async function handleCancel() {
+    try {
+      await deleteScan(scanToken);
+    } catch { /* best effort */ }
+    onClose();
   }
 
   async function handleContinue() {
     setContinuing(true);
     setError(null);
     try {
-      const { processing_job_id } = await continueProcessing(uploadId);
+      const { processing_job_id } = await continueProcessing(scanToken, [...included]);
       onContinue(processing_job_id);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to continue');
@@ -115,115 +190,146 @@ export default function ReconcileModal({ uploadId, diff: initialDiff, onClose, o
     }
   }
 
+  // ── Recursive node row ──────────────────────────────────────────────────────
+
+  function TreeNodeRow({ node }: { node: MergedNode }) {
+    // In diff view, hide fully-matched subtrees.
+    if (view === 'diff' && !hasNonMatched(node)) return null;
+
+    const levelStyle = LEVEL_STYLES[Math.min(node.depth, LEVEL_STYLES.length - 1)];
+    // Greyed if matched (in diff view it's context) or missing.
+    const greyed = node.status === 'matched' || node.status === 'missing';
+
+    return (
+      <div>
+        <div
+          className={`flex items-center gap-1.5 py-1 ${greyed ? 'text-gray-400' : 'text-gray-700'}`}
+          style={{ paddingLeft: `${8 + node.depth * 14}px` }}
+        >
+          <span className={`text-[9px] font-bold w-4 text-center rounded shrink-0 py-px ${levelStyle}`}>
+            {node.depth}
+          </span>
+
+          {node.status === 'new' && (
+            <input
+              type="checkbox"
+              checked={node.hid != null && included.has(node.hid)}
+              onChange={() => toggleInclude(node)}
+              className="shrink-0 h-3.5 w-3.5 accent-blue-600"
+            />
+          )}
+
+          <span className="text-xs truncate">{node.name}</span>
+
+          {node.status === 'fuzzy' && (
+            <span className="text-[10px] text-amber-700 bg-amber-50 rounded px-1.5 py-px shrink-0 truncate">
+              ⚠ “{node.doc_name}” → “{node.name}”{node.score != null ? ` (${node.score})` : ''}
+            </span>
+          )}
+          {node.status === 'missing' && (
+            <span className="text-[10px] font-medium text-gray-500 bg-gray-100 rounded px-1.5 py-px shrink-0">
+              Missing
+            </span>
+          )}
+          {node.status === 'new' && (
+            <span className="text-[10px] font-medium text-green-700 bg-green-50 rounded px-1.5 py-px shrink-0">
+              New
+            </span>
+          )}
+
+          {/* Per-row actions */}
+          {node.status === 'fuzzy' && node.node_id != null && (
+            <button
+              onClick={() => handleRename(node)}
+              disabled={editingNodeId === node.node_id}
+              className="ml-auto px-2 py-0.5 text-[11px] font-medium text-blue-700 border border-blue-200 rounded hover:bg-blue-50 disabled:opacity-50 shrink-0"
+            >
+              {editingNodeId === node.node_id ? 'Saving…' : 'Edit leaf'}
+            </button>
+          )}
+          {node.status === 'new' && hasNewDescendant(node) && (
+            <button
+              onClick={() => includeAllUnder(node)}
+              className="ml-auto px-2 py-0.5 text-[11px] font-medium text-green-700 border border-green-200 rounded hover:bg-green-50 shrink-0"
+            >
+              Include all under here
+            </button>
+          )}
+        </div>
+        {node.children.map((child, i) => (
+          <TreeNodeRow key={child.node_id ?? child.hid ?? `n${i}`} node={child} />
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" aria-modal="true" role="dialog">
-      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={handleCancel} />
 
       <div className="relative bg-white rounded-2xl shadow-lg w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col overflow-hidden">
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200 shrink-0">
-          <h2 className="text-base font-semibold text-gray-900">Curriculum check</h2>
+          <h2 className="text-base font-semibold text-gray-900">Review before importing</h2>
           <p className="text-xs text-gray-500 mt-0.5">
-            Before processing, we compared this document's headings against the curriculum for{' '}
-            <span className="font-medium text-gray-700">{diff.main_topic.name}</span>. Review below, add any
-            missing curriculum nodes, then continue.
+            Add any new headings to the curriculum, then Continue.
           </p>
         </div>
 
         {/* Body */}
-        <div className="px-6 py-4 overflow-y-auto space-y-5">
-          {/* Per-level summary */}
-          <div>
-            <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">Levels</h3>
-            <div className="space-y-1.5">
-              {diff.levels.length === 0 ? (
-                <p className="text-xs text-gray-400 italic">No headings found in document.</p>
-              ) : (
-                diff.levels.map((lvl) => {
-                  const missing = missingByDepth.get(lvl.depth) ?? 0;
-                  const notInDoc = notInDocByDepth.get(lvl.depth) ?? 0;
-                  const ok = lvl.present === lvl.expected && missing === 0;
-                  return (
-                    <div
-                      key={lvl.depth}
-                      className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg ${
-                        ok ? 'bg-green-50 text-green-800' : 'bg-amber-50 text-amber-800'
-                      }`}
-                    >
-                      <span className="shrink-0">{ok ? '✓' : '⚠'}</span>
-                      <span className="font-medium">Depth {lvl.depth}:</span>
-                      <span>
-                        {lvl.present} found / {lvl.expected} expected
-                      </span>
-                      {(missing > 0 || notInDoc > 0) && (
-                        <span className="text-[11px] opacity-80">
-                          {missing > 0 && `${missing} missing in curriculum`}
-                          {missing > 0 && notInDoc > 0 && ' · '}
-                          {notInDoc > 0 && `${notInDoc} not in document`}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
+        <div className="px-6 py-4 overflow-y-auto space-y-4">
+          {/* Summary bar */}
+          <div className="space-y-1.5">
+            {summary.map((lvl) => {
+              const c = countsByDepth.get(lvl.depth) ?? { matched: 0, fuzzy: 0, new: 0, missing: 0 };
+              const clean = c.fuzzy === 0 && c.new === 0 && c.missing === 0;
+              return (
+                <div
+                  key={lvl.depth}
+                  className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg ${
+                    clean ? 'bg-green-50 text-green-800' : 'bg-amber-50 text-amber-800'
+                  }`}
+                >
+                  <span className="shrink-0">{clean ? '✓' : '⚠'}</span>
+                  <span className="font-medium">Depth {lvl.depth}:</span>
+                  <span>
+                    {c.matched} matched · {c.fuzzy} fuzzy · {c.new} new · {c.missing} missing
+                  </span>
+                </div>
+              );
+            })}
           </div>
 
-          {/* Curriculum subtree */}
-          <div>
-            <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">Curriculum</h3>
-            <div className="border border-gray-200 rounded-lg px-3 py-2 max-h-56 overflow-y-auto">
-              {tree ? (
-                <TreeNodeRow node={tree} baseLevel={diff.main_topic.level} />
-              ) : (
-                <p className="text-xs text-gray-400 italic">No curriculum nodes.</p>
-              )}
+          {/* Controls */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden text-xs">
+              <button
+                onClick={() => setView('all')}
+                className={`px-3 py-1.5 font-medium ${view === 'all' ? 'bg-blue-700 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                All
+              </button>
+              <button
+                onClick={() => setView('diff')}
+                className={`px-3 py-1.5 font-medium border-l border-gray-200 ${view === 'diff' ? 'bg-blue-700 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                Differences
+              </button>
             </div>
+            {allNewHids.length > 0 && (
+              <button
+                onClick={includeAllNew}
+                className="px-3 py-1.5 text-xs font-medium text-green-700 border border-green-200 rounded-lg hover:bg-green-50"
+              >
+                Include all new
+              </button>
+            )}
           </div>
 
-          {/* Missing in curriculum */}
-          {diff.missing_in_curriculum.length > 0 && (
-            <div>
-              <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">
-                Headings missing from curriculum
-              </h3>
-              <div className="space-y-1.5">
-                {diff.missing_in_curriculum.map((item) => (
-                  <div
-                    key={item.hid}
-                    className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-gray-50"
-                  >
-                    <span className="text-[9px] font-bold w-4 text-center rounded shrink-0 py-px bg-gray-200 text-gray-600">
-                      {item.depth + 1}
-                    </span>
-                    <span className="flex-1 truncate text-gray-700">{item.name}</span>
-                    <button
-                      onClick={() => handleAddNode(item.hid, item.name, item.parent_id)}
-                      disabled={addingHid === item.hid}
-                      className="px-2.5 py-1 text-xs font-medium text-blue-700 border border-blue-200 rounded-md hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
-                    >
-                      {addingHid === item.hid ? 'Adding…' : 'Add node'}
-                    </button>
-                  </div>
-                ))}
-              </div>
-              <p className="text-[11px] text-gray-500 mt-2">
-                {diff.missing_in_curriculum.length} heading(s) will roll up to their parent if not added.
-              </p>
-            </div>
-          )}
-
-          {/* Warnings */}
-          {diff.warnings.length > 0 && (
-            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-              <h3 className="text-xs font-semibold text-amber-800 mb-1">Warnings</h3>
-              <ul className="list-disc list-inside space-y-0.5">
-                {diff.warnings.map((w, i) => (
-                  <li key={i} className="text-[11px] text-amber-700">{w}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {/* Tree */}
+          <div className="border border-gray-200 rounded-lg px-3 py-2 max-h-72 overflow-y-auto">
+            <TreeNodeRow node={tree} />
+          </div>
 
           {error && (
             <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
@@ -231,20 +337,27 @@ export default function ReconcileModal({ uploadId, diff: initialDiff, onClose, o
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-2.5 shrink-0">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-gray-200"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleContinue}
-            disabled={continuing}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {continuing ? 'Starting…' : 'Continue'}
-          </button>
+        <div className="px-6 py-4 border-t border-gray-200 flex items-center gap-2.5 shrink-0">
+          {totalNotIncluded > 0 && (
+            <p className="text-[11px] text-gray-500 flex-1">
+              {totalNotIncluded} new heading(s) not included will roll up to their parent.
+            </p>
+          )}
+          <div className="flex justify-end gap-2.5 ml-auto">
+            <button
+              onClick={handleCancel}
+              className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-gray-200"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleContinue}
+              disabled={continuing}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {continuing ? 'Starting…' : 'Continue'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import ConfirmModal from '../components/ConfirmModal';
 import CurriculumPicker from '../components/CurriculumPicker';
+import ReconcileModal from '../components/ReconcileModal';
 import { buildAggregatedCounts, flattenTree, sortTree } from '../utils';
 import {
   getCurriculum,
@@ -16,7 +17,7 @@ import {
   getTopicTrees,
   getTopicTree,
   deleteTopicTree,
-  uploadDocument,
+  scanDocument,
   updateSection,
   getProcessingJob,
   exportCardsUrl,
@@ -32,7 +33,7 @@ import {
   getPresentations,
   deletePresentation,
 } from '../api';
-import type { CurriculumMapping, CurriculumNode, ReviewMarkType, RuleSet, TopicCoverageStats, TopicTree } from '../types';
+import type { CurriculumMapping, CurriculumNode, MergedNode, ReviewMarkType, RuleSet, ScanResult, TopicCoverageStats, TopicTree } from '../types';
 import { useSettings } from '../context/SettingsContext';
 
 // ─── Search result tree node (ancestors as context, matches bold) ─────────────
@@ -246,6 +247,7 @@ export default function LibraryPage() {
   const [uploadName, setUploadName] = useState('');
   const [uploadCurriculumId, setUploadCurriculumId] = useState<number | null>(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [reconcile, setReconcile] = useState<{ scanToken: string; tree: MergedNode; summary: ScanResult['summary'] } | null>(null);
 
   // Section topic edit
   const [editingSectionId, setEditingSectionId] = useState<number | null>(null);
@@ -439,12 +441,14 @@ export default function LibraryPage() {
     setUploading(true);
     setUploadError(null);
     try {
-      const result = await uploadDocument(uploadFile, {
+      const scan = await scanDocument(uploadFile, {
         topicTreeName: uploadName || undefined,
         curriculumId: uploadCurriculumId ?? undefined,
       });
-      setProcessingJobId(result.processing_job_id);
+      // Park at the reconcile gate — nothing is processing yet (no DB rows).
+      setReconcile({ scanToken: scan.scan_token, tree: scan.tree, summary: scan.summary });
       setUploadFile(null);
+      setUploading(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Upload failed';
       setUploadError(msg);
@@ -1297,6 +1301,21 @@ export default function LibraryPage() {
           variant="danger"
           onConfirm={handleDeleteTree}
           onCancel={() => setConfirmDeleteTree(null)}
+        />
+      )}
+
+      {/* Curriculum reconcile gate — appears after a scan */}
+      {reconcile && (
+        <ReconcileModal
+          scanToken={reconcile.scanToken}
+          tree={reconcile.tree}
+          summary={reconcile.summary}
+          onClose={() => setReconcile(null)}
+          onContinue={(jobId) => {
+            setReconcile(null);
+            setUploading(true);
+            setProcessingJobId(jobId);
+          }}
         />
       )}
 

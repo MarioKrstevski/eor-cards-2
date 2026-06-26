@@ -4,7 +4,7 @@ import {
   getTopicTree,
   getCurriculum,
   getCurriculumCoverage,
-  uploadDocument,
+  scanDocument,
   pasteDocument,
   deleteTopicTree,
   getProcessingJob,
@@ -18,7 +18,7 @@ import {
   createCurriculumNode,
   updateSection,
 } from '../api';
-import type { GenerationJob, CurriculumSection, CostEstimate, SectionDetail, ReconcileDiff } from '../types';
+import type { GenerationJob, CurriculumSection, CostEstimate, SectionDetail, MergedNode, ScanResult } from '../types';
 import type {
   CurriculumNode,
   TopicCoverageStats,
@@ -820,7 +820,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [processingJobId, setProcessingJobId] = useState<number | null>(null);
   const [processingStep, setProcessingStep] = useState<string | null>(null);
-  const [reconcile, setReconcile] = useState<{ uploadId: number; diff: ReconcileDiff } | null>(null);
+  const [reconcile, setReconcile] = useState<{ scanToken: string; tree: MergedNode; summary: ScanResult['summary'] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Section viewer
@@ -977,21 +977,15 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
     setUploading(true);
     setUploadError(null);
     try {
-      const result = await uploadDocument(uploadFile, {
+      const scan = await scanDocument(uploadFile, {
         topicTreeId: expandedTreeId ?? undefined,
         topicTreeName: uploadName || undefined,
         curriculumId: uploadCurriculumId ?? undefined,
       });
-      if (result.reconcile) {
-        // Curriculum-aligned flow: job is parked at the reconcile gate.
-        setReconcile({ uploadId: result.upload_id, diff: result.reconcile });
-        setUploadFile(null);
-        setUploading(false);
-        return;  // do NOT setProcessingJobId — job is parked
-      }
-      // Legacy/paste path fallback
-      setProcessingJobId(result.processing_job_id);
+      // Park at the reconcile gate — nothing is processing yet (no DB rows).
+      setReconcile({ scanToken: scan.scan_token, tree: scan.tree, summary: scan.summary });
       setUploadFile(null);
+      setUploading(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Upload failed';
       setUploadError(msg);
@@ -1462,8 +1456,9 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
       {/* Curriculum reconcile gate — appears after a curriculum-aligned upload */}
       {reconcile && (
         <ReconcileModal
-          uploadId={reconcile.uploadId}
-          diff={reconcile.diff}
+          scanToken={reconcile.scanToken}
+          tree={reconcile.tree}
+          summary={reconcile.summary}
           onClose={() => setReconcile(null)}
           onContinue={(jobId) => {
             setReconcile(null);
