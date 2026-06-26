@@ -21,7 +21,7 @@ import type {
   FixProposal,
   Presentation,
   SectionImage,
-  ReconcileDiff,
+  ScanResult,
 } from './types';
 
 const http = axios.create({ baseURL: '/api' });
@@ -102,41 +102,33 @@ export async function getTopicTree(id: number): Promise<TopicTree> {
   return res.data;
 }
 
-export async function uploadDocument(
+// Scan a document against the curriculum WITHOUT creating any DB rows. Returns a
+// merged diff-tree + a scan_token used to continue processing later.
+export async function scanDocument(
   file: File,
-  opts?: { topicTreeId?: number; topicTreeName?: string; curriculumId?: number }
-): Promise<{
-  upload_id: number;
-  processing_job_id: number;
-  topic_tree_id?: number;
-  topic_tree?: TopicTree;
-  reconcile?: ReconcileDiff;
-}> {
+  opts: { topicTreeId?: number; topicTreeName?: string; curriculumId?: number }
+): Promise<ScanResult> {
   const form = new FormData();
   form.append('file', file);
-  if (opts?.topicTreeId != null) form.append('topic_tree_id', String(opts.topicTreeId));
-  if (opts?.topicTreeName) form.append('topic_tree_name', opts.topicTreeName);
-  if (opts?.curriculumId != null) form.append('curriculum_id', String(opts.curriculumId));
-  const res = await http.post<{
-    upload_id: number;
-    processing_job_id: number;
-    topic_tree_id?: number;
-    topic_tree?: TopicTree;
-    reconcile?: ReconcileDiff;
-  }>(
-    '/topic-trees/upload',
-    form
+  if (opts.topicTreeId != null) form.append('topic_tree_id', String(opts.topicTreeId));
+  if (opts.topicTreeName) form.append('topic_tree_name', opts.topicTreeName);
+  if (opts.curriculumId != null) form.append('curriculum_id', String(opts.curriculumId));
+  const res = await http.post<ScanResult>('/topic-trees/scan', form);
+  return res.data;
+}
+
+export async function deleteScan(scanToken: string): Promise<void> {
+  await http.delete(`/topic-trees/scan/${scanToken}`);
+}
+
+export async function continueProcessing(
+  scanToken: string,
+  includedHids: number[]
+): Promise<{ processing_job_id: number; topic_tree_id: number }> {
+  const res = await http.post<{ processing_job_id: number; topic_tree_id: number }>(
+    '/topic-trees/continue',
+    { scan_token: scanToken, included_hids: includedHids }
   );
-  return res.data;
-}
-
-export async function getReconcile(uploadId: number): Promise<ReconcileDiff> {
-  const res = await http.get<ReconcileDiff>(`/topic-trees/${uploadId}/reconcile`);
-  return res.data;
-}
-
-export async function continueProcessing(uploadId: number): Promise<{ processing_job_id: number }> {
-  const res = await http.post<{ processing_job_id: number }>(`/topic-trees/${uploadId}/continue`);
   return res.data;
 }
 

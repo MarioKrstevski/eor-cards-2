@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import os
 import re
+import json
 import uuid
+import shutil
 import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
-from sqlalchemy import or_
+from pydantic import BaseModel
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 from typing import Optional
 from backend.db import get_db, SessionLocal
@@ -13,7 +16,7 @@ from backend.models import (
     TopicTree, Section, Upload, ProcessingJob, JobStatus,
     ContentBlock, SectionImage, Curriculum, Card, slugify, utcnow,
 )
-from backend.config import UPLOAD_DIR
+from backend.config import UPLOAD_DIR, SCAN_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -117,33 +120,103 @@ def section_to_dict(s: Section, include_content: bool = True) -> dict:
     return d
 
 
-@router.post("/upload")
-async def upload_document(
-    file: UploadFile = File(...),
-    topic_tree_name: Optional[str] = Form(None),
-    topic_tree_id: Optional[int] = Form(None),
-    curriculum_id: Optional[int] = Form(None),
-    background_tasks: BackgroundTasks = None,
+class ContinueRequest(BaseModel):
+    scan_token: str
+    included_hids: list[int] = []
+
+
+@router.post("/continue")
+def continue_processing(
+    body: ContinueRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    """Upload a .docx file, creating or targeting a topic tree, then auto-process."""
-    if not file.filename.endswith(".docx"):
-        raise HTTPException(400, "Only .docx files are supported")
+    """Commit an ephemeral scan: create user-selected new curriculum nodes,
+    re-align, create the topic-tree/upload/job, and kick off processing."""
+    from backend.services.curriculum_aligner import align, expand_includes
 
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    stored_name = f"{uuid.uuid4().hex}_{file.filename}"
-    filepath = os.path.join(UPLOAD_DIR, stored_name)
-    content = await file.read()
-    with open(filepath, "wb") as f:
-        f.write(content)
+    token = body.scan_token
+    json_path = os.path.join(SCAN_DIR, token + ".json")
+    docx_path = os.path.join(SCAN_DIR, token + ".docx")
+    if not os.path.exists(json_path) or not os.path.exists(docx_path):
+        raise HTTPException(404, "Scan expired — please re-upload")
 
-    # Create or get topic tree
-    if topic_tree_id:
-        tt = db.get(TopicTree, topic_tree_id)
+    with open(json_path) as f:
+        sidecar = json.load(f)
+    outline = sidecar["outline"]
+
+    main = db.get(Curriculum, sidecar["main_topic_id"])
+    if not main:
+        raise HTTPException(404, "Main curriculum topic not found")
+
+    def _load_subtree() -> list[dict]:
+        subtree = db.query(Curriculum).filter(
+            Curriculum.version == main.version,
+            or_(Curriculum.id == main.id, Curriculum.path.startswith(main.path + " > ")),
+        ).all()
+        return [
+            {"id": n.id, "parent_id": n.parent_id, "name": n.name, "level": n.level, "path": n.path}
+            for n in subtree
+        ]
+
+    main_dict = {
+        "id": main.id, "parent_id": main.parent_id, "name": main.name,
+        "level": main.level, "path": main.path,
+    }
+
+    nodes = _load_subtree()
+    resolution = align(outline, main_dict, nodes)["resolution"]
+
+    # Create the user-selected new nodes, parents-first.
+    ordered = expand_includes(body.included_hids, outline)
+
+    parent_of: dict[int, Optional[int]] = {}
+    text_of: dict[int, str] = {}
+
+    def _walk(heading_nodes, parent_hid):
+        for h in heading_nodes:
+            parent_of[h["hid"]] = parent_hid
+            text_of[h["hid"]] = h["text"]
+            _walk(h["children"], h["hid"])
+
+    _walk(outline, None)
+
+    minted: dict[int, int] = {}
+    for hid in ordered:
+        if resolution.get(hid) is not None:
+            continue  # already an existing curriculum node
+        parent_hid = parent_of.get(hid)
+        if parent_hid is None:
+            parent = main
+        elif resolution.get(parent_hid) is not None:
+            parent = db.get(Curriculum, resolution[parent_hid])
+        else:
+            parent = db.get(Curriculum, minted[parent_hid])
+
+        max_order = db.query(func.max(Curriculum.sort_order)).filter_by(
+            parent_id=parent.id, version=parent.version).scalar() or 0
+        node = Curriculum(
+            name=text_of[hid], parent_id=parent.id, level=parent.level + 1,
+            path=f"{parent.path} > {text_of[hid]}", sort_order=max_order + 1,
+            version=parent.version,
+        )
+        db.add(node)
+        db.flush()
+        minted[hid] = node.id
+
+    db.commit()
+
+    # Re-align against the refreshed subtree so newly-minted nodes are matched.
+    refreshed_nodes = _load_subtree()
+    resolution2 = align(outline, main_dict, refreshed_nodes)["resolution"]
+
+    # Resolve or create the topic tree.
+    if sidecar.get("topic_tree_id"):
+        tt = db.get(TopicTree, sidecar["topic_tree_id"])
         if not tt:
             raise HTTPException(404, "Topic tree not found")
     else:
-        name = topic_tree_name or os.path.splitext(file.filename)[0]
+        name = sidecar.get("topic_tree_name") or os.path.splitext(sidecar["original_name"])[0]
         slug = slugify(name)
         existing = db.query(TopicTree).filter_by(slug=slug).first()
         if existing:
@@ -152,122 +225,38 @@ async def upload_document(
                 f"A topic tree named '{existing.name}' already exists. "
                 f"Upload into it by selecting it, or use a different name."
             )
-        tt = TopicTree(
-            name=name,
-            slug=slug,
-            curriculum_id=curriculum_id,
-        )
+        tt = TopicTree(name=name, slug=slug, curriculum_id=main.id)
         db.add(tt)
         db.flush()
 
-    # A main curriculum topic is required to align the document's headings.
-    # Applies to a freshly-created tree without curriculum_id AND an existing
-    # topic_tree_id whose curriculum_id is null.
-    if tt.curriculum_id is None:
-        raise HTTPException(400, "Pick a main curriculum topic for this upload")
+    # Move temp docx into the permanent upload dir and create the DB rows.
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    stored_name = f"{uuid.uuid4().hex}_{sidecar['original_name']}"
+    shutil.move(docx_path, os.path.join(UPLOAD_DIR, stored_name))
 
     upload = Upload(
         topic_tree_id=tt.id,
-        original_name=file.filename,
+        original_name=sidecar["original_name"],
         filename=stored_name,
         status="processing",
     )
     db.add(upload)
     db.flush()
 
-    # Headings-only scan + park at reconcile gate (do NOT process yet).
-    from backend.services.doc_processor import parse_docx, parse_heading_outline
-    elements = parse_docx(filepath)
-    upload.heading_outline = parse_heading_outline(elements)
-
-    job = ProcessingJob(upload_id=upload.id, status=JobStatus.running)
-    job.pipeline_step = "awaiting_reconcile"
+    job = ProcessingJob(upload_id=upload.id, status=JobStatus.pending)
+    job.pipeline_step = "parsing"
     db.add(job)
     db.commit()
-    db.refresh(upload)
-    db.refresh(tt)
 
-    reconcile = _build_reconcile(db, upload)
+    # Best-effort cleanup of the sidecar (docx already moved out of SCAN_DIR).
+    try:
+        os.remove(json_path)
+    except OSError:
+        pass
 
-    return {
-        "upload_id": upload.id,
-        "processing_job_id": job.id,
-        "topic_tree_id": tt.id,
-        "topic_tree": topic_tree_to_dict(tt),
-        "reconcile": reconcile,
-    }
+    background_tasks.add_task(_run_processing, job.id, resolution2)
 
-
-def _build_reconcile(db: Session, upload: Upload) -> dict:
-    """Run the curriculum alignment for an upload's stored heading outline against
-    the live subtree of its topic tree's main curriculum topic. Re-runs align each
-    call so newly-added curriculum nodes are reflected."""
-    from backend.services.curriculum_aligner import align
-
-    tt = db.get(TopicTree, upload.topic_tree_id)
-    main = db.get(Curriculum, tt.curriculum_id)
-
-    # Restrict to the main topic + its descendants. The "<path> > " suffix avoids
-    # sibling-prefix collisions (e.g. "Cardio" vs "Cardiology").
-    subtree = db.query(Curriculum).filter(
-        Curriculum.version == main.version,
-        or_(Curriculum.id == main.id, Curriculum.path.startswith(main.path + " > ")),
-    ).all()
-
-    nodes = [
-        {"id": n.id, "parent_id": n.parent_id, "name": n.name, "level": n.level, "path": n.path}
-        for n in subtree
-    ]
-    main_dict = {
-        "id": main.id, "parent_id": main.parent_id, "name": main.name,
-        "level": main.level, "path": main.path,
-    }
-    outline = upload.heading_outline or []
-    result = align(outline, main_dict, nodes)
-    return {**result, "subtree": nodes, "main_topic": main_dict}
-
-
-@router.get("/{upload_id}/reconcile")
-def get_reconcile(upload_id: int, db: Session = Depends(get_db)):
-    """Return the live curriculum-alignment diff for a parked upload. Re-runs
-    align, so curriculum nodes added since the upload appear here."""
-    upload = db.get(Upload, upload_id)
-    if not upload:
-        raise HTTPException(404, "Upload not found")
-    return _build_reconcile(db, upload)
-
-
-@router.post("/{upload_id}/continue")
-def continue_processing(
-    upload_id: int,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-):
-    """Resume a reconcile-gated upload: recompute the resolution map and run the
-    real processing pipeline against it."""
-    upload = db.get(Upload, upload_id)
-    if not upload:
-        raise HTTPException(404, "Upload not found")
-
-    job = (
-        db.query(ProcessingJob)
-        .filter(ProcessingJob.upload_id == upload.id)
-        .order_by(ProcessingJob.id.desc())
-        .first()
-    )
-    if not job:
-        raise HTTPException(404, "Processing job not found")
-    if job.pipeline_step != "awaiting_reconcile":
-        raise HTTPException(409, "not awaiting reconcile")
-
-    reconcile = _build_reconcile(db, upload)
-
-    job.pipeline_step = "parsing"
-    db.commit()
-
-    background_tasks.add_task(_run_processing, job.id, reconcile["resolution"])
-
-    return {"processing_job_id": job.id}
+    return {"processing_job_id": job.id, "topic_tree_id": tt.id}
 
 
 @router.post("/paste")
@@ -332,6 +321,98 @@ def paste_document(
         "topic_tree_id": tt.id,
         "topic_tree": topic_tree_to_dict(tt),
     }
+
+
+@router.post("/scan")
+async def scan_document(
+    file: UploadFile = File(...),
+    topic_tree_name: Optional[str] = Form(None),
+    topic_tree_id: Optional[int] = Form(None),
+    curriculum_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """Ephemeral scan of a .docx: parse headings, diff against curriculum, return
+    a merged tree. Creates NO DB rows — state lives as a temp file + sidecar JSON
+    keyed by scan_token. A later /continue step commits."""
+    if not file.filename.endswith(".docx"):
+        raise HTTPException(400, "Only .docx files are supported")
+
+    # Resolve the main curriculum topic id + version.
+    if topic_tree_id:
+        tt = db.get(TopicTree, topic_tree_id)
+        if not tt:
+            raise HTTPException(404, "Topic tree not found")
+        main_id = tt.curriculum_id
+    else:
+        main_id = curriculum_id
+
+    if not main_id:
+        raise HTTPException(400, "Pick a main curriculum topic for this upload")
+
+    main = db.get(Curriculum, main_id)
+    if not main:
+        raise HTTPException(400, "Main curriculum topic not found")
+
+    os.makedirs(SCAN_DIR, exist_ok=True)
+    scan_token = uuid.uuid4().hex
+    docx_path = os.path.join(SCAN_DIR, scan_token + ".docx")
+    content = await file.read()
+    with open(docx_path, "wb") as f:
+        f.write(content)
+
+    from backend.services.doc_processor import parse_docx, parse_heading_outline
+    elements = parse_docx(docx_path)
+    outline = parse_heading_outline(elements)
+
+    # Restrict to the main topic + its descendants (same as _build_reconcile).
+    subtree = db.query(Curriculum).filter(
+        Curriculum.version == main.version,
+        or_(Curriculum.id == main.id, Curriculum.path.startswith(main.path + " > ")),
+    ).all()
+    nodes = [
+        {"id": n.id, "parent_id": n.parent_id, "name": n.name, "level": n.level, "path": n.path}
+        for n in subtree
+    ]
+    main_dict = {
+        "id": main.id, "parent_id": main.parent_id, "name": main.name,
+        "level": main.level, "path": main.path,
+    }
+
+    from backend.services.curriculum_aligner import align, build_merged_tree
+    result = align(outline, main_dict, nodes)
+    tree = build_merged_tree(outline, main_dict, nodes, result)
+
+    json_path = os.path.join(SCAN_DIR, scan_token + ".json")
+    sidecar = {
+        "outline": outline,
+        "main_topic_id": main.id,
+        "version": main.version,
+        "topic_tree_id": topic_tree_id,
+        "topic_tree_name": topic_tree_name,
+        "original_name": file.filename,
+        "created_at": utcnow().isoformat(),
+    }
+    with open(json_path, "w") as f:
+        json.dump(sidecar, f)
+
+    return {
+        "scan_token": scan_token,
+        "tree": tree,
+        "summary": result["levels"],
+        "fuzzy": result["fuzzy"],
+        "main_topic": main_dict,
+    }
+
+
+@router.delete("/scan/{scan_token}", status_code=204)
+def delete_scan(scan_token: str):
+    for ext in (".docx", ".json"):
+        p = os.path.join(SCAN_DIR, scan_token + ext)
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
 
 
 @router.get("")

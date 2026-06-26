@@ -8,43 +8,27 @@ export interface CurriculumNode {
   children: CurriculumNode[];
 }
 
-// ── Curriculum-aligned upload reconcile diff ──────────────────────────────────
+// ── Curriculum-aligned upload reconcile (scan/continue) ───────────────────────
 
-export interface ReconcileLevel {
-  depth: number;
-  expected: number;
-  present: number;
-}
+export type MergedStatus = 'matched' | 'fuzzy' | 'missing' | 'new';
 
-export interface ReconcileMissing {
-  hid: number;
+export interface MergedNode {
+  status: MergedStatus;
   name: string;
   depth: number;
-  parent_id: number | null;
+  node_id: number | null;
+  hid: number | null;
+  doc_name: string | null;
+  score: number | null;
+  children: MergedNode[];
 }
 
-export interface ReconcileNotInDoc {
-  node_id: number;
-  name: string;
-  depth: number;
-}
-
-export interface ReconcileSubtreeNode {
-  id: number;
-  parent_id: number | null;
-  name: string;
-  level: number;
-  path: string;
-}
-
-export interface ReconcileDiff {
-  resolution: Record<string, number | null>;
-  levels: ReconcileLevel[];
-  missing_in_curriculum: ReconcileMissing[];
-  not_in_document: ReconcileNotInDoc[];
-  warnings: string[];
-  subtree: ReconcileSubtreeNode[];
-  main_topic: ReconcileSubtreeNode;
+export interface ScanResult {
+  scan_token: string;
+  tree: MergedNode;
+  summary: { depth: number; expected: number; present: number }[];
+  fuzzy: { hid: number; node_id: number; doc_name: string; curr_name: string; score: number }[];
+  main_topic: { id: number; name: string; level: number; path: string };
 }
 
 export interface CurriculumMapping {

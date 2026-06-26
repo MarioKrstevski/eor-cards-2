@@ -216,6 +216,27 @@ def _sweep_orphaned_jobs():
         db.close()
 
 
+def _sweep_old_scans(max_age_hours: int = 6):
+    """Delete abandoned ephemeral scan files (temp .docx + sidecar .json) older
+    than max_age_hours so previews that were never Continued don't accumulate."""
+    import time
+    from backend.config import SCAN_DIR
+    try:
+        if not os.path.isdir(SCAN_DIR):
+            return
+        cutoff = time.time() - max_age_hours * 3600
+        for name in os.listdir(SCAN_DIR):
+            path = os.path.join(SCAN_DIR, name)
+            try:
+                if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                    os.remove(path)
+            except OSError:
+                pass
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("Scan sweep failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     os.makedirs(os.path.join(os.path.dirname(__file__), "..", "data", "uploads"), exist_ok=True)
@@ -224,6 +245,7 @@ async def lifespan(app: FastAPI):
     seed_data()
     _backfill_new_curriculum_surgery()
     _sweep_orphaned_jobs()
+    _sweep_old_scans()
     yield
 
 

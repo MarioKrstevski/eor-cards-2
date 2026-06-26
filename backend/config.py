@@ -120,6 +120,7 @@ DEFAULT_PROCESSING_MODEL = "claude-haiku-4-5-20251001"  # default for document p
 AVG_OUTPUT_TOKENS_PER_SECTION = 800
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
+SCAN_DIR = os.path.join(DATA_DIR, "scans")
 SEED_DIR = os.path.join(os.path.dirname(__file__), "..", "seed")
 
 
