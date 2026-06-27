@@ -289,10 +289,45 @@ def parse_html(filepath: str) -> list[dict]:
     elements = []
     current_headings = {}
 
-    for elem in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'table', 'div', 'li', 'ul', 'ol']):
-        tag = elem.name.lower()
-        text = elem.get_text(strip=True)
+    def _li_direct(li, *, as_html: bool) -> str:
+        """A list item's OWN content, excluding nested <ul>/<ol> children.
+        Without this, get_text() on a parent <li> swallows all descendant items'
+        text (and the nested items are also emitted separately) — duplicating and
+        flattening nested lists on a copy→paste round-trip."""
+        parts = []
+        for child in li.children:
+            name = getattr(child, "name", None)
+            if name in ("ul", "ol"):
+                continue
+            parts.append(str(child) if (as_html and name) else
+                         (child.get_text() if name else str(child)))
+        out = "".join(parts)
+        return out.strip() if as_html else re.sub(r"\s+", " ", out).strip()
 
+    for elem in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'table', 'div', 'li']):
+        tag = elem.name.lower()
+
+        # List items: emit each with its OWN text + nesting depth + list type so
+        # build_content_html can reconstruct nested <ul>/<ol>. Process every <li>
+        # (including nested) exactly once; the parent never includes child text.
+        if tag == 'li':
+            text = _li_direct(elem, as_html=False)
+            if not text:
+                continue
+            list_ancestors = [p for p in elem.parents if getattr(p, "name", None) in ("ul", "ol")]
+            indent_level = max(0, len(list_ancestors) - 1)
+            list_type = list_ancestors[0].name if list_ancestors else "ul"
+            elements.append({
+                "type": "list_item",
+                "text": text,
+                "html": _li_direct(elem, as_html=True) or text,
+                "indent_level": indent_level,
+                "list_type": list_type,
+                "heading_context": _build_heading_context(current_headings),
+            })
+            continue
+
+        text = elem.get_text(strip=True)
         if not text:
             continue
 
@@ -322,7 +357,11 @@ def parse_html(filepath: str) -> list[dict]:
                     "rows": rows,
                     "heading_context": _build_heading_context(current_headings),
                 })
-        elif tag in ('p', 'div', 'li'):
+        elif tag in ('p', 'div'):
+            # Skip paragraphs/divs nested inside a list item — their text is
+            # already captured by the <li> above (avoids duplication).
+            if elem.find_parent('li'):
+                continue
             elements.append({
                 "type": "paragraph",
                 "text": text,
