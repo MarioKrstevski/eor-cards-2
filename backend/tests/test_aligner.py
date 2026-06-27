@@ -12,6 +12,14 @@ def test_normalize_strips_exam_weight_suffix():
     assert normalize_topic("Pulmonary - 10%") == "pulmonary"             # hyphen
 
 
+def test_normalize_strips_parentheticals():
+    # Curriculum names carry parenthetical examples the document omits — must match.
+    assert normalize_topic("Violence and abuse (intimate partner violence, sexual abuse)") == "violence and abuse"
+    assert normalize_topic("Violence and Abuse") == normalize_topic("Violence and abuse (intimate partner violence, sexual abuse)")
+    # combined with the weight suffix
+    assert normalize_topic("EENOT (Eyes, Ears, Nose) – 7%") == "eenot"
+
+
 def test_normalize_em_dash_matches_en_dash():
     # Documents use an EM-dash ("— 18%"); curriculum uses an EN-dash ("– 18%").
     # Both must normalize equal or depth-1 bands never match.
@@ -74,12 +82,13 @@ def test_fuzzy_matches_near_miss_and_reports_diff():
     nodes = [main,
         {"id": 2, "parent_id": 1, "name": "Atrial Fibrillation", "level": 1, "path": "EM > Atrial Fibrillation"}]
     from backend.services.doc_processor import parse_heading_outline
-    outline = parse_heading_outline([{"type": "heading", "level": 1, "text": "Atrial Fibrillation (AFib)"}])
+    # genuine near-miss (typo) — NOT a parenthetical (those are now stripped to exact)
+    outline = parse_heading_outline([{"type": "heading", "level": 1, "text": "Atrial Fibrilation"}])
     r = align(outline, main, nodes)
     assert r["resolution"][0] == 2
     f = {x["hid"]: x for x in r["fuzzy"]}
     assert 0 in f and f[0]["node_id"] == 2
-    assert f[0]["doc_name"] == "Atrial Fibrillation (AFib)"
+    assert f[0]["doc_name"] == "Atrial Fibrilation"
     assert f[0]["curr_name"] == "Atrial Fibrillation"
 
 

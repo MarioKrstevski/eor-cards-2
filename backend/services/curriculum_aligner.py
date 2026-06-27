@@ -11,12 +11,16 @@ FUZZY_THRESHOLD = 0.8
 FUZZY_MARGIN = 0.05
 
 _WEIGHT_SUFFIX = re.compile(r"\s*[—–-]\s*\d+\s*%\s*$")  # em "— 18%" / en "– 18%" / hyphen "- 10%"
+_PARENTHETICAL = re.compile(r"\s*\([^()]*\)")  # "(intimate partner violence, …)" / "(EENOT)"
 
 
 def normalize_topic(s: str) -> str:
     """Normalize a topic/heading name for matching: drop a trailing exam-weight
-    suffix, lowercase, collapse whitespace, tighten slashes."""
+    suffix, drop parenthetical elaborations/abbreviations (they're examples, not
+    the canonical name, e.g. "Violence and abuse (intimate partner violence…)" ==
+    "Violence and Abuse"), lowercase, collapse whitespace, tighten slashes."""
     s = _WEIGHT_SUFFIX.sub("", s or "")
+    s = _PARENTHETICAL.sub("", s)
     s = s.lower().strip()
     s = re.sub(r"\s*/\s*", "/", s)
     s = re.sub(r"\s+", " ", s)
