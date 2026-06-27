@@ -3345,7 +3345,7 @@ export default function CardsPanel({
                         ) : r.error ? (
                           <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">{r.error}</div>
                         ) : (
-                          <pre className="text-[11px] whitespace-pre-wrap break-words bg-blue-50 border border-blue-200 rounded-lg p-2 max-h-80 overflow-auto font-mono">{r.result?.raw_response}</pre>
+                          <pre className="text-[11px] whitespace-pre-wrap break-words bg-blue-50 border border-blue-200 rounded-lg p-2 max-h-[65vh] overflow-auto font-mono resize-y">{r.result?.raw_response}</pre>
                         )}
                       </div>
                     );
