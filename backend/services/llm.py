@@ -22,22 +22,29 @@ from backend.services.ai_utils import usage_dict, RetryableError
 
 logger = logging.getLogger(__name__)
 
+# Hard per-call ceiling so a stalled/overloaded model fails in bounded time
+# instead of pending up to the SDK default (~10 min). 300s comfortably covers a
+# legitimate large generation while killing true hangs (the symptom behind
+# "inspect debug-run pending forever").
+_TIMEOUT_S = 300
 
-def complete_text(model, system_text, user_text, *, temperature, max_tokens):
+
+def complete_text(model, system_text, user_text, *, temperature, max_tokens, timeout=_TIMEOUT_S):
     """Run one text completion. Returns (text, usage_dict, stop_reason).
 
     Does NOT raise on truncation — returns stop_reason == "max_tokens" and lets
     the caller decide (so generator.py keeps its retry-then-raise behavior).
     Transient errors are raised as RetryableError so the existing retry loop
-    catches them regardless of provider.
+    catches them regardless of provider. `timeout` (seconds) caps a single call;
+    interactive callers (inspect) pass a shorter one so a stalled model fails fast.
     """
     if provider_for(model) == "google":
-        return _complete_google(model, system_text, user_text, temperature, max_tokens)
-    return _complete_anthropic(model, system_text, user_text, temperature, max_tokens)
+        return _complete_google(model, system_text, user_text, temperature, max_tokens, timeout)
+    return _complete_anthropic(model, system_text, user_text, temperature, max_tokens, timeout)
 
 
-def _complete_anthropic(model, system_text, user_text, temperature, max_tokens):
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+def _complete_anthropic(model, system_text, user_text, temperature, max_tokens, timeout=_TIMEOUT_S):
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=timeout)
     response = client.messages.create(
         model=resolve_model(model)[0],
         **effort_kwargs(model),
@@ -54,15 +61,16 @@ def _complete_anthropic(model, system_text, user_text, temperature, max_tokens):
     return text, usage_dict(response), response.stop_reason
 
 
-def _google_client():
+def _google_client(timeout=_TIMEOUT_S):
     """A genai client with the SDK's internal retry DISABLED (attempts=1) so a
     transient 503 fails fast and our own retry loop (generate.py) controls the
-    backoff cadence. Without this, the SDK silently retries for ~30-60s per call
-    on top of our backoff, making an overloaded model feel hung."""
+    backoff cadence, plus a hard request timeout so a stalled call can't pend
+    forever. Without attempts=1 the SDK silently retries ~30-60s per call."""
     http_options = None
     try:
         http_options = genai_types.HttpOptions(
-            retry_options=genai_types.HttpRetryOptions(attempts=1)
+            retry_options=genai_types.HttpRetryOptions(attempts=1),
+            timeout=int(timeout * 1000),  # google-genai timeout is in milliseconds
         )
     except Exception:  # older/newer SDK without these fields — fall back to default
         http_options = None
@@ -71,10 +79,10 @@ def _google_client():
     return genai.Client(api_key=GEMINI_API_KEY)
 
 
-def _complete_google(model, system_text, user_text, temperature, max_tokens):
+def _complete_google(model, system_text, user_text, temperature, max_tokens, timeout=_TIMEOUT_S):
     if genai is None:
         raise RuntimeError("google-genai not installed")
-    client = _google_client()
+    client = _google_client(timeout)
     base = resolve_model(model)[0]
     try:
         response = client.models.generate_content(

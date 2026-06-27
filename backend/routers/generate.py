@@ -120,7 +120,9 @@ def debug_run(section_id: int, body: DebugRunRequest, db: Session = Depends(get_
     for attempt in range(3):
         try:
             raw, usage, stop_reason = complete_text(
-                body.model, system_text, user_text, temperature=0, max_tokens=16384,
+                # 8192 (not 16384) keeps the side-by-side compare responsive —
+                # plenty to judge each model's card quality/format.
+                body.model, system_text, user_text, temperature=0, max_tokens=8192,
             )
             break
         except RETRYABLE_ERRORS as e:
