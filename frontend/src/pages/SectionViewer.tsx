@@ -106,8 +106,19 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
   const handleCopyText = useCallback(async () => {
     const el = contentRef.current;
     if (!el) return;
-    const html = el.innerHTML;
-    const text = el.innerText;
+    // Clean copy: drop app-only rendering artifacts ([Image N] placeholders) and
+    // class/data-* attributes that confuse a re-paste into the section editor,
+    // while keeping list tags + margin-left nesting (which the editor parses).
+    const clone = el.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll('.image-placeholder').forEach((n) => n.remove());
+    clone.querySelectorAll('*').forEach((node) => {
+      node.removeAttribute('class');
+      Array.from(node.attributes).forEach((a) => {
+        if (a.name.startsWith('data-')) node.removeAttribute(a.name);
+      });
+    });
+    const html = clone.innerHTML;
+    const text = el.innerText.replace(/\[Image \d+\]\s*/g, '');
     try {
       if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
         await navigator.clipboard.write([
