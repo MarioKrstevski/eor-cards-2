@@ -100,11 +100,25 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
     }
   }, [sectionId, loadSection]);
 
-  // Copy the section's rendered text — same result as selecting all + copy.
+  // Copy the section's rendered content as RICH text — same as selecting all +
+  // Ctrl+C: writes text/html so pasting elsewhere keeps bullets/nesting, with a
+  // plain-text fallback for targets that don't accept HTML.
   const handleCopyText = useCallback(async () => {
-    const text = contentRef.current?.innerText ?? '';
+    const el = contentRef.current;
+    if (!el) return;
+    const html = el.innerHTML;
+    const text = el.innerText;
     try {
-      await navigator.clipboard.writeText(text);
+      if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/html': new Blob([html], { type: 'text/html' }),
+            'text/plain': new Blob([text], { type: 'text/plain' }),
+          }),
+        ]);
+      } else {
+        await navigator.clipboard.writeText(text);
+      }
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {

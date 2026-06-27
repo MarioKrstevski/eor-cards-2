@@ -1325,30 +1325,32 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                           {tree.section_count} sections &middot; {tree.total_cards} cards
                         </span>
                       </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDocSort((prev) => ({
-                            ...prev,
-                            [tree.id]: (prev[tree.id] ?? 'curriculum') === 'alpha' ? 'curriculum' : 'alpha',
-                          }));
-                        }}
-                        title="Order topics & sections: curriculum order vs A–Z"
-                        className="shrink-0 px-1.5 py-0.5 text-[9px] font-semibold rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors duration-150"
-                      >
-                        {(docSort[tree.id] ?? 'curriculum') === 'alpha' ? 'A–Z' : 'Curr'}
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setConfirmDelete({ id: tree.id, name: tree.name });
-                        }}
-                        className="opacity-0 group-hover:opacity-100 p-1 text-gray-300 hover:text-red-500 transition-all duration-150"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6m-7 0a1 1 0 01-1-1V5a1 1 0 011-1h6a1 1 0 011 1v1a1 1 0 01-1 1H9z" />
-                        </svg>
-                      </button>
+                      <div className="flex flex-col items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDocSort((prev) => ({
+                              ...prev,
+                              [tree.id]: (prev[tree.id] ?? 'curriculum') === 'alpha' ? 'curriculum' : 'alpha',
+                            }));
+                          }}
+                          title="Order topics & sections: curriculum order vs A–Z"
+                          className="px-1.5 py-0.5 text-[9px] font-semibold rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors duration-150"
+                        >
+                          {(docSort[tree.id] ?? 'curriculum') === 'alpha' ? 'A–Z' : 'Curr'}
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmDelete({ id: tree.id, name: tree.name });
+                          }}
+                          className="p-1 text-gray-300 hover:text-red-500 transition-colors duration-150"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6m-7 0a1 1 0 01-1-1V5a1 1 0 011-1h6a1 1 0 011 1v1a1 1 0 01-1 1H9z" />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
 
                     {/* Sections — grouped by curriculum path */}
