@@ -2796,7 +2796,10 @@ export default function CardsPanel({
                 <div className="px-2 pb-1">
                   <div className="grid grid-cols-2 gap-x-1.5 gap-y-1">
                     <div className="text-[9px] font-semibold text-gray-400 uppercase tracking-wide text-center">Selected ({selectedIds.size})</div>
-                    <div className="text-[9px] font-semibold text-gray-400 uppercase tracking-wide text-center">All in topic ({totalCards})</div>
+                    <div className="text-[9px] font-semibold text-gray-400 uppercase tracking-wide text-center">
+                      {/* Label reflects the actual scope idsForScope uses. */}
+                      All in {sectionId ? 'section' : sectionIds && sectionIds.length > 0 ? 'group' : 'topic'} ({totalCards})
+                    </div>
 
                     <button disabled={selectedIds.size === 0} onClick={() => doRegen('selected')} className="px-2 py-1 text-[11px] font-medium text-amber-700 bg-amber-50 rounded hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed">Regenerate</button>
                     <button disabled={!hasTopicScope} onClick={() => doRegen('all')} className="px-2 py-1 text-[11px] font-medium text-amber-700 bg-amber-50 rounded hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed">Regenerate</button>
