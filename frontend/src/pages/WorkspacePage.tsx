@@ -86,38 +86,6 @@ function buildSectionTree<T extends SectionLike>(sections: T[], treeName: string
   return root;
 }
 
-// Return a sorted copy of a section tree: child groups + sections ordered by
-// curriculum order (via orderByPath) or alphabetically. parentPath accumulates
-// the path so a group's full path can be looked up in the curriculum order map.
-function sortSectionTree<T extends SectionLike>(
-  node: SectionTreeNode<T>,
-  mode: TopicSortMode,
-  orderByPath: Map<string, number>,
-  parentPath: string,
-): SectionTreeNode<T> {
-  const ord = (p: string) => orderByPath.get(p) ?? Number.MAX_SAFE_INTEGER;
-  const byName = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base' });
-
-  const entries = Array.from(node.children.entries()).sort(([la], [lb]) => {
-    if (mode === 'alpha') return byName(la, lb);
-    const pa = parentPath ? `${parentPath} > ${la}` : la;
-    const pb = parentPath ? `${parentPath} > ${lb}` : lb;
-    return (ord(pa) - ord(pb)) || byName(la, lb);
-  });
-  const children = new Map<string, SectionTreeNode<T>>();
-  for (const [label, child] of entries) {
-    const childPath = parentPath ? `${parentPath} > ${label}` : label;
-    children.set(label, sortSectionTree(child, mode, orderByPath, childPath));
-  }
-
-  const sections = [...node.sections].sort((a, b) => {
-    if (mode === 'alpha') return byName(a.heading, b.heading);
-    return (ord(a.curriculum_topic_path ?? '') - ord(b.curriculum_topic_path ?? '')) || byName(a.heading, b.heading);
-  });
-
-  return { label: node.label, sections, children };
-}
-
 function SectionTreeGroup<T extends SectionLike>({
   node,
   depth,
@@ -128,6 +96,9 @@ function SectionTreeGroup<T extends SectionLike>({
   renderSubtitle,
   onSectionMoved,
   onSelectGroup,
+  sortMode,
+  curriculumOrder,
+  path = '',
 }: {
   node: SectionTreeNode<T>;
   depth: number;
@@ -138,6 +109,11 @@ function SectionTreeGroup<T extends SectionLike>({
   renderSubtitle?: (s: T) => React.ReactNode;
   onSectionMoved?: () => void;
   onSelectGroup?: (sectionIds: number[]) => void;
+  // When set, child topic-groups and leftover sections are interleaved and sorted
+  // TOGETHER (Documents tab). Absent = legacy order (all groups, then sections).
+  sortMode?: TopicSortMode;
+  curriculumOrder?: Map<string, number>;
+  path?: string;  // accumulated curriculum path, for curriculum-order lookup
 }) {
   const [collapsed, setCollapsed] = useState(depth > 0);
   const [viewingGroup, setViewingGroup] = useState(false);
@@ -160,6 +136,27 @@ function SectionTreeGroup<T extends SectionLike>({
         n.sections.reduce((s, sec) => s + (sec.card_count || 0), 0) + Array.from(n.children.values()).reduce((s, c) => s + countAll(c), 0);
       return sum + countAll(child);
     }, 0);
+
+  // Merge child topic-groups + leftover sections into one render list. With a
+  // sortMode set, interleave & sort them together (client wants leftover sections
+  // ordered among the topics, not dumped at the end); otherwise keep legacy order.
+  type RenderItem =
+    | { kind: 'group'; key: string; name: string; sortPath: string; child: SectionTreeNode<T> }
+    | { kind: 'section'; key: string; name: string; sortPath: string; section: T };
+  const renderItems: RenderItem[] = [
+    ...Array.from(node.children.entries()).map(([key, child]): RenderItem => ({
+      kind: 'group', key, name: key, sortPath: path ? `${path} > ${key}` : key, child,
+    })),
+    ...node.sections.map((s): RenderItem => ({
+      kind: 'section', key: `s${s.id}`, name: s.heading, sortPath: s.curriculum_topic_path ?? '', section: s,
+    })),
+  ];
+  if (sortMode) {
+    const ord = (p: string) => curriculumOrder?.get(p) ?? Number.MAX_SAFE_INTEGER;
+    const byName = (a: RenderItem, b: RenderItem) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    renderItems.sort((a, b) =>
+      sortMode === 'alpha' ? byName(a, b) : (ord(a.sortPath) - ord(b.sortPath)) || byName(a, b));
+  }
 
   return (
     <div className={depth > 0 ? 'ml-2.5' : ''} style={{ borderLeft: `2px solid rgba(156,163,175,${borderOpacity / 100})` }}>
@@ -216,25 +213,31 @@ function SectionTreeGroup<T extends SectionLike>({
       )}
       {!collapsed && (
         <>
-          {/* Render child groups first */}
-          {Array.from(node.children.entries()).map(([key, child]) => (
-            <SectionTreeGroup
-              key={key}
-              node={child}
-              depth={depth + 1}
-              treeName={treeName}
-              selectedSectionId={selectedSectionId}
-              onSelectSection={onSelectSection}
-              onViewSection={onViewSection}
-              renderSubtitle={renderSubtitle}
-              onSectionMoved={onSectionMoved}
-              onSelectGroup={onSelectGroup}
-            />
-          ))}
-          {/* Then orphan sections (no deeper group) at the end */}
-          {node.sections.map((section) => (
+          {/* Child topic-groups + leftover sections, interleaved per renderItems. */}
+          {renderItems.map((item) => {
+            if (item.kind === 'group') {
+              return (
+                <SectionTreeGroup
+                  key={item.key}
+                  node={item.child}
+                  depth={depth + 1}
+                  treeName={treeName}
+                  selectedSectionId={selectedSectionId}
+                  onSelectSection={onSelectSection}
+                  onViewSection={onViewSection}
+                  renderSubtitle={renderSubtitle}
+                  onSectionMoved={onSectionMoved}
+                  onSelectGroup={onSelectGroup}
+                  sortMode={sortMode}
+                  curriculumOrder={curriculumOrder}
+                  path={item.sortPath}
+                />
+              );
+            }
+            const section = item.section;
+            return (
             <div
-              key={section.id}
+              key={item.key}
               onClick={() => onSelectSection(section)}
               className={`flex items-center gap-2 pl-3 pr-2 py-1 cursor-pointer transition-colors duration-150 ${
                 selectedSectionId === section.id
@@ -282,7 +285,8 @@ function SectionTreeGroup<T extends SectionLike>({
               )}
               <ViewSectionButton onView={() => onViewSection(section.id)} />
             </div>
-          ))}
+            );
+          })}
         </>
       )}
     </div>
@@ -1357,12 +1361,10 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
                     {expandedTreeId === tree.id && expandedTree?.sections && (
                       <div className="ml-5">
                         <SectionTreeGroup
-                          node={sortSectionTree(
-                            buildSectionTree(expandedTree.sections, expandedTree.name),
-                            docSort[tree.id] ?? 'curriculum',
-                            curriculumOrder,
-                            '',
-                          )}
+                          node={buildSectionTree(expandedTree.sections, expandedTree.name)}
+                          sortMode={docSort[tree.id] ?? 'curriculum'}
+                          curriculumOrder={curriculumOrder}
+                          path=""
                           depth={0}
                           treeName={expandedTree.name}
                           selectedSectionId={selectedSectionId}
