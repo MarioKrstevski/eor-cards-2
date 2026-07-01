@@ -65,7 +65,11 @@ def create_node(body: CurriculumCreate, db: Session = Depends(get_db)):
     level = (parent.level + 1) if parent else 0
     path = f"{parent.path} > {body.name}" if parent else body.name
     version = parent.version if parent else body.version
-    max_order = db.query(func.max(Curriculum.sort_order)).filter_by(parent_id=body.parent_id).scalar() or -1
+    # Scope sibling ordering by version too — root nodes (parent_id=None) exist
+    # in both v1 and v2 trees and must not share a sort_order sequence.
+    max_order = db.query(func.max(Curriculum.sort_order)).filter_by(parent_id=body.parent_id, version=version).scalar()
+    if max_order is None:
+        max_order = -1
     node = Curriculum(name=body.name, parent_id=body.parent_id, level=level, path=path, sort_order=max_order + 1, version=version)
     db.add(node)
     db.commit()

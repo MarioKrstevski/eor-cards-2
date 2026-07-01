@@ -147,6 +147,16 @@ def update_section(section_id: int, body: SectionUpdate, db: Session = Depends(g
     return section_to_dict(section)
 
 
+@router.delete("/{section_id}", status_code=204)
+def delete_section(section_id: int, db: Session = Depends(get_db)):
+    """Delete a section and its cards/content blocks/images (ORM cascade)."""
+    section = db.get(Section, section_id)
+    if not section:
+        raise HTTPException(404)
+    db.delete(section)
+    db.commit()
+
+
 @router.post("/{section_id}/paste")
 def paste_section_content(section_id: int, body: dict, db: Session = Depends(get_db)):
     """Replace section content with pasted HTML."""

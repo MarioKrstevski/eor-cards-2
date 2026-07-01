@@ -1,4 +1,5 @@
 """Document processing: parse .docx and HTML into structured elements, split by H2."""
+import os
 import re
 import base64
 import io
@@ -568,6 +569,30 @@ def _table_to_html(rows: list[list[str]]) -> str:
         html_parts.append("</tr>")
     html_parts.append("</table>")
     return "".join(html_parts)
+
+
+def is_title_junk(text: str, doc_name: str = "", topic_name: str = "") -> bool:
+    """True for document-title lines that shouldn't become content: PAEA
+    blueprint banners, or lines that are just the document/main-topic name."""
+    def norm(s: str) -> str:
+        return re.sub(r"\s+", " ", (s or "")).strip().lower()
+
+    t = norm(text)
+    if not t:
+        return True
+    if "paea blueprint" in t:
+        return True
+    if "blueprint" in t and "effective" in t:
+        return True
+    if re.search(r"effective\s+\w*\s*\d{4}", t):
+        return True
+    doc = norm(os.path.splitext(doc_name or "")[0])
+    topic = norm(topic_name)
+    if t and (t == doc or t == topic):
+        return True
+    if len(t) > 8 and ((doc and t in doc) or (topic and t in topic)):
+        return True
+    return False
 
 
 def attach_content_to_curriculum(elements: list, resolution: dict,

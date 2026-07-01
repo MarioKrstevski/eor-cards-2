@@ -65,6 +65,8 @@ def export_cards(
 
     cards = q.all()
 
+    tree_names = {t.id: t.name for t in db.query(TopicTree).all()}
+
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=[
         "note_id", "id", "front_text", "front_html", "tags", "extra",
@@ -100,7 +102,7 @@ def export_cards(
             "status": card.status,
             "needs_review": card.needs_review,
             "section_heading": section.heading if section else "",
-            "topic_tree": "",
+            "topic_tree": tree_names.get(section.topic_tree_id, "") if section else "",
             "curriculum_topic_path": section.curriculum_topic_path if section else "",
         })
     output.seek(0)

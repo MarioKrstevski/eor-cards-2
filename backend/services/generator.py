@@ -239,7 +239,9 @@ def format_extra_as_list(text: str) -> str:
     """Format extra/additional context into line-separated HTML list items."""
     if '<br' in text.lower() or '<div' in text.lower() or '<li' in text.lower():
         return text
-    if '; ' in text:
+    # Only bulletize semicolon lists that start with a label ("Risk factors: ...");
+    # plain prose containing semicolons must not be split.
+    if '; ' in text and re.match(r'^[A-Za-z ()/]+:', text):
         label_match = re.match(r'^(.*?:\s*)', text)
         label = label_match.group(1) if label_match else ''
         items_text = text[len(label):]

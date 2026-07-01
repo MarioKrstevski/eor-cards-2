@@ -304,6 +304,14 @@ def start_supplemental(body: SupplementalStartRequest, bg: BackgroundTasks, db: 
     if not cards:
         raise HTTPException(400, "No cards found")
 
+    # Mirror the runner's skip logic (_run_supplemental): when not replacing,
+    # cards that already have both vignette + teaching case are skipped — count
+    # groups/estimate over the same subset so totals match the actual work.
+    if not body.replace_existing:
+        cards = [c for c in cards if not (c.vignette and c.teaching_case)]
+        if not cards:
+            raise HTTPException(400, "All cards already have vignettes and teaching cases")
+
     groups = {}
     for c in cards:
         leaf = ((c.tags or c.tags_mapped) or [])[-1] if (c.tags or c.tags_mapped) else "Unassigned"
@@ -666,15 +674,22 @@ def _run_generation(
                         if overflow_data:
                             max_num = max((c.card_number for c in existing_list), default=0)
                             for j, card_data in enumerate(overflow_data):
-                                new_card = Card(
+                                overflow_kwargs = dict(
                                     section_id=section_data["id"],
                                     card_number=max_num + j + 1,
                                     front_html="",  # base empty (NOT NULL) — version-only card
                                     front_text=card_data.get("front_text", ""),
-                                    tags=[],
                                     status=CardStatus.active,
                                     needs_review=True,
+                                    note_id=next_note_id(),
                                 )
+                                # Route tags by curriculum version, like the base path.
+                                if cv == "v1":
+                                    overflow_kwargs["tags_mapped"] = tags
+                                    overflow_kwargs["tags"] = []
+                                else:
+                                    overflow_kwargs["tags"] = tags
+                                new_card = Card(**overflow_kwargs)
                                 if version_field:
                                     setattr(new_card, version_field, card_data["front_html"])
                                 if extra_field:

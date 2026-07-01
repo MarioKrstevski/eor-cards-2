@@ -206,6 +206,10 @@ export async function deleteSectionImage(sectionId: number, imageId: number): Pr
   await http.delete(`/sections/${sectionId}/images/${imageId}`);
 }
 
+export async function deleteSection(sectionId: number): Promise<void> {
+  await http.delete(`/sections/${sectionId}`);
+}
+
 export async function verifySection(id: number): Promise<{ is_valid: boolean; flags: string[] }> {
   const res = await http.post<{ is_valid: boolean; flags: string[] }>(`/sections/${id}/verify`);
   return res.data;

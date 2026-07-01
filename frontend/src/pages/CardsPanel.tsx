@@ -2255,7 +2255,7 @@ export default function CardsPanel({
     } finally {
       setRegenPreviewLoading(false);
     }
-  }, [selectedModel]);
+  }, [selectedModel, activeCardVersion]);
 
   const handleRegenAccept = useCallback(async () => {
     if (!regenProposal) return;
@@ -2275,7 +2275,7 @@ export default function CardsPanel({
     } catch {
       setActionError('Could not apply the regenerated card');
     }
-  }, [regenProposal, cards, fetchCards, sectionId, topicPath, sectionIds, onReviewChange]);
+  }, [regenProposal, cards, fetchCards, sectionId, topicPath, sectionIds, onReviewChange, activeCardVersion]);
 
   // ── Combine (N→1) ────────────────────────────────────────────────────────
   const [combineLoading, setCombineLoading] = useState(false);
@@ -2576,8 +2576,11 @@ export default function CardsPanel({
 
   // "All in scope" export: prefer the single section (so the file is named after
   // it), then the topic path, then the whole tree.
-  const allScopeUrl = effectiveSectionId != null
-    ? exportCardsUrl({ section_id: effectiveSectionId, tag_set: activeTagSet })
+  // Only trust effectiveSectionId when a real sectionId prop is set — in topic
+  // view it is derived from the current page's cards and would page-dependently
+  // narrow the export to one section.
+  const allScopeUrl = sectionId != null
+    ? exportCardsUrl({ section_id: sectionId, tag_set: activeTagSet })
     : topicPath
       ? exportCardsUrl({ topic_path: topicPath, tag_set: activeTagSet })
       : topicTreeId

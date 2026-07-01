@@ -374,7 +374,7 @@ async def scan_document(
     """Ephemeral scan of a .docx: parse headings, diff against curriculum, return
     a merged tree. Creates NO DB rows — state lives as a temp file + sidecar JSON
     keyed by scan_token. A later /continue step commits."""
-    if not file.filename.endswith(".docx"):
+    if not file.filename or not file.filename.endswith(".docx"):
         raise HTTPException(400, "Only .docx files are supported")
 
     # Resolve the main curriculum topic id + version.
@@ -675,6 +675,7 @@ def _run_processing(job_id: int, resolution: dict | None = None):
     from backend.services.doc_processor import (
         parse_docx, parse_html, split_by_h2, build_heading_tree, build_content_html,
         attach_content_to_curriculum, DUP_COLLAPSED_FLAG, dup_collapsed_flag,
+        is_title_junk,
     )
     from backend.services.table_converter import convert_table_elements
 
@@ -716,9 +717,27 @@ def _run_processing(job_id: int, resolution: dict | None = None):
             job.pipeline_step = "merging"
             db.commit()
 
+            main_topic_node = db.get(Curriculum, tt.curriculum_id) if tt.curriculum_id else None
+            main_topic_name = main_topic_node.name if main_topic_node else ""
+
             for idx, group in enumerate(groups):
                 node = db.get(Curriculum, group["node_id"])
                 elems = group["elements"]
+
+                # Pre-first-heading junk (e.g. a Pages doc title styled as Body)
+                # rolls up to the MAIN TOPIC group — drop obviously title-ish
+                # lines there, and skip the section if nothing real remains.
+                if group["node_id"] == tt.curriculum_id:
+                    elems = [
+                        e for e in elems
+                        if not (
+                            e.get("type") in ("paragraph", "list_item")
+                            and is_title_junk(e.get("text", ""), upload.original_name, main_topic_name)
+                        )
+                    ]
+                    has_content = any(e.get("type") != "heading" for e in elems)
+                    if not has_content:
+                        continue
 
                 heading = node.name
                 curriculum_topic_id = node.id

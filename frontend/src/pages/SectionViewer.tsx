@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getSection, verifySection, pasteSectionContent, updateSection, updateSectionImage, createCurriculumNode, getCurriculum, getSectionCost, resetSectionCost, type SectionCost } from '../api';
+import { getSection, verifySection, pasteSectionContent, updateSection, updateSectionImage, deleteSection, createCurriculumNode, getCurriculum, getSectionCost, resetSectionCost, type SectionCost } from '../api';
 import type { SectionDetail, SectionImage, CurriculumNode } from '../types';
 import CurriculumPicker from '../components/CurriculumPicker';
 
@@ -303,6 +303,22 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
             className={`px-3 py-1 rounded text-xs font-medium ${showCreateLeaf ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`}
           >
             {showCreateLeaf ? 'Cancel Move' : 'Move'}
+          </button>
+
+          {/* Delete Section */}
+          <button
+            onClick={async () => {
+              if (!window.confirm('Delete this section and all its cards, content and images? This cannot be undone.')) return;
+              try {
+                await deleteSection(sectionId);
+                onClose();
+              } catch {
+                window.alert('Failed to delete section');
+              }
+            }}
+            className="px-3 py-1 rounded text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100"
+          >
+            Delete
           </button>
 
           <button
