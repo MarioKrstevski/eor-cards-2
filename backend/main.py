@@ -297,7 +297,7 @@ async def _no_store_api(request, call_next):
 
 
 # Bumped on each deploy so /api/version can confirm what's actually running.
-APP_VERSION = 76
+APP_VERSION = 77
 
 
 @app.get("/api/version")
