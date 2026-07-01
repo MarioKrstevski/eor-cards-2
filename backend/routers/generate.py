@@ -433,6 +433,9 @@ def _run_generation(
     db = SessionLocal()
     try:
         job = db.get(GenerationJob, job_id)
+        db.refresh(job)
+        if job.status == JobStatus.failed:  # cancelled while pending
+            return
         job.status = JobStatus.running
         job.started_at = utcnow()
         db.commit()
@@ -857,6 +860,9 @@ def _run_supplemental(
     db = SessionLocal()
     try:
         job = db.get(GenerationJob, job_id)
+        db.refresh(job)
+        if job.status == JobStatus.failed:  # cancelled while pending
+            return
         job.status = JobStatus.running
         job.started_at = utcnow()
         db.commit()

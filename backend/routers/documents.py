@@ -278,6 +278,7 @@ def _continue_processing_inner(
         original_name=sidecar["original_name"],
         filename=stored_name,
         status="processing",
+        resolution_map=resolution2,
     )
     db.add(upload)
     db.flush()
@@ -530,14 +531,18 @@ def start_processing(
         job = ProcessingJob(upload_id=upload.id, status=JobStatus.pending)
         db.add(job)
         db.flush()
-        jobs.append({"job_id": job.id, "upload_id": upload.id})
+        jobs.append({
+            "job_id": job.id,
+            "upload_id": upload.id,
+            "resolution": upload.resolution_map,
+        })
 
     db.commit()
 
     for job_info in jobs:
-        background_tasks.add_task(_run_processing, job_info["job_id"])
+        background_tasks.add_task(_run_processing, job_info["job_id"], job_info["resolution"])
 
-    return {"jobs": jobs}
+    return {"jobs": [{"job_id": j["job_id"], "upload_id": j["upload_id"]} for j in jobs]}
 
 
 @router.get("/processing-jobs/{job_id}")
@@ -602,11 +607,6 @@ def ai_detect_headings(
     filepath = os.path.join(UPLOAD_DIR, upload.filename)
     if not os.path.exists(filepath):
         raise HTTPException(400, "Upload file no longer exists on disk (was it cleared?). Please re-upload the document.")
-
-    # Clear existing sections so re-processing starts fresh
-    for section in list(tt.sections):
-        db.delete(section)
-    db.flush()
 
     job = ProcessingJob(upload_id=upload.id, status=JobStatus.pending)
     db.add(job)
@@ -1102,6 +1102,12 @@ def _run_ai_heading_processing(job_id: int, curriculum_version: str = 'v1'):
         job.pipeline_step = "merging"
         db.commit()
 
+        # AI parse succeeded — only now clear existing sections (CASCADE: cards)
+        # so a failed AI job doesn't leave the tree empty.
+        for section in list(tt.sections):
+            db.delete(section)
+        db.flush()
+
         for idx, (heading, elems) in enumerate(section_groups):
             heading_tree = build_heading_tree(elems)
             content_text = "\n".join(e["text"] for e in elems if e.get("text"))
@@ -1172,8 +1178,11 @@ def _run_ai_heading_processing(job_id: int, curriculum_version: str = 'v1'):
                 job.status = JobStatus.failed
                 job.error_message = str(e)
                 job.finished_at = utcnow()
+            upload = db.get(Upload, job.upload_id) if job else None
+            if upload:
+                upload.status = "error"
             db.commit()
         except Exception:
-            pass
+            logger.exception("Failed to write error status for AI heading job %d", job_id)
     finally:
         db.close()

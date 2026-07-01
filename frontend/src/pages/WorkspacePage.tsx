@@ -976,7 +976,9 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
   // Flat curriculum — must be declared before selectTopic which references it
   const flatCurriculum = useMemo(() => flattenCurriculum(curriculum), [curriculum]);
 
-  // Select topic — loads curriculum sections, toggles expansion on re-click
+  // Select topic — loads curriculum sections, toggles expansion on re-click.
+  // The ref tracks the latest requested path so stale responses are discarded.
+  const curriculumFetchPathRef = useRef<string | null>(null);
   const selectTopic = useCallback(async (id: number) => {
     const node = flatCurriculum.find((n) => n.id === id);
     const path = node?.path ?? null;
@@ -998,11 +1000,13 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
     setExpandedCurriculumPath(path);
     setCurriculumSectionsLoading(true);
     setCurriculumSections([]);
+    curriculumFetchPathRef.current = path;
     try {
       const secs = await getSectionsByCurriculum(path);
+      if (curriculumFetchPathRef.current !== path) return; // stale response
       setCurriculumSections(secs);
     } catch { /* ignore */ } finally {
-      setCurriculumSectionsLoading(false);
+      if (curriculumFetchPathRef.current === path) setCurriculumSectionsLoading(false);
     }
   }, [flatCurriculum, expandedCurriculumPath]);
 

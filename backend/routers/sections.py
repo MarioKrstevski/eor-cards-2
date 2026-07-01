@@ -6,7 +6,7 @@ from sqlalchemy import func
 from pydantic import BaseModel
 from typing import Optional
 from backend.db import get_db
-from backend.models import Section, ContentBlock, SectionImage, AIUsageLog, utcnow
+from backend.models import Section, ContentBlock, SectionImage, AIUsageLog, Card, utcnow
 from backend.services.doc_processor import parse_html, build_content_html
 
 router = APIRouter()
@@ -180,6 +180,16 @@ def paste_section_content(section_id: int, body: dict, db: Session = Depends(get
     elif hasattr(section, 'section_status') and section.section_status == "orange":
         section.section_status = "normal"
 
+    # Content is fully replaced, so old images are stale — drop them except
+    # those still referenced by a card, so repeated pastes don't duplicate.
+    referenced_img_ids = {
+        r[0] for r in db.query(Card.ref_img_id)
+        .filter(Card.section_id == section.id, Card.ref_img_id.isnot(None)).all()
+    }
+    for old_img in db.query(SectionImage).filter(SectionImage.section_id == section.id).all():
+        if old_img.id not in referenced_img_ids:
+            db.delete(old_img)
+
     # Handle images
     image_count = 0
     for elem in elements:
@@ -193,7 +203,7 @@ def paste_section_content(section_id: int, body: dict, db: Session = Depends(get
             db.add(img)
             image_count += 1
 
-    section.image_count = (section.image_count or 0) + image_count
+    section.image_count = len(referenced_img_ids) + image_count
     section.updated_at = utcnow()
     db.commit()
     db.refresh(section)

@@ -56,16 +56,22 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
   const [curriculumNodes, setCurriculumNodes] = useState<CurriculumNode[]>([]);
   const [creatingLeaf, setCreatingLeaf] = useState(false);
 
+  // Tracks the currently-wanted section so a stale response (after a quick
+  // section switch) doesn't overwrite the newer one.
+  const wantedSectionIdRef = useRef(sectionId);
+  wantedSectionIdRef.current = sectionId;
+
   const loadSection = useCallback(async () => {
     setLoading(true);
     try {
       const data = await getSection(sectionId);
+      if (wantedSectionIdRef.current !== data.id) return; // stale response
       setSection(data);
       setLeafName(data.heading);
     } catch {
       // ignore
     } finally {
-      setLoading(false);
+      if (wantedSectionIdRef.current === sectionId) setLoading(false);
     }
   }, [sectionId]);
 

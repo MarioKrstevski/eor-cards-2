@@ -1328,8 +1328,10 @@ export default function CardsPanel({
   }, []);
 
   // ── Fetch cards (server-side pagination) ─────────────────────────────────
+  const fetchIdRef = useRef(0);
   const fetchCards = useCallback(
     async (secId: number | null, topic?: string | null, silent?: boolean, page?: number, secIds?: number[] | null) => {
+      const fetchId = ++fetchIdRef.current;
       if (!silent) setCardsLoading(true);
       // Fall back to the component's current sectionIds scope so call sites that
       // omit secIds (fetchCards(sectionId, topicPath, true)) don't wipe the table
@@ -1355,11 +1357,14 @@ export default function CardsPanel({
         } else if (topic) {
           resp = await getCards({ topic, ...filters });
         } else {
-          setCards([]);
-          setTotalCards(0);
+          if (fetchId === fetchIdRef.current) {
+            setCards([]);
+            setTotalCards(0);
+          }
           if (!silent) setCardsLoading(false);
           return;
         }
+        if (fetchId !== fetchIdRef.current) return; // a newer fetch superseded this one
         setCards(resp.cards);
         setTotalCards(resp.total);
         setActionError(null);

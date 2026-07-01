@@ -121,6 +121,7 @@ class Upload(Base):
     status: Mapped[str] = mapped_column(String(20), default="processing")  # processing/ready/error/merged
     processing_log: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     heading_outline: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    resolution_map: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     uploaded_at: Mapped[datetime] = mapped_column(default=utcnow)
     topic_tree: Mapped["TopicTree"] = relationship("TopicTree", back_populates="uploads")
     content_blocks: Mapped[list["ContentBlock"]] = relationship("ContentBlock", back_populates="upload")
