@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import json
+import time
 import uuid
 import shutil
 import logging
@@ -683,23 +684,55 @@ def _run_processing(job_id: int, resolution: dict | None = None):
                 dup_flag = dup_collapsed_flag(elems)
 
                 auto_status = "orange" if "NO INFORMATION IN ORIGINAL STUDY GUIDE" in content_text.upper() else "normal"
-                section = Section(
-                    topic_tree_id=tt.id,
-                    heading=heading,
-                    slug=slugify(f"{node.id}-{node.name}"),
-                    heading_tree=heading_tree,
-                    content_text=content_text,
-                    content_html=content_html,
-                    image_count=image_count,
-                    table_count=table_count,
-                    sort_order=idx,
-                    curriculum_topic_id=curriculum_topic_id,
-                    curriculum_topic_path=curriculum_topic_path,
-                    section_status=auto_status,
-                    flags=[dup_flag] if dup_flag else None,
+                existing = (
+                    db.query(Section)
+                    .filter_by(topic_tree_id=tt.id, curriculum_topic_id=node.id)
+                    .first()
                 )
-                db.add(section)
-                db.flush()
+                if existing:
+                    # Merge into the existing section (mirrors the legacy branch):
+                    # content is fully REPLACED by this upload, so old content
+                    # blocks are stale; keep only images referenced by cards.
+                    section = existing
+                    db.query(ContentBlock).filter(ContentBlock.section_id == section.id).delete()
+                    referenced_img_ids = {
+                        r[0] for r in db.query(Card.ref_img_id)
+                        .filter(Card.section_id == section.id, Card.ref_img_id.isnot(None)).all()
+                    }
+                    stale_imgs = db.query(SectionImage).filter(SectionImage.section_id == section.id).all()
+                    for old_img in stale_imgs:
+                        if old_img.id not in referenced_img_ids:
+                            db.delete(old_img)
+                    section.content_text = content_text
+                    section.content_html = content_html
+                    section.heading_tree = heading_tree
+                    section.image_count = image_count + len(referenced_img_ids)
+                    section.table_count = table_count
+                    section.curriculum_topic_path = curriculum_topic_path
+                    section.updated_at = utcnow()
+                    if "NO INFORMATION IN ORIGINAL STUDY GUIDE" in content_text.upper():
+                        section.section_status = "orange"
+                    # Drop stale dup-collapsed flags before re-adding the fresh one.
+                    kept = [f for f in (section.flags or []) if not str(f).startswith(DUP_COLLAPSED_FLAG)]
+                    section.flags = _merge_flag(kept, dup_flag)
+                else:
+                    section = Section(
+                        topic_tree_id=tt.id,
+                        heading=heading,
+                        slug=slugify(f"{node.id}-{node.name}"),
+                        heading_tree=heading_tree,
+                        content_text=content_text,
+                        content_html=content_html,
+                        image_count=image_count,
+                        table_count=table_count,
+                        sort_order=idx,
+                        curriculum_topic_id=curriculum_topic_id,
+                        curriculum_topic_path=curriculum_topic_path,
+                        section_status=auto_status,
+                        flags=[dup_flag] if dup_flag else None,
+                    )
+                    db.add(section)
+                    db.flush()
 
                 # Create content blocks
                 position = 0
@@ -882,8 +915,20 @@ def _run_processing(job_id: int, resolution: dict | None = None):
                             f"This is a {intent['category_hint']} image."
                             if intent["category_hint"] else img.alt_text_hint
                         )
-                        result = classify_image(client, img.data_uri, alt_text_hint=hint_for_ai)
-                        extracted = (result.get("extracted_text") or "").strip()
+                        extracted = ""
+                        for attempt in range(2):
+                            try:
+                                result = classify_image(client, img.data_uri, alt_text_hint=hint_for_ai)
+                                extracted = (result.get("extracted_text") or "").strip()
+                                break
+                            except Exception:
+                                logger.exception(
+                                    "EXTRACT classification failed for image %d (attempt %d/2)",
+                                    img.id, attempt + 1,
+                                )
+                                if attempt == 0:
+                                    time.sleep(2)
+                                # Final failure: treat as empty extraction — image kept below.
 
                         # Replace [Image N] placeholder in section HTML
                         placeholder = (
@@ -902,11 +947,15 @@ def _run_processing(job_id: int, resolution: dict | None = None):
                                 block_type="image_text",
                                 position=img.position,
                             ))
+                            db.delete(img)
                         else:
-                            # AI returned nothing — remove placeholder entirely
-                            content_html = content_html.replace(placeholder, "")
-
-                        db.delete(img)
+                            # Extraction failed/empty — KEEP the image and its
+                            # placeholder so no content is destroyed; flag for review.
+                            img.category = "unclear"
+                            section.flags = _merge_flag(
+                                section.flags,
+                                f"Image {img_num}: text extraction failed — image kept",
+                            )
 
                     else:
                         # No alt text — full AI classification, keep as SectionImage

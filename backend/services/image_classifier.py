@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import anthropic
 from backend.config import DEFAULT_PROCESSING_MODEL, resolve_model, effort_kwargs
+from backend.services.ai_utils import RETRYABLE_ERRORS
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,11 @@ EXTRACTED_TEXT: <text or NONE>"""
 
         return {"category": category, "extracted_text": extracted_text, "usage": usage}
 
-    except Exception as e:
+    except RETRYABLE_ERRORS:
+        # Transient API errors are the caller's to retry — don't mask them as
+        # an empty classification result.
+        raise
+    except Exception:
         logger.exception("Image classification failed")
         return {
             "category": "unclear",

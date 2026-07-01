@@ -126,6 +126,19 @@ def rename_node(node_id: int, body: CurriculumUpdate, db: Session = Depends(get_
     else:
         node.path = body.name
     _cascade_path_update(db, node)
+    db.flush()  # make cascaded paths visible to the queries below
+    # Cascade the new paths to Sections pointing at this node or any descendant —
+    # otherwise sections keep a stale curriculum_topic_path (and stale card tags).
+    affected = db.query(Curriculum).filter(
+        Curriculum.version == node.version,
+        Curriculum.path.startswith(node.path + " > "),
+    ).all()
+    path_by_id = {n.id: n.path for n in affected}
+    path_by_id[node.id] = node.path
+    for section in db.query(Section).filter(
+        Section.curriculum_topic_id.in_(path_by_id.keys())
+    ).all():
+        section.curriculum_topic_path = path_by_id[section.curriculum_topic_id]
     db.commit()
     db.refresh(node)
     return node_to_dict(node)

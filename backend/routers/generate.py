@@ -473,12 +473,10 @@ def _run_generation(
                 note_id_counter["value"] += 1
                 return nid
 
-        # For base version: optionally delete and recreate cards
+        # For base version with replace_existing: old cards are deleted per-section
+        # only AFTER that section's generation succeeded (see the base success path
+        # below) — a failed section keeps its previous cards.
         # For v1/v2/v3: never delete cards — only update the version column on existing ones
-        if card_version == "base" and replace_existing:
-            for section_id in sections_by_id:
-                db.query(Card).filter(Card.section_id == section_id).delete()
-            db.commit()
 
         # Pre-load existing base cards per section (ordered) so v1/v2/v3 runs can
         # attach onto them by position — they are alternate phrasings, 1:1 with base.
@@ -548,6 +546,15 @@ def _run_generation(
 
         # Per-section token tally so cost can be attributed to each section.
         per_section_usage: dict[int, dict] = {}
+        # Scoring always runs on the Anthropic model — accumulate it separately so
+        # it's logged at Anthropic rates, not the raw generation model's (Gemini).
+        scoring_usage = {"input": 0, "output": 0, "cw": 0, "cr": 0}
+
+        def _acc_scoring(u):
+            scoring_usage["input"] += u.get("input_tokens", 0)
+            scoring_usage["output"] += u.get("output_tokens", 0)
+            scoring_usage["cw"] += u.get("cache_creation_input_tokens", 0)
+            scoring_usage["cr"] += u.get("cache_read_input_tokens", 0)
 
         def _acc_section(sid, u):
             d = per_section_usage.setdefault(sid, {"input": 0, "output": 0, "cw": 0, "cr": 0})
@@ -592,6 +599,12 @@ def _run_generation(
                 version_cards: list[tuple] = []  # (base card, version front_text) for v1/v2/v3 scoring
 
                 if card_version == "base":
+                    if replace_existing:
+                        # Generation for this section succeeded — now it's safe to
+                        # replace its old cards (same transaction as the inserts).
+                        db.query(Card).filter(Card.section_id == section_data["id"]).delete(
+                            synchronize_session=False
+                        )
                     # Create new card rows
                     for card_data in cards_data:
                         card_kwargs = dict(
@@ -695,7 +708,7 @@ def _run_generation(
                         total_output_tokens += score_usage.get("output_tokens", 0)
                         total_cache_write += score_usage.get("cache_creation_input_tokens", 0)
                         total_cache_read += score_usage.get("cache_read_input_tokens", 0)
-                        _acc_section(section_data["id"], score_usage)
+                        _acc_scoring(score_usage)
                         db.commit()
                     except Exception:
                         logger.exception("Error scoring cards for section %d", section_data["id"])
@@ -726,7 +739,7 @@ def _run_generation(
                         total_output_tokens += score_usage.get("output_tokens", 0)
                         total_cache_write += score_usage.get("cache_creation_input_tokens", 0)
                         total_cache_read += score_usage.get("cache_read_input_tokens", 0)
-                        _acc_section(section_data["id"], score_usage)
+                        _acc_scoring(score_usage)
                         db.commit()
                     except Exception:
                         logger.exception("Error scoring %s cards for section %d", card_version, section_data["id"])
@@ -751,6 +764,24 @@ def _run_generation(
                     section_id=sid,
                     job_id=job_id,
                 ))
+        # One row for all scoring in this job, at the scoring model's (Anthropic)
+        # rates — scoring tokens must not be priced as the raw generation model.
+        if scoring_usage["input"] or scoring_usage["output"]:
+            score_model = anthropic_model(model)
+            db.add(AIUsageLog(
+                operation="card_scoring",
+                model=score_model,
+                input_tokens=scoring_usage["input"],
+                output_tokens=scoring_usage["output"],
+                cache_write_tokens=scoring_usage["cw"],
+                cache_read_tokens=scoring_usage["cr"],
+                cost_usd=compute_cost(
+                    score_model, scoring_usage["input"], scoring_usage["output"],
+                    scoring_usage["cw"], scoring_usage["cr"],
+                ),
+                topic_tree_id=topic_tree_id,
+                job_id=job_id,
+            ))
         if cancelled:
             db.commit()  # keep the usage log; status stays cancelled
             return

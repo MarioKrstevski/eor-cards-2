@@ -84,15 +84,26 @@ def _complete_google(model, system_text, user_text, temperature, max_tokens, tim
         raise RuntimeError("google-genai not installed")
     client = _google_client(timeout)
     base = resolve_model(model)[0]
+    # Deterministic pipe output needs no thinking, and thought tokens eat into
+    # max_output_tokens (root cause of truncation) — disable the thinking budget.
+    try:
+        config = genai_types.GenerateContentConfig(
+            system_instruction=system_text,
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+        )
+    except TypeError:  # installed SDK rejects thinking_config/thinking_budget
+        config = genai_types.GenerateContentConfig(
+            system_instruction=system_text,
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        )
     try:
         response = client.models.generate_content(
             model=base,
             contents=user_text,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=system_text,
-                temperature=temperature,
-                max_output_tokens=max_tokens,
-            ),
+            config=config,
         )
     except genai_errors.APIError as e:
         code = getattr(e, "code", None) or getattr(e, "status_code", None)
@@ -108,7 +119,9 @@ def _complete_google(model, system_text, user_text, temperature, max_tokens, tim
     um = getattr(response, "usage_metadata", None)
     usage = {
         "input_tokens": getattr(um, "prompt_token_count", 0) or 0,
-        "output_tokens": getattr(um, "candidates_token_count", 0) or 0,
+        # Thought tokens are billed as output — include them for true cost.
+        "output_tokens": (getattr(um, "candidates_token_count", 0) or 0)
+        + (getattr(um, "thoughts_token_count", 0) or 0),
         "cache_read_input_tokens": 0,
         "cache_creation_input_tokens": 0,
     }

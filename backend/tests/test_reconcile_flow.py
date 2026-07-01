@@ -219,3 +219,55 @@ def test_processing_creates_curriculum_aligned_sections(env, monkeypatch):
     # - Parasitic Infections section's heading tree DOES include the unmatched H3.
     para_headings = [n["heading"] for n in (para_sec.heading_tree or [])]
     assert "Giardiasis/GI Parasites" in para_headings
+
+
+def test_reupload_with_resolution_merges_instead_of_duplicating(env, monkeypatch):
+    """Running the aligned pipeline twice with the same resolution must MERGE
+    into the existing sections (replace content), not create duplicates."""
+    db, _ = env
+    upload, ids = _seed(db)
+
+    result, _, _ = _align_against_main(db, ids["em"], upload.heading_outline)
+    resolution = result["resolution"]
+    monkeypatch.setattr(dp_mod, "parse_docx", lambda _fp: list(ELEMENTS))
+
+    job1 = ProcessingJob(upload_id=upload.id, status=JobStatus.running,
+                         pipeline_step="awaiting_reconcile")
+    db.add(job1)
+    db.commit()
+    docs_mod._run_processing(job1.id, resolution)
+
+    db.expire_all()
+    first_count = db.query(Section).count()
+    first_ids = {s.id for s in db.query(Section).all()}
+
+    # Second upload targeting the same tree, with changed Toxo content.
+    upload2 = Upload(topic_tree_id=upload.topic_tree_id,
+                     original_name="parasites2.docx",
+                     filename="parasites2.docx", status="processing")
+    db.add(upload2)
+    db.commit()
+    elements2 = [
+        dict(e) if e["text"] != "Toxoplasmosis is caused by T. gondii."
+        else _p("Toxoplasmosis updated content.")
+        for e in ELEMENTS
+    ]
+    monkeypatch.setattr(dp_mod, "parse_docx", lambda _fp: list(elements2))
+    job2 = ProcessingJob(upload_id=upload2.id, status=JobStatus.running,
+                         pipeline_step="awaiting_reconcile")
+    db.add(job2)
+    db.commit()
+    docs_mod._run_processing(job2.id, resolution)
+
+    db.expire_all()
+    assert db.get(ProcessingJob, job2.id).status == JobStatus.done
+    # Section count did NOT grow and the same section rows were reused.
+    assert db.query(Section).count() == first_count
+    assert {s.id for s in db.query(Section).all()} == first_ids
+    # Content was replaced, not appended.
+    toxo_sec = next(
+        s for s in db.query(Section).all()
+        if s.curriculum_topic_path.endswith("Toxoplasmosis")
+    )
+    assert "Toxoplasmosis updated content." in toxo_sec.content_text
+    assert "T. gondii" not in toxo_sec.content_text
