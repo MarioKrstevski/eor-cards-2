@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from typing import Optional
 from backend.db import get_db
-from backend.models import Card, Section, TopicTree, Curriculum
+from backend.models import Card, CardStatus, Section, TopicTree, Curriculum
 
 router = APIRouter()
 
@@ -29,7 +29,8 @@ def export_cards(
     tag_set: Optional[str] = None,  # 'old' → tags column, 'new' → tags_mapped
     db: Session = Depends(get_db),
 ):
-    q = db.query(Card).options(joinedload(Card.section))
+    # Rejected cards never export — they're soft-deleted from the deck's view.
+    q = db.query(Card).options(joinedload(Card.section)).filter(Card.status == CardStatus.active)
 
     # Name the download after the scope (section heading / topic leaf / tree name).
     download_name = "cards"

@@ -67,7 +67,9 @@ def _match_section_to_curriculum(
         db.query(Curriculum)
         .filter(
             Curriculum.version == parent.version,
-            Curriculum.path.startswith(parent.path),
+            # Exact node or true descendants only — a bare startswith would also
+            # match sibling names that merely extend the prefix ("Cardio" → "Cardiology").
+            or_(Curriculum.path == parent.path, Curriculum.path.startswith(parent.path + " > ")),
         )
         .all()
     )

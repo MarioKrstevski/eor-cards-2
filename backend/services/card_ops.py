@@ -16,6 +16,12 @@ def assign_note_ids(cards: list[Card]) -> None:
     """Give each card a unique note_id (millisecond base + index), matching how
     the generation pipeline mints them. Skips cards that already have one."""
     base = int(time.time() * 1000)
+    # Seed past any existing note_id so a same-millisecond mint (or a clock that
+    # ran ahead when older ids were created) can't collide with stored ids.
+    db = Session.object_session(cards[0]) if cards else None
+    if db is not None:
+        from sqlalchemy import func
+        base = max(base, (db.query(func.max(Card.note_id)).scalar() or 0) + 1)
     for i, c in enumerate(cards):
         if c.note_id is None:
             c.note_id = base + i

@@ -3,6 +3,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -184,8 +185,13 @@ def _get_sections(
     if topic_path:
         # Sections whose curriculum path is at or under this node (matches how the
         # card list scopes by topic) — NOT the whole topic tree.
+        # Exact node or true descendants only — bare startswith would also match
+        # sibling topics whose names merely extend the prefix.
         sections = db.query(Section).filter(
-            Section.curriculum_topic_path.startswith(topic_path)
+            or_(
+                Section.curriculum_topic_path == topic_path,
+                Section.curriculum_topic_path.startswith(topic_path + " > "),
+            )
         ).all()
         if not sections:
             raise HTTPException(404, "No sections found for that topic")
@@ -463,7 +469,12 @@ def _run_generation(
                 ),
             }
 
-        note_id_base = int(time.time() * 1000)
+        # Seed past any existing note_id so two minters started in the same ms
+        # (or a clock that ran ahead) can't collide with already-stored ids.
+        note_id_base = max(
+            int(time.time() * 1000),
+            (db.query(func.max(Card.note_id)).scalar() or 0) + 1,
+        )
         note_id_counter = {"value": 0}
         note_id_lock = threading.Lock()
 

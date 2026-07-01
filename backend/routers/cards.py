@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel
 from typing import Optional
 from backend.db import get_db
-from backend.models import Card, CardStatus, Section, SectionImage, RuleSet, AIUsageLog, Curriculum, utcnow
+from backend.models import Card, CardStatus, FixProposal, Section, SectionImage, RuleSet, AIUsageLog, Curriculum, utcnow
 from backend.services.generator import strip_card_html, regenerate_single_card, parse_card_output
 from backend.services.ai_utils import response_text
 from backend.services.card_ops import assign_note_ids, score_new_cards
@@ -478,6 +478,7 @@ def combine_apply(body: CombineApplyRequest, db: Session = Depends(get_db)):
     if not body.keep_original:
         # Hard-delete the originals so they actually disappear (reject would keep
         # them visible under the default "All statuses" view).
+        _delete_fix_proposals_for(db, [c.id for c in cards])
         for c in cards:
             db.delete(c)
     db.commit()
@@ -584,8 +585,11 @@ def bulk_delete_cards(body: BulkDeleteRequest, db: Session = Depends(get_db)):
     else:
         raise HTTPException(400, "Provide card_ids, section_id, section_ids, or topic_tree_id")
 
-    count = q.count()
-    q.delete(synchronize_session=False)
+    ids = [row[0] for row in q.with_entities(Card.id).all()]
+    _delete_fix_proposals_for(db, ids)
+    count = len(ids)
+    if ids:
+        db.query(Card).filter(Card.id.in_(ids)).delete(synchronize_session=False)
     db.commit()
     return {"deleted": count}
 
@@ -870,6 +874,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                 vig, tc = card.vignette, card.teaching_case
                 orig_front, orig_extra = card.front_html, card.extra
                 split_change = {"base": {"action": "split", "prev_front_html": orig_front, "prev_extra": orig_extra, "at": now_iso}}
+                _delete_fix_proposals_for(db, [card.id])
                 db.delete(card)  # replace the original with its siblings
                 db.flush()
                 start_num = (
@@ -1000,6 +1005,15 @@ class AddManualCardsRequest(BaseModel):
     format: Optional[str] = None                   # 'pipe' → parse with the real card parser; else Haiku
 
 
+def _delete_fix_proposals_for(db: Session, card_ids: list[int]) -> None:
+    """Hard-deleting cards must also remove FixProposals pointing at them,
+    or the fix-batch UI is left with dangling original_card_id references."""
+    if card_ids:
+        db.query(FixProposal).filter(FixProposal.original_card_id.in_(card_ids)).delete(
+            synchronize_session=False
+        )
+
+
 def _truthy(v) -> bool:
     return str(v or "").strip().lower() in ("true", "1", "yes")
 
@@ -1019,18 +1033,29 @@ def _cards_from_csv(csv_text: str) -> list[dict]:
         if not front_html:
             continue
         tags_raw = (row.get("tags") or "").strip()
-        # Tags are exported joined with "::" (curriculum tags contain commas).
-        # Split on that; fall back to comma only for legacy/hand-edited CSVs.
-        tag_sep = "::" if "::" in tags_raw else ","
+        # Tags are exported joined with "::" (curriculum tags contain commas, e.g.
+        # "Gynecologic, Sexual, and Reproductive Health"). Split on "::" when present.
+        # For legacy/hand-edited CSVs: only comma-split when it looks like a bare
+        # "tag1,tag2" list (no space after commas) — a comma followed by a space is
+        # almost certainly punctuation inside a single tag, so keep the cell whole.
+        if "::" in tags_raw:
+            tags = [t.strip() for t in tags_raw.split("::") if t.strip()]
+        elif "," in tags_raw and ", " not in tags_raw:
+            tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
+        else:
+            tags = [tags_raw] if tags_raw else []
+        # Import the exported status too (rejected stays rejected; unknown → active).
+        status_raw = (row.get("status") or "").strip().lower()
         out.append({
             "front_html": front_html,
             "front_text": (row.get("front_text") or "").strip() or None,
             "extra": (row.get("extra") or "").strip() or None,
-            "tags": [t.strip() for t in tags_raw.split(tag_sep) if t.strip()],
+            "tags": tags,
             "source_ref": (row.get("source_ref") or "").strip() or None,
             "vignette": (row.get("vignette") or "").strip() or None,
             "teaching_case": (row.get("teaching_case") or "").strip() or None,
             "needs_review": _truthy(row.get("needs_review")),
+            "status": "rejected" if status_raw == "rejected" else "active",
         })
     return out
 
@@ -1113,7 +1138,7 @@ def add_manual_cards(body: AddManualCardsRequest, db: Session = Depends(get_db))
             source_ref=cd.get("source_ref"),
             needs_review=cd.get("needs_review", False),
             manually_added=True,
-            status=CardStatus.active,
+            status=CardStatus.rejected if cd.get("status") == "rejected" else CardStatus.active,
         )
         if target_version == "base":
             kwargs["front_html"] = fh
@@ -1176,5 +1201,6 @@ def delete_card(card_id: int, db: Session = Depends(get_db)):
     card = db.get(Card, card_id)
     if not card:
         raise HTTPException(404)
+    _delete_fix_proposals_for(db, [card_id])
     db.delete(card)
     db.commit()

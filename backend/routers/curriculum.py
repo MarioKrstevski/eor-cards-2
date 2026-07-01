@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 from backend.db import get_db
-from backend.models import Curriculum, CurriculumMapping, Section, Card, CardStatus
+from backend.models import Curriculum, CurriculumMapping, Section, Card, CardStatus, TopicTree
 
 router = APIRouter()
 
@@ -83,6 +83,17 @@ def import_curriculum(body: dict, db: Session = Depends(get_db)):
     nodes = body.get("nodes", [])
     if not nodes:
         raise HTTPException(400, "No nodes provided")
+
+    # Guard: replacing this version's nodes would orphan anything referencing them.
+    version_ids = db.query(Curriculum.id).filter(Curriculum.version == version)
+    n_sections = db.query(Section).filter(Section.curriculum_topic_id.in_(version_ids)).count()
+    n_trees = db.query(TopicTree).filter(TopicTree.curriculum_id.in_(version_ids)).count()
+    if n_sections or n_trees:
+        raise HTTPException(
+            409,
+            f"{n_sections} sections / {n_trees} topic trees reference curriculum "
+            f"version '{version}' — import would orphan them. Detach or delete them first.",
+        )
 
     # Delete existing nodes for this version
     db.query(Curriculum).filter(Curriculum.version == version).delete(synchronize_session=False)

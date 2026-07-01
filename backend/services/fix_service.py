@@ -43,6 +43,11 @@ def _fix_one_card(card_id: int, mark_type_name: str, prompt: str, model: str, ba
     """Fix one card and save proposal. Returns result dict."""
     db = SessionLocal()
     try:
+        # Per-card cancel check: skip remaining work if the batch was cancelled.
+        batch_status = db.query(FixBatch.status).filter(FixBatch.id == batch_id).scalar()
+        if batch_status == "cancelled":
+            return {"card_id": card_id, "skipped": "cancelled"}
+
         card = db.get(Card, card_id)
         if not card:
             return {"card_id": card_id, "error": "not found"}
@@ -183,7 +188,8 @@ def run_fix_batch(batch_id: int, card_ids: list[int]) -> None:
 
     db3 = SessionLocal()
     b = db3.get(FixBatch, batch_id)
-    if b:
+    # Don't clobber a user cancel that happened while the workers were running.
+    if b and b.status != "cancelled":
         b.status = "done"
         b.finished_at = utcnow()
     db3.commit()

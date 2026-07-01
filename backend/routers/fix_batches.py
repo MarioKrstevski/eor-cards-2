@@ -157,6 +157,16 @@ def rerun_batch(batch_id: int, body: RerunBatchRequest, background_tasks: Backgr
     if batch.status == "running":
         raise HTTPException(409, "Batch is currently running")
 
+    # Derive card ids from THIS batch's own proposals — the global
+    # mark/in_fix_batch query would pick up cards from other batches.
+    card_ids = [
+        row[0]
+        for row in db.query(FixProposal.original_card_id)
+        .filter(FixProposal.batch_id == batch_id)
+        .distinct()
+        .all()
+    ]
+
     # Delete old proposals
     db.query(FixProposal).filter(FixProposal.batch_id == batch_id).delete()
 
@@ -167,13 +177,6 @@ def rerun_batch(batch_id: int, body: RerunBatchRequest, background_tasks: Backgr
     batch.error_message = None
     batch.finished_at = None
     db.commit()
-
-    # Get card ids (still marked in_fix_batch)
-    cards = db.query(Card).filter(
-        Card.review_mark_id == batch.mark_type_id,
-        Card.in_fix_batch == True,
-    ).all()
-    card_ids = [c.id for c in cards]
 
     background_tasks.add_task(_run_batch_thread, batch_id, card_ids)
     return {"batch_id": batch_id}
@@ -226,9 +229,12 @@ def confirm_batch(batch_id: int, body: ConfirmBatchRequest, db: Session = Depend
     if not batch:
         raise HTTPException(404)
 
-    proposals = batch.proposals
     if body.proposal_ids:
-        proposals = [p for p in proposals if p.id in set(body.proposal_ids)]
+        proposals = [p for p in batch.proposals if p.id in set(body.proposal_ids)]
+    else:
+        # "Confirm all" only applies proposals the reviewer has resolved —
+        # unresolved ones must not silently apply their raw AI action.
+        proposals = [p for p in batch.proposals if p.is_resolved]
 
     confirmed_card_ids = set()
     created_cards: list[Card] = []

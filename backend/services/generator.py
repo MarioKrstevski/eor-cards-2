@@ -281,15 +281,25 @@ def parse_card_output(raw: str) -> tuple[list[dict], bool]:
     """
     # Join wrapped lines: any line that doesn't start a new "N|" card is a
     # continuation of the previous one — without this, multi-line extras are
-    # silently dropped.
+    # silently dropped. But obvious trailing model prose/code fences must NOT
+    # be glued into the last card: once a markdown header or summary-prose
+    # line appears, stop joining until the next real card line.
+    junk_start = re.compile(r'^(#{1,6} |These\b|The above\b|Note:|In summary\b)')
     logical_lines: list[str] = []
+    stop_joining = False
     for line in raw.strip().split("\n"):
         line = line.strip()
         if not line:
             continue
         if line == "NEEDS_REVIEW" or re.match(r'^\d+\|', line):
             logical_lines.append(line)
-        elif logical_lines and logical_lines[-1] != "NEEDS_REVIEW":
+            stop_joining = False
+        elif line == "```":
+            logger.warning("Unparseable line in card output dropped: %.120s", line)
+        elif junk_start.match(line):
+            stop_joining = True
+            logger.warning("Unparseable line in card output dropped: %.120s", line)
+        elif logical_lines and logical_lines[-1] != "NEEDS_REVIEW" and not stop_joining:
             logical_lines[-1] += " " + line
         else:
             logger.warning("Unparseable line in card output dropped: %.120s", line)
