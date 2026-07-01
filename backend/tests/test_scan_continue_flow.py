@@ -304,3 +304,61 @@ def test_continue_auto_includes_ancestors(client, monkeypatch):
         )
     finally:
         db.close()
+
+
+# --------------------------------------------------------------------------- #
+# continue is idempotent: a second submit of the same token conflicts and
+# never mints duplicate curriculum nodes
+# --------------------------------------------------------------------------- #
+def test_continue_second_submit_conflicts(client):
+    db = client.test_session()
+    try:
+        ids = _seed_curriculum(db)
+    finally:
+        db.close()
+
+    resp = _scan(client, ids["em"])
+    assert resp.status_code == 200, resp.text
+    scan = resp.json()
+    token = scan["scan_token"]
+    toxo_hid = _find_new_hid(scan["tree"], "Toxoplasmosis")
+
+    json_path = os.path.join(client.scan_dir, token + ".json")
+    consumed_path = json_path + ".consumed"
+
+    # Simulate an in-flight first request (token already consumed) -> 409.
+    os.rename(json_path, consumed_path)
+    resp = client.post(
+        "/api/topic-trees/continue",
+        json={"scan_token": token, "included_hids": [toxo_hid]},
+    )
+    assert resp.status_code == 409, resp.text
+    os.rename(consumed_path, json_path)
+
+    # First real continue succeeds.
+    resp = client.post(
+        "/api/topic-trees/continue",
+        json={"scan_token": token, "included_hids": [toxo_hid]},
+    )
+    assert resp.status_code == 200, resp.text
+
+    db = client.test_session()
+    try:
+        node_count = db.query(Curriculum).count()
+        assert db.query(Curriculum).filter(Curriculum.name == "Toxoplasmosis").count() == 1
+    finally:
+        db.close()
+
+    # Second submit after success: token fully consumed -> 404, no new nodes.
+    resp = client.post(
+        "/api/topic-trees/continue",
+        json={"scan_token": token, "included_hids": [toxo_hid]},
+    )
+    assert resp.status_code == 404, resp.text
+
+    db = client.test_session()
+    try:
+        assert db.query(Curriculum).count() == node_count
+        assert db.query(Curriculum).filter(Curriculum.name == "Toxoplasmosis").count() == 1
+    finally:
+        db.close()

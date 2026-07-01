@@ -77,12 +77,18 @@ export default function ReconcileModal({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+    async function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        // Same cleanup as Cancel: delete the server-side scan sidecar first.
+        try {
+          await deleteScan(scanToken);
+        } catch { /* best effort */ }
+        onClose();
+      }
     }
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [onClose]);
+  }, [onClose, scanToken]);
 
   // Map of new-hid → its `new` ancestor hids (so a child can't be included without its new parent)
   const newParentChains = useMemo(() => {

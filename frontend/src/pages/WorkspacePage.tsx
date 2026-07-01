@@ -894,7 +894,9 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
   const [activeGenJobs, setActiveGenJobs] = useState<Record<number, GenerationJob>>({});
   const genPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Poll active generation jobs
+  // Poll active generation jobs — keep polling forever; only refresh data on
+  // the >0 → 0 transition (jobs just finished), never on an initially-empty tick.
+  const prevHadJobsRef = useRef(false);
   useEffect(() => {
     const pollActiveJobs = async () => {
       try {
@@ -904,15 +906,13 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
           if (j.topic_tree_id) byTree[j.topic_tree_id] = j;
         }
         setActiveGenJobs(byTree);
-        // If no more active jobs, stop polling
-        if (jobs.length === 0 && genPollRef.current) {
-          clearInterval(genPollRef.current);
-          genPollRef.current = null;
+        if (jobs.length === 0 && prevHadJobsRef.current) {
           loadTopicTrees();
           loadCurriculum();
           setRefreshKey(k => k + 1);
           refreshUsage();
         }
+        prevHadJobsRef.current = jobs.length > 0;
       } catch { /* ignore */ }
     };
     // Initial check
@@ -944,9 +944,10 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
     loadCurriculum();
   }, [loadTopicTrees, loadCurriculum]);
 
-  // Expand topic tree to load sections
-  const expandTree = useCallback(async (id: number) => {
-    if (expandedTreeId === id) {
+  // Expand topic tree to load sections. forceOpen skips the collapse-toggle
+  // branch so refresh-after-processing doesn't collapse an already-open tree.
+  const expandTree = useCallback(async (id: number, forceOpen = false) => {
+    if (!forceOpen && expandedTreeId === id) {
       setExpandedTreeId(null);
       setExpandedTree(null);
       setSelectedSectionId(null);
@@ -1046,7 +1047,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
           } else {
             loadTopicTrees();
             const treeToExpand = pasteTargetTreeId ?? expandedTreeId;
-            if (treeToExpand) expandTree(treeToExpand);
+            if (treeToExpand) expandTree(treeToExpand, true);
             setPasteTargetTreeId(null);
           }
           refreshUsage();

@@ -134,21 +134,65 @@ def continue_processing(
 ):
     """Commit an ephemeral scan: create user-selected new curriculum nodes,
     re-align, create the topic-tree/upload/job, and kick off processing."""
-    from backend.services.curriculum_aligner import align, expand_includes
-
     token = body.scan_token
     json_path = os.path.join(SCAN_DIR, token + ".json")
     docx_path = os.path.join(SCAN_DIR, token + ".docx")
-    if not os.path.exists(json_path) or not os.path.exists(docx_path):
+    if not os.path.exists(docx_path):
         raise HTTPException(404, "Scan expired — please re-upload")
 
-    with open(json_path) as f:
+    # Consume the token atomically: the rename succeeds for exactly one caller,
+    # making a double-submit of the same scan a clean 409 instead of duplicate
+    # curriculum nodes / uploads.
+    consumed_path = json_path + ".consumed"
+    try:
+        os.rename(json_path, consumed_path)
+    except OSError:
+        if os.path.exists(consumed_path):
+            raise HTTPException(409, "Scan already being processed")
+        raise HTTPException(404, "Scan expired — please re-upload")
+
+    try:
+        return _continue_processing_inner(consumed_path, docx_path, body, background_tasks, db)
+    except Exception:
+        # Restore the token so the scan stays retryable after a failure.
+        try:
+            os.rename(consumed_path, json_path)
+        except OSError:
+            pass
+        raise
+
+
+def _continue_processing_inner(
+    consumed_path: str,
+    docx_path: str,
+    body: ContinueRequest,
+    background_tasks: BackgroundTasks,
+    db: Session,
+):
+    from backend.services.curriculum_aligner import align, expand_includes
+
+    with open(consumed_path) as f:
         sidecar = json.load(f)
     outline = sidecar["outline"]
 
     main = db.get(Curriculum, sidecar["main_topic_id"])
     if not main:
         raise HTTPException(404, "Main curriculum topic not found")
+
+    # Validate the topic-tree name/slug BEFORE minting curriculum nodes, so a
+    # 409 collision doesn't leave freshly-minted nodes behind.
+    new_tree_name: Optional[str] = None
+    new_tree_slug: Optional[str] = None
+    if not sidecar.get("topic_tree_id"):
+        new_tree_name = sidecar.get("topic_tree_name") or os.path.splitext(sidecar["original_name"])[0]
+        new_tree_slug = slugify(new_tree_name)
+        existing = db.query(TopicTree).filter_by(slug=new_tree_slug).first()
+        if existing:
+            raise HTTPException(
+                409,
+                f"A topic tree named '{existing.name}' already exists. "
+                f"Upload into it by selecting it, or use a different name."
+            )
 
     def _load_subtree() -> list[dict]:
         subtree = db.query(Curriculum).filter(
@@ -217,16 +261,8 @@ def continue_processing(
         if not tt:
             raise HTTPException(404, "Topic tree not found")
     else:
-        name = sidecar.get("topic_tree_name") or os.path.splitext(sidecar["original_name"])[0]
-        slug = slugify(name)
-        existing = db.query(TopicTree).filter_by(slug=slug).first()
-        if existing:
-            raise HTTPException(
-                409,
-                f"A topic tree named '{existing.name}' already exists. "
-                f"Upload into it by selecting it, or use a different name."
-            )
-        tt = TopicTree(name=name, slug=slug, curriculum_id=main.id)
+        # Slug collision was already checked before minting curriculum nodes.
+        tt = TopicTree(name=new_tree_name, slug=new_tree_slug, curriculum_id=main.id)
         db.add(tt)
         db.flush()
 
@@ -249,9 +285,9 @@ def continue_processing(
     db.add(job)
     db.commit()
 
-    # Best-effort cleanup of the sidecar (docx already moved out of SCAN_DIR).
+    # Best-effort cleanup of the consumed sidecar (docx already moved out of SCAN_DIR).
     try:
-        os.remove(json_path)
+        os.remove(consumed_path)
     except OSError:
         pass
 

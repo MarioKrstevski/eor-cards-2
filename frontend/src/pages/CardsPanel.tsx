@@ -1331,6 +1331,12 @@ export default function CardsPanel({
   const fetchCards = useCallback(
     async (secId: number | null, topic?: string | null, silent?: boolean, page?: number, secIds?: number[] | null) => {
       if (!silent) setCardsLoading(true);
+      // Fall back to the component's current sectionIds scope so call sites that
+      // omit secIds (fetchCards(sectionId, topicPath, true)) don't wipe the table
+      // when navigating via a multi-section topic selection.
+      if (secId == null && !topic && (!secIds || secIds.length === 0)) {
+        secIds = sectionIds ?? null;
+      }
       const pageSize = pagination.pageSize;
       const offset = (page ?? pagination.pageIndex) * pageSize;
       const filters = {
@@ -1357,6 +1363,12 @@ export default function CardsPanel({
         setCards(resp.cards);
         setTotalCards(resp.total);
         setActionError(null);
+        // Page clamp: if the current page ran past the (shrunken) result set,
+        // jump back to the last non-empty page. Only ever decreases pageIndex.
+        if (offset > 0 && resp.cards.length === 0 && resp.total > 0) {
+          const lastPage = Math.max(0, Math.ceil(resp.total / pageSize) - 1);
+          setPagination((p) => (p.pageIndex > lastPage ? { ...p, pageIndex: lastPage } : p));
+        }
       } catch {
         // surface the failure — an empty table otherwise reads as "no cards"
         setActionError('Failed to load cards — check that the backend is running');
@@ -1364,12 +1376,13 @@ export default function CardsPanel({
         if (!silent) setCardsLoading(false);
       }
     },
-    [pagination.pageSize, pagination.pageIndex, statusFilter, markFilterId, validatorOnly, activeCardVersion]
+    [pagination.pageSize, pagination.pageIndex, statusFilter, markFilterId, validatorOnly, activeCardVersion, sectionIds]
   );
 
   // Refetch on dependencies change
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
+    setSelectedIds(new Set());
     fetchCards(sectionId, topicPath, false, undefined, sectionIds);
     setSearchQ('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
