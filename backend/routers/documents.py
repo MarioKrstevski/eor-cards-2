@@ -1051,10 +1051,24 @@ def _run_processing(job_id: int, resolution: dict | None = None):
                             )
 
                     else:
-                        # No alt text — full AI classification, keep as SectionImage
-                        result = classify_image(client, img.data_uri, alt_text_hint=None)
-                        img.category = result["category"]
-                        img.extracted_text = result.get("extracted_text")
+                        # No alt text — full AI classification, keep as SectionImage.
+                        # Same retry/degrade pattern as EXTRACT: a transient API blip
+                        # must not fail the whole processing job.
+                        for attempt in range(2):
+                            try:
+                                result = classify_image(client, img.data_uri, alt_text_hint=None)
+                                img.category = result["category"]
+                                img.extracted_text = result.get("extracted_text")
+                                break
+                            except Exception:
+                                logger.exception(
+                                    "Classification failed for image %d (attempt %d/2)",
+                                    img.id, attempt + 1,
+                                )
+                                if attempt == 0:
+                                    time.sleep(2)
+                                else:
+                                    img.category = "unclear"
 
                 section.content_html = content_html
                 section.content_text = content_text

@@ -584,7 +584,13 @@ def is_title_junk(text: str, doc_name: str = "", topic_name: str = "") -> bool:
         return True
     if "blueprint" in t and "effective" in t:
         return True
-    if re.search(r"effective\s+\w*\s*\d{4}", t):
+    # "Effective July 2026" style banner — only when the month is explicit and
+    # the line is short/title-like, so prose ("shown effective in 2019 trials")
+    # is never dropped.
+    if len(t) < 80 and re.search(
+        r"effective\s+(january|february|march|april|may|june|july|august|"
+        r"september|october|november|december)\s*,?\s*\d{4}", t,
+    ):
         return True
     doc = norm(os.path.splitext(doc_name or "")[0])
     topic = norm(topic_name)

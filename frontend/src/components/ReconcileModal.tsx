@@ -79,6 +79,7 @@ export default function ReconcileModal({
   useEffect(() => {
     async function handleKey(e: KeyboardEvent) {
       if (e.key === 'Escape') {
+        if (continuing) return; // continue in flight — deleting the scan would break it
         // Same cleanup as Cancel: delete the server-side scan sidecar first.
         try {
           await deleteScan(scanToken);
@@ -88,7 +89,7 @@ export default function ReconcileModal({
     }
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [onClose, scanToken]);
+  }, [onClose, scanToken, continuing]);
 
   // Map of new-hid → its `new` ancestor hids (so a child can't be included without its new parent)
   const newParentChains = useMemo(() => {

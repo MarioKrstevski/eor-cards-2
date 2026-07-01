@@ -237,7 +237,12 @@ def list_cards(
     if topic:
         if not topic_tree_id:
             q = q.join(Card.section)
-        q = q.filter(Section.curriculum_topic_path.startswith(topic))
+        # Exact path or true descendant — bare startswith false-matches sibling
+        # names extending the prefix ("Cardio" -> "Cardiology").
+        q = q.filter(or_(
+            Section.curriculum_topic_path == topic,
+            Section.curriculum_topic_path.startswith(topic + " > "),
+        ))
     if status:
         q = q.filter(Card.status == status)
     if is_reviewed is not None:
