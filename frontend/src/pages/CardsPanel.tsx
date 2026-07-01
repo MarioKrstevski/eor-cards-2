@@ -1923,7 +1923,7 @@ export default function CardsPanel({
 
   // Step 2: run the prompt against each selected model in parallel (dry-run).
   const handleGenerateResponses = useCallback(async () => {
-    if (!sectionId || debugSelected.size === 0) return;
+    if (!effectiveSectionId || debugSelected.size === 0) return;
     const models = Array.from(debugSelected);
     setDebugResponses(prev => {
       const next = { ...prev };
@@ -1933,14 +1933,14 @@ export default function CardsPanel({
     setActiveDebugTab(prev => (prev && models.includes(prev)) ? prev : models[0]);
     await Promise.all(models.map(async (m) => {
       try {
-        const result = await debugRunSection(sectionId, { model: m, rule_set_id: selectedRuleSetId ?? undefined });
+        const result = await debugRunSection(effectiveSectionId, { model: m, rule_set_id: selectedRuleSetId ?? undefined });
         setDebugResponses(prev => ({ ...prev, [m]: { loading: false, result } }));
       } catch (err: unknown) {
         setDebugResponses(prev => ({ ...prev, [m]: { loading: false, error: err instanceof Error ? err.message : 'Run failed' } }));
       }
     }));
     refreshUsage?.();
-  }, [sectionId, debugSelected, selectedRuleSetId, refreshUsage]);
+  }, [effectiveSectionId, debugSelected, selectedRuleSetId, refreshUsage]);
 
   // Apply a model's debug response as real cards. The response is already in our
   // number|card|extra format, so we parse it with the real card parser (no Haiku).
@@ -2183,6 +2183,12 @@ export default function CardsPanel({
             setShowBulkRegenModal(false);
             if (prop) { setSplitProposal(prop); setSplitCards(prop.new_cards_json ?? []); }
             else setActionError('Split produced no proposal');
+          } else if (batch.status === 'cancelled') {
+            // A restart sweep or explicit cancel can kill the batch — stop polling
+            // instead of spinning forever.
+            clearInterval(splitPollRef.current!); splitPollRef.current = null;
+            setSplitLoading(false);
+            setActionError('Split cancelled');
           }
         } catch {
           clearInterval(splitPollRef.current!); splitPollRef.current = null;
@@ -2314,7 +2320,7 @@ export default function CardsPanel({
     if (scope === 'all') {
       // Fetch all card IDs for the current context
       try {
-        const allParams: Parameters<typeof getCards>[0] = { limit: 10000, offset: 0 };
+        const allParams: Parameters<typeof getCards>[0] = { limit: 10000, offset: 0, status: 'active' };
         if (sectionId) allParams.section_id = sectionId;
         else if (sectionIds && sectionIds.length > 0) allParams.section_ids = sectionIds.join(',');
         const resp = await getCards(allParams);
@@ -2496,7 +2502,7 @@ export default function CardsPanel({
       ...(sectionId ? { section_id: sectionId } : {}),
       ...(sectionIds && sectionIds.length > 0 ? { section_ids: sectionIds.join(',') } : {}),
       ...(!sectionId && !sectionIds?.length && topicPath ? { topic: topicPath } : {}),
-      limit: 10000, offset: 0,
+      limit: 10000, offset: 0, status: 'active',
     });
     return allCards.cards.map(c => c.id);
   }, [selectedIds, sectionId, sectionIds, topicPath]);

@@ -148,6 +148,13 @@ def _backfill_new_curriculum_surgery():
     try:
         if db.query(Curriculum).filter_by(version="v1", level=0, name="Surgery").first():
             return  # already present
+        # Rename-proof guard: if v1 already has at least as many top-level topics
+        # as v2, it was fully populated (Surgery included, possibly renamed) —
+        # don't re-copy just because the literal name "Surgery" is gone.
+        v1_tops = db.query(Curriculum).filter_by(version="v1", level=0).count()
+        v2_tops = db.query(Curriculum).filter_by(version="v2", level=0).count()
+        if v1_tops >= v2_tops:
+            return
         root = db.query(Curriculum).filter_by(version="v2", level=0, name="Surgery").first()
         if not root:
             return  # nothing to copy
@@ -207,6 +214,29 @@ def _sweep_orphaned_jobs():
                 job.status = JobStatus.failed
                 job.error_message = "Interrupted by server restart"
                 job.finished_at = utcnow()
+        # Fix batches run as background tasks too — sweep ones orphaned mid-run.
+        from backend.models import Card, FixBatch, FixProposal
+        stuck_batches = db.query(FixBatch).filter(
+            FixBatch.status.in_(["pending", "running"])
+        ).all()
+        for batch in stuck_batches:
+            batch.status = "cancelled"
+            batch.error_message = "Interrupted by server restart"
+            batch.finished_at = utcnow()
+        if stuck_batches:
+            # Release in_fix_batch cards. An orphaned batch may have died before
+            # writing proposals, so we can't enumerate its cards — instead keep
+            # the flag only on cards held by a 'done' batch awaiting confirmation.
+            held_ids = {
+                cid for (cid,) in db.query(FixProposal.original_card_id)
+                .join(FixBatch, FixProposal.batch_id == FixBatch.id)
+                .filter(FixBatch.status == "done")
+                .all()
+            }
+            q = db.query(Card).filter(Card.in_fix_batch.is_(True))
+            if held_ids:
+                q = q.filter(Card.id.notin_(held_ids))
+            q.update({"in_fix_batch": False}, synchronize_session=False)
         db.commit()
     except Exception:
         db.rollback()

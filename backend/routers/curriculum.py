@@ -223,6 +223,11 @@ def delete_node(node_id: int, db: Session = Depends(get_db)):
         },
         synchronize_session=False,
     )
+    # Topic trees can point at curriculum nodes too — don't leave a dangling FK.
+    db.query(TopicTree).filter(TopicTree.curriculum_id == node_id).update(
+        {"curriculum_id": parent.id if parent else None},
+        synchronize_session=False,
+    )
     db.delete(node)
     db.commit()
 

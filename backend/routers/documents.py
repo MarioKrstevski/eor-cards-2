@@ -561,6 +561,17 @@ def delete_topic_tree(topic_tree_id: int, db: Session = Depends(get_db)):
     tt = db.get(TopicTree, topic_tree_id)
     if not tt:
         raise HTTPException(404)
+    # Fail any in-flight processing jobs for this tree's uploads so the
+    # background task doesn't keep writing into a deleted tree.
+    upload_ids = [u.id for u in tt.uploads]
+    if upload_ids:
+        stuck = db.query(ProcessingJob).filter(
+            ProcessingJob.upload_id.in_(upload_ids),
+            ProcessingJob.status.in_([JobStatus.pending, JobStatus.running]),
+        ).all()
+        for job in stuck:
+            job.status = JobStatus.failed
+            job.error_message = "Topic tree deleted"
     db.delete(tt)
     db.commit()
 
@@ -799,6 +810,17 @@ def _run_processing(job_id: int, resolution: dict | None = None):
                         db.add(cb)
                     position += 1
 
+            # The topic tree may have been deleted while we were parsing —
+            # don't commit sections into a deleted tree.
+            if db.query(TopicTree.id).filter_by(id=tt.id).first() is None:
+                db.rollback()
+                job = db.get(ProcessingJob, job_id)
+                if job:
+                    job.status = JobStatus.failed
+                    job.error_message = "Topic tree deleted"
+                    job.finished_at = utcnow()
+                    db.commit()
+                return
             db.commit()
             # Fall through to Step 5 (image classification).
         else:
@@ -908,6 +930,18 @@ def _run_processing(job_id: int, resolution: dict | None = None):
                         db.add(cb)
                     position += 1
 
+        # Re-check the tree still exists before Step 5 (it may have been
+        # deleted mid-processing; the legacy branch hasn't committed yet).
+        if db.query(TopicTree.id).filter_by(id=tt.id).first() is None:
+            db.rollback()
+            job = db.get(ProcessingJob, job_id)
+            if job:
+                job.status = JobStatus.failed
+                job.error_message = "Topic tree deleted"
+                job.finished_at = utcnow()
+                db.commit()
+            return
+
         # Step 5: Classify and process images
         images_to_process = (
             db.query(SectionImage)
@@ -986,6 +1020,8 @@ def _run_processing(job_id: int, resolution: dict | None = None):
                                 position=img.position,
                             ))
                             db.delete(img)
+                            # The image row is gone — keep the count in sync.
+                            section.image_count = max(0, (section.image_count or 0) - 1)
                         else:
                             # Extraction failed/empty — KEEP the image and its
                             # placeholder so no content is destroyed; flag for review.
