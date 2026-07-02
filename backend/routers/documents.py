@@ -294,7 +294,7 @@ def _continue_processing_inner(
     except OSError:
         pass
 
-    background_tasks.add_task(_run_processing, job.id, resolution2)
+    background_tasks.add_task(_run_processing, job.id, resolution2, set(minted.values()))
 
     return {"processing_job_id": job.id, "topic_tree_id": tt.id}
 
@@ -665,12 +665,15 @@ def _parse_alt_text_hint(hint: Optional[str]) -> dict:
     return {"command": None, "intended_position": None, "category_hint": None}
 
 
-def _run_processing(job_id: int, resolution: dict | None = None):
+def _run_processing(job_id: int, resolution: dict | None = None,
+                    green_node_ids: set | None = None):
     """Background task: process an upload into sections and content blocks.
 
     When ``resolution`` (hid -> curriculum node_id|None) is provided, sections are
     built by attaching content to curriculum nodes (reconcile-gated upload flow).
     When None, the legacy split-by-H2 path runs (used by /paste and ai-headings).
+    ``green_node_ids``: curriculum nodes freshly minted via the reconcile modal's
+    Include — sections landing on them are auto-marked green ("Keep").
     """
     from backend.services.doc_processor import (
         parse_docx, parse_html, split_by_h2, build_heading_tree, build_content_html,
@@ -752,6 +755,11 @@ def _run_processing(job_id: int, resolution: dict | None = None):
                 dup_flag = dup_collapsed_flag(elems)
 
                 auto_status = "orange" if "NO INFORMATION IN ORIGINAL STUDY GUIDE" in content_text.upper() else "normal"
+                # Sections landing on a leaf the reviewer just ADDED in the
+                # reconcile modal are old-blueprint carryovers — auto-mark green
+                # ("Keep") so they're flagged for later handling.
+                if auto_status == "normal" and node.id in (green_node_ids or set()):
+                    auto_status = "green"
                 existing = (
                     db.query(Section)
                     .filter_by(topic_tree_id=tt.id, curriculum_topic_id=node.id)
@@ -780,6 +788,8 @@ def _run_processing(job_id: int, resolution: dict | None = None):
                     section.updated_at = utcnow()
                     if "NO INFORMATION IN ORIGINAL STUDY GUIDE" in content_text.upper():
                         section.section_status = "orange"
+                    elif auto_status == "green" and section.section_status == "normal":
+                        section.section_status = "green"
                     # Drop stale dup-collapsed flags before re-adding the fresh one.
                     kept = [f for f in (section.flags or []) if not str(f).startswith(DUP_COLLAPSED_FLAG)]
                     section.flags = _merge_flag(kept, dup_flag)
