@@ -54,7 +54,7 @@ export async function createCurriculumNode(params: {
 
 export async function updateCurriculumNode(
   id: number,
-  params: { name: string }
+  params: { name?: string; color?: string | null }
 ): Promise<CurriculumNode> {
   const res = await http.patch<CurriculumNode>(`/curriculum/${id}`, params);
   return res.data;

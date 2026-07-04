@@ -121,6 +121,8 @@ def _migrate_db():
             # Curriculum-aligned ingestion: resolution map (hid -> node_id) persisted
             # so a retry after a step failure reruns the same pipeline.
             "ALTER TABLE uploads ADD COLUMN resolution_map JSON",
+            # Topic color marker (green = added outside the official curriculum).
+            "ALTER TABLE curriculum ADD COLUMN color VARCHAR(20)",
             # Indexes for the most common filters (no-ops if they already exist)
             "CREATE INDEX IF NOT EXISTS ix_cards_section_id ON cards(section_id)",
             "CREATE INDEX IF NOT EXISTS ix_cards_status ON cards(status)",

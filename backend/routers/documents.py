@@ -246,6 +246,9 @@ def _continue_processing_inner(
             name=text_of[hid], parent_id=parent.id, level=parent.level + 1,
             path=f"{parent.path} > {text_of[hid]}", sort_order=max_order + 1,
             version=parent.version,
+            # Marked green: added via reconcile Include, i.e. intentionally kept
+            # OUTSIDE the official curriculum — visually distinct everywhere.
+            color="green",
         )
         db.add(node)
         db.flush()

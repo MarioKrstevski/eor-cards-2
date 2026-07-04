@@ -98,7 +98,7 @@ function PickerNode({
         </span>
 
         {/* Name */}
-        <span className={`text-xs flex-1 truncate ${matchIds !== null && matchIds.has(node.id) ? 'font-semibold' : ''}`}>
+        <span className={`text-xs flex-1 truncate ${matchIds !== null && matchIds.has(node.id) ? 'font-semibold' : ''} ${node.color === 'green' ? 'text-green-600' : ''}`}>
           {node.name}
         </span>
 

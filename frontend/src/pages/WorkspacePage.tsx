@@ -713,7 +713,7 @@ function TopicNode({ node, depth, onSelect, selectedId, selectedAncestorIds, car
           <span className="w-3 shrink-0" />
         )}
         <span className={`text-[9px] font-bold w-4 text-center rounded shrink-0 py-px ${levelBadge}`}>{node.level}</span>
-        <span className={`flex-1 text-xs truncate ${isSelected ? 'font-semibold' : 'font-medium'} ${active === 0 && !isSelected && !isAncestor ? 'text-gray-400' : ''}`}>
+        <span className={`flex-1 text-xs truncate ${isSelected ? 'font-semibold' : 'font-medium'} ${node.color === 'green' ? 'text-green-600' : active === 0 && !isSelected && !isAncestor ? 'text-gray-400' : ''}`}>
           {allSectionsDone && (
             <svg className="inline-block h-3 w-3 mr-0.5 -mt-0.5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -803,7 +803,7 @@ function TopicSearchNode({ node, matchIds, ancestorIds, onSelect, selectedId, ca
         style={{ paddingLeft: `${8 + node.level * 14}px`, paddingRight: '8px' }}
       >
         <span className={`text-[9px] font-bold w-4 text-center rounded shrink-0 py-px ${levelBadge}`}>{node.level}</span>
-        <span className={`flex-1 text-xs truncate ${isDimmed ? 'text-gray-400' : isSelected ? 'font-semibold text-blue-800' : 'font-semibold text-gray-800'}`}>{node.name}</span>
+        <span className={`flex-1 text-xs truncate ${isSelected ? 'font-semibold text-blue-800' : node.color === 'green' ? 'font-semibold text-green-600' : isDimmed ? 'text-gray-400' : 'font-semibold text-gray-800'}`}>{node.name}</span>
         {!isDimmed && stats.active > 0 && (
           <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 font-semibold tabular-nums ${stats.unreviewed === 0 ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
             {reviewed}/{stats.active}

@@ -64,7 +64,7 @@ function SearchNode({ node, matchIds, ancestorIds, cardCounts }: SearchNodeProps
         style={{ paddingLeft: `${8 + node.level * 14}px` }}
       >
         <span className={`text-[9px] font-bold w-4 text-center rounded shrink-0 py-px ${levelBadge}`}>{node.level}</span>
-        <span className={`flex-1 text-xs truncate ${isDimmed ? 'text-gray-400' : 'font-semibold text-gray-800'}`}>{node.name}</span>
+        <span className={`flex-1 text-xs truncate ${node.color === 'green' ? 'font-semibold text-green-600' : isDimmed ? 'text-gray-400' : 'font-semibold text-gray-800'}`}>{node.name}</span>
         {!isDimmed && stats.active > 0 && (
           <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold tabular-nums shrink-0 ${stats.unreviewed === 0 ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
             {reviewed}/{stats.active}
@@ -152,7 +152,7 @@ function TopicNode({ node, depth, cardCounts, editMode, onRefresh, onDeleteReque
             onClick={(e) => e.stopPropagation()}
           />
         ) : (
-          <span className={`flex-1 text-xs font-medium truncate ${topicStyle(active, unreviewed)}`}>{node.name}</span>
+          <span className={`flex-1 text-xs font-medium truncate ${node.color === 'green' ? 'text-green-600' : topicStyle(active, unreviewed)}`}>{node.name}</span>
         )}
 
         {/* Coverage badges (always visible, hidden while renaming) */}
@@ -176,6 +176,18 @@ function TopicNode({ node, depth, cardCounts, editMode, onRefresh, onDeleteReque
           <div className="opacity-0 group-hover/node:opacity-100 flex items-center gap-0.5 shrink-0 ml-0.5 transition-opacity duration-150" onClick={(e) => e.stopPropagation()}>
             <button onClick={() => { setAddingChild((v) => !v); setChildName(''); }} title="Add child" className="p-0.5 text-gray-300 hover:text-blue-500 rounded transition-colors duration-150">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+            </button>
+            <button
+              onClick={async () => {
+                try {
+                  await updateCurriculumNode(node.id, { color: node.color === 'green' ? null : 'green' });
+                  onRefresh();
+                } catch { /* ignore */ }
+              }}
+              title={node.color === 'green' ? 'Unmark (normal)' : 'Mark green (kept outside official curriculum)'}
+              className="p-0.5 rounded transition-colors duration-150"
+            >
+              <span className={`block w-2.5 h-2.5 rounded-full border ${node.color === 'green' ? 'bg-green-500 border-green-600' : 'bg-white border-gray-300 hover:border-green-500'}`} />
             </button>
             <button onClick={() => { setRenaming(true); setRenameValue(node.name); }} title="Rename" className="p-0.5 text-gray-300 hover:text-amber-500 rounded transition-colors duration-150">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
@@ -1151,7 +1163,7 @@ export default function LibraryPage() {
                   ) : (
                     <span className="w-3 shrink-0" />
                   )}
-                  <span className={`flex-1 text-xs truncate ${isSelected ? 'font-semibold text-indigo-700' : 'text-gray-700'}`}>{node.name}</span>
+                  <span className={`flex-1 text-xs truncate ${isSelected ? 'font-semibold text-indigo-700' : node.color === 'green' ? 'text-green-600' : 'text-gray-700'}`}>{node.name}</span>
                   {isMapped && <span className="text-[9px] font-bold text-indigo-500 shrink-0 ml-1">→</span>}
                 </div>
                 {expanded && hasChildren && node.children.map(child => (

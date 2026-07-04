@@ -5,6 +5,9 @@ export interface CurriculumNode {
   level: number;
   path: string;
   sort_order: number;
+  // 'green' = topic added outside the official curriculum (kept old-blueprint
+  // heading, e.g. via reconcile Include). null/undefined = normal.
+  color?: string | null;
   children: CurriculumNode[];
 }
 

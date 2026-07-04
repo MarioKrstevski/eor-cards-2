@@ -31,6 +31,9 @@ class Curriculum(Base):
     path: Mapped[str] = mapped_column(String(500))
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     version: Mapped[str] = mapped_column(String(10), default='v1', server_default='v1')
+    # Visual marker: 'green' = topic added outside the official curriculum (e.g.
+    # via reconcile Include to keep an old-blueprint heading). None = normal.
+    color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     children: Mapped[list["Curriculum"]] = relationship("Curriculum", back_populates="parent")
     parent: Mapped[Optional["Curriculum"]] = relationship("Curriculum", back_populates="children", remote_side="Curriculum.id")
 

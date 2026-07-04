@@ -16,7 +16,8 @@ class CurriculumCreate(BaseModel):
 
 
 class CurriculumUpdate(BaseModel):
-    name: str
+    name: Optional[str] = None
+    color: Optional[str] = None  # 'green' | None (clear)
 
 
 def node_to_dict(node: Curriculum, children: list = None) -> dict:
@@ -28,6 +29,7 @@ def node_to_dict(node: Curriculum, children: list = None) -> dict:
         "parent_id": node.parent_id,
         "sort_order": node.sort_order,
         "version": node.version,
+        "color": node.color,
         "children": children or [],
     }
 
@@ -134,6 +136,13 @@ def rename_node(node_id: int, body: CurriculumUpdate, db: Session = Depends(get_
     node = db.get(Curriculum, node_id)
     if not node:
         raise HTTPException(404)
+    # Color-only update (explicitly sent, may be null to clear) — no path cascade.
+    if "color" in body.model_fields_set:
+        node.color = body.color
+    if body.name is None:
+        db.commit()
+        db.refresh(node)
+        return node_to_dict(node)
     node.name = body.name
     if node.parent_id:
         parent = db.get(Curriculum, node.parent_id)
