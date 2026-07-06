@@ -593,6 +593,14 @@ def delete_topic_tree(topic_tree_id: int, db: Session = Depends(get_db)):
         for job in stuck:
             job.status = JobStatus.failed
             job.error_message = "Topic tree deleted"
+    # Remove the physical .docx files too — DB cascade only deletes the rows.
+    # (Successful uploads are already cleaned post-processing; this covers
+    # failure-kept files so deleting a tree never leaks disk on the volume.)
+    for u in tt.uploads:
+        try:
+            os.remove(os.path.join(UPLOAD_DIR, u.filename))
+        except OSError:
+            pass
     db.delete(tt)
     db.commit()
 
