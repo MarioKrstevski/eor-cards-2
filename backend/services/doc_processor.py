@@ -84,6 +84,15 @@ def dup_collapsed_flag(elems: list[dict]) -> Optional[str]:
     return f"{DUP_COLLAPSED_FLAG}: {parts}"
 
 
+def _all_runs(para):
+    """All runs in a paragraph in document order, INCLUDING runs wrapped in
+    inline content controls (<w:sdt>). Google Docs exports wrap suggested/edited
+    text in inline SDTs; python-docx's para.runs / para.text skip those and
+    silently drop the text. Walking descendant <w:r> elements recovers it."""
+    from docx.text.run import Run
+    return [Run(r, para) for r in para._element.iter(f'{_W}r')]
+
+
 def parse_docx(filepath: str) -> list[dict]:
     """Parse a .docx file into a list of element dicts.
 
@@ -131,14 +140,15 @@ def parse_docx(filepath: str) -> list[dict]:
             style_name = (para.style.name or "").lower()
         except AttributeError:
             style_name = ""
-        text = para.text.strip()
+        _runs = _all_runs(para)
+        text = ''.join(r.text for r in _runs).strip()
 
-        if not text and not para.runs:
+        if not text and not _runs:
             continue
 
         # Check for images in paragraph runs
         _WP_NS = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'
-        for run in para.runs:
+        for run in _runs:
             if run._element.findall(f'.//{_W}drawing'):
                 # Extract inline images
                 for drawing in run._element.findall(f'.//{_W}drawing'):
@@ -205,7 +215,7 @@ def parse_docx(filepath: str) -> list[dict]:
         else:
             # Build HTML with basic formatting from runs
             html_parts = []
-            for run in para.runs:
+            for run in _runs:
                 t = run.text
                 if not t:
                     continue

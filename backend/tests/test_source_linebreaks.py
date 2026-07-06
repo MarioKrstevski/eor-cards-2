@@ -99,3 +99,28 @@ def test_parse_docx_converts_soft_breaks_to_br():
         assert "Management:<br>Surgical management" in html
     finally:
         os.unlink(path)
+
+
+def test_inline_sdt_runs_not_dropped():
+    """Google Docs exports wrap runs in inline <w:sdt> content controls;
+    para.text/para.runs skip them. parse_docx must still recover the text."""
+    import tempfile, os
+    from docx import Document
+    from docx.oxml.ns import qn
+    from backend.services.doc_processor import parse_docx
+    d = Document()
+    p = d.add_paragraph()
+    # Wrap a run inside an inline w:sdt/w:sdtContent (what Google Docs emits).
+    sdt = p._p.makeelement(qn('w:sdt'), {})
+    content = p._p.makeelement(qn('w:sdtContent'), {})
+    r = p._p.makeelement(qn('w:r'), {})
+    t = p._p.makeelement(qn('w:t'), {})
+    t.text = "Hidden inline SDT text"
+    r.append(t); content.append(r); sdt.append(content); p._p.append(sdt)
+    fd, path = tempfile.mkstemp(suffix=".docx"); os.close(fd)
+    try:
+        d.save(path)
+        els = parse_docx(path)
+        assert any("Hidden inline SDT text" in (e.get("text") or "") for e in els)
+    finally:
+        os.unlink(path)
