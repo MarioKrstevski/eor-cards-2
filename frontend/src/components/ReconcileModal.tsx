@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { MergedNode, ScanResult } from '../types';
-import { updateCurriculumNode, continueProcessing, deleteScan } from '../api';
+import { updateCurriculumNode, continueProcessing, deleteScan, apiErrorMessage } from '../api';
 
 interface ReconcileModalProps {
   scanToken: string;
@@ -172,7 +172,7 @@ export default function ReconcileModal({
       await updateCurriculumNode(node.node_id, { name: trimmed });
       setTree((prev) => renameNode(prev, node.node_id!, trimmed));
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to rename node');
+      setError(apiErrorMessage(err, 'Failed to rename node'));
     } finally {
       setEditingNodeId(null);
     }
@@ -192,7 +192,7 @@ export default function ReconcileModal({
       const { processing_job_id } = await continueProcessing(scanToken, [...included]);
       onContinue(processing_job_id);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to continue');
+      setError(apiErrorMessage(err, 'Failed to continue'));
       setContinuing(false);
     }
   }

@@ -17,6 +17,7 @@ import {
   getSection,
   createCurriculumNode,
   updateSection,
+  apiErrorMessage,
 } from '../api';
 import type { GenerationJob, CurriculumSection, CostEstimate, SectionDetail, MergedNode, ScanResult } from '../types';
 import type {
@@ -1029,7 +1030,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
       setUploadFile(null);
       setUploading(false);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Upload failed';
+      const msg = apiErrorMessage(err, 'Upload failed');
       setUploadError(msg);
       setUploading(false);
     }
@@ -1170,7 +1171,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
       setProcessingJobId(result.processing_job_id);
       setPasteTargetTreeId(result.topic_tree_id);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Paste failed';
+      const msg = apiErrorMessage(err, 'Paste failed');
       setUploadError(msg);
       setUploading(false);
     }

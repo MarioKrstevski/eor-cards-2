@@ -287,6 +287,22 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="EOR Card Studio v4", lifespan=lifespan)
 
 
+@app.exception_handler(Exception)
+async def _unhandled_error_handler(request, exc: Exception):
+    """Return the precise failure reason instead of a bare 'Internal Server
+    Error'. Private two-user app — surfacing exception details to the UI is a
+    feature here, not a leak. Full traceback still goes to the server log."""
+    from fastapi.responses import JSONResponse
+    import logging
+    logging.getLogger(__name__).exception(
+        "Unhandled error on %s %s", request.method, request.url.path
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"{type(exc).__name__}: {exc}"},
+    )
+
+
 @app.middleware("http")
 async def _no_store_api(request, call_next):
     """Never let the browser/proxy cache API responses. With two users sharing

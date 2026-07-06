@@ -125,7 +125,12 @@ def parse_docx(filepath: str) -> list[dict]:
             continue
 
         para = block
-        style_name = (para.style.name or "").lower()
+        # Edited/exported docs (Pages, some Word round-trips) can reference a
+        # missing style — para.style is then None and .name would crash the parse.
+        try:
+            style_name = (para.style.name or "").lower()
+        except AttributeError:
+            style_name = ""
         text = para.text.strip()
 
         if not text and not para.runs:
@@ -162,7 +167,9 @@ def parse_docx(filepath: str) -> list[dict]:
                                     "alt_text": alt_text,
                                     "heading_context": _build_heading_context(current_headings),
                                 })
-                            except (KeyError, AttributeError):
+                            except (KeyError, AttributeError, ValueError):
+                                # ValueError: externally-linked image (target_part is
+                                # undefined for external rels) — skip, don't crash.
                                 pass
 
         if not text:

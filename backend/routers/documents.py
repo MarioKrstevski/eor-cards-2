@@ -404,7 +404,20 @@ async def scan_document(
         f.write(content)
 
     from backend.services.doc_processor import parse_docx, parse_heading_outline
-    elements = parse_docx(docx_path)
+    try:
+        elements = parse_docx(docx_path)
+    except Exception as e:
+        # Don't leave the unparseable temp file around, and tell the uploader
+        # exactly what broke instead of a bare 500.
+        try:
+            os.remove(docx_path)
+        except OSError:
+            pass
+        from docx.opc.exceptions import PackageNotFoundError
+        if isinstance(e, PackageNotFoundError):
+            raise HTTPException(400, "Not a valid .docx file (corrupt, or exported in an unsupported format)")
+        logger.exception("Scan parse failed for '%s'", file.filename)
+        raise HTTPException(422, f"Could not parse this document — {type(e).__name__}: {e}")
     outline = parse_heading_outline(elements)
 
     # Restrict to the main topic + its descendants (same as _build_reconcile).
@@ -1094,6 +1107,15 @@ def _run_processing(job_id: int, resolution: dict | None = None,
         job.finished_at = utcnow()
         db.commit()
 
+        # Success — the stored .docx is no longer needed. Deleting it keeps the
+        # Railway volume from filling up (716MB of stale uploads once made every
+        # /scan 500 with 'No space left on device'). Kept on FAILURE so a retry
+        # via POST /{id}/process can re-read it.
+        try:
+            os.remove(filepath)
+        except OSError:
+            pass
+
     except Exception as e:
         logger.exception("Processing failed for job %d", job_id)
         try:
@@ -1215,6 +1237,13 @@ def _run_ai_heading_processing(job_id: int, curriculum_version: str = 'v1'):
         job.status = JobStatus.done
         job.finished_at = utcnow()
         db.commit()
+
+        # Success — remove the stored .docx (see _run_processing: stale uploads
+        # once filled the Railway volume). Kept on failure for retries.
+        try:
+            os.remove(filepath)
+        except OSError:
+            pass
 
     except Exception as e:
         logger.exception("AI heading processing failed for job %d", job_id)

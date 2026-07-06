@@ -32,6 +32,7 @@ import {
   applyCurriculumMappings,
   getPresentations,
   deletePresentation,
+  apiErrorMessage,
 } from '../api';
 import type { CurriculumMapping, CurriculumNode, MergedNode, ReviewMarkType, RuleSet, ScanResult, TopicCoverageStats, TopicTree } from '../types';
 import { useSettings } from '../context/SettingsContext';
@@ -435,7 +436,7 @@ export default function LibraryPage() {
     } catch (err: unknown) {
       setAiDetectingTreeId(null);
       setAiDetectStep(null);
-      setAiDetectError(err instanceof Error ? err.message : 'AI detection failed');
+      setAiDetectError(apiErrorMessage(err, 'AI detection failed'));
     }
   }, [loadTopicTrees, expandedTreeId]);
 
@@ -462,7 +463,7 @@ export default function LibraryPage() {
       setUploadFile(null);
       setUploading(false);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Upload failed';
+      const msg = apiErrorMessage(err, 'Upload failed');
       setUploadError(msg);
       setUploading(false);
     }

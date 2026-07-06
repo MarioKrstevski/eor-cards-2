@@ -26,6 +26,18 @@ import type {
 
 const http = axios.create({ baseURL: '/api' });
 
+/** Human-useful message from an API error: prefers the backend's `detail`
+ * (which now carries the precise failure reason, e.g. "ValueError: …") over
+ * axios's generic "Request failed with status code 500". */
+export function apiErrorMessage(err: unknown, fallback = 'Request failed'): string {
+  if (axios.isAxiosError(err)) {
+    const detail = (err.response?.data as { detail?: unknown } | undefined)?.detail;
+    if (typeof detail === 'string' && detail) return detail;
+    return err.message || fallback;
+  }
+  return err instanceof Error ? err.message : fallback;
+}
+
 // ─── Curriculum ───────────────────────────────────────────────────────────────
 
 export async function getCurriculum(version = 'v1'): Promise<CurriculumNode[]> {
