@@ -141,7 +141,7 @@ def build_merged_tree(outline: list[dict], main_topic: dict, nodes: list[dict],
             status = "missing"
         by_id[n["id"]] = {"status": status, "name": n["name"], "depth": n["level"],
                           "node_id": n["id"], "hid": None, "doc_name": None,
-                          "score": None, "children": []}
+                          "score": None, "color": n.get("color"), "children": []}
     for f in fuzzy:
         tn = by_id.get(f["node_id"])
         if tn:
@@ -164,12 +164,46 @@ def build_merged_tree(outline: list[dict], main_topic: dict, nodes: list[dict],
             else:
                 tn = {"status": "new", "name": h["text"], "depth": parent_tn["depth"] + 1,
                       "node_id": None, "hid": h["hid"], "doc_name": None,
-                      "score": None, "children": []}
+                      "score": None, "color": None, "children": []}
                 parent_tn["children"].append(tn)
                 graft(h["children"], tn)
 
     graft(outline, root)
     return root
+
+
+def json_tree_to_outline(nodes, main_topic_name: str = "") -> list[dict]:
+    """Convert a nested topic JSON (curriculum.json shape: [{"name", "children"}])
+    into the outline shape align() consumes ({hid, level, text, children}, hids
+    depth-first, level = 1-based depth below the main topic).
+
+    Ergonomics: a single root (dict, or one-element list) whose name matches the
+    main topic is auto-unwrapped to its children, so pasting either the topic's
+    children or the whole topic works.
+    """
+    if isinstance(nodes, dict):
+        nodes = [nodes]
+    if not isinstance(nodes, list):
+        raise ValueError("Expected a JSON list of {name, children} objects")
+    if (len(nodes) == 1 and isinstance(nodes[0], dict) and main_topic_name
+            and normalize_topic(str(nodes[0].get("name", ""))) == normalize_topic(main_topic_name)):
+        nodes = nodes[0].get("children") or []
+
+    hid = 0
+
+    def walk(items, depth: int) -> list[dict]:
+        nonlocal hid
+        out = []
+        for item in items:
+            if not isinstance(item, dict) or not str(item.get("name", "")).strip():
+                raise ValueError("Each topic must be an object with a non-empty 'name'")
+            node = {"hid": hid, "level": depth, "text": str(item["name"]).strip(), "children": []}
+            hid += 1
+            node["children"] = walk(item.get("children") or [], depth + 1)
+            out.append(node)
+        return out
+
+    return walk(nodes, 1)
 
 
 def expand_includes(included_hids, outline: list[dict]) -> list[int]:

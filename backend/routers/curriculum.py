@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, case
+from sqlalchemy import func, case, or_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Any
 from backend.db import get_db
 from backend.models import Curriculum, CurriculumMapping, Section, Card, CardStatus, TopicTree
 
@@ -18,6 +18,15 @@ class CurriculumCreate(BaseModel):
 class CurriculumUpdate(BaseModel):
     name: Optional[str] = None
     color: Optional[str] = None  # 'green' | None (clear)
+    # With color='green': also mark descendant topics green AND flip attached
+    # sections (this node + descendants) from 'normal' to 'green' ("Keep").
+    # Used by the Compare tool to mark an intruder subtree in one click.
+    cascade_green: bool = False
+
+
+class CompareRequest(BaseModel):
+    main_topic_id: int
+    nodes: Any  # nested [{name, children}] JSON (curriculum.json shape)
 
 
 def node_to_dict(node: Curriculum, children: list = None) -> dict:
@@ -139,6 +148,22 @@ def rename_node(node_id: int, body: CurriculumUpdate, db: Session = Depends(get_
     # Color-only update (explicitly sent, may be null to clear) — no path cascade.
     if "color" in body.model_fields_set:
         node.color = body.color
+        if body.cascade_green and body.color == "green":
+            # Compare-tool marking: this topic is an intruder (not in the new
+            # blueprint) — mark its whole subtree green and flip its attached
+            # sections to 'green' ("Keep"). Never overwrites 'orange'.
+            descendants = db.query(Curriculum).filter(
+                Curriculum.version == node.version,
+                Curriculum.path.startswith(node.path + " > "),
+            ).all()
+            ids = [node.id] + [d.id for d in descendants]
+            for d in descendants:
+                d.color = "green"
+            for section in db.query(Section).filter(
+                Section.curriculum_topic_id.in_(ids),
+                Section.section_status == "normal",
+            ).all():
+                section.section_status = "green"
     if body.name is None:
         db.commit()
         db.refresh(node)
@@ -166,6 +191,50 @@ def rename_node(node_id: int, body: CurriculumUpdate, db: Session = Depends(get_
     db.commit()
     db.refresh(node)
     return node_to_dict(node)
+
+
+@router.post("/compare")
+def compare_curriculum(body: CompareRequest, db: Session = Depends(get_db)):
+    """Diff a pasted nested-topic JSON (the expected blueprint) against the
+    system's curriculum subtree under a main topic. Reuses the reconcile diff
+    engine: 'missing' = in system but NOT in the JSON (the intruders to mark
+    green), 'new' = in the JSON but absent from the system, 'fuzzy' = near-miss.
+    Read-only — marking green happens via PATCH /{id} with cascade_green."""
+    from backend.services.curriculum_aligner import (
+        align, build_merged_tree, json_tree_to_outline,
+    )
+
+    main = db.get(Curriculum, body.main_topic_id)
+    if not main:
+        raise HTTPException(404, "Main topic not found")
+
+    try:
+        outline = json_tree_to_outline(body.nodes, main.name)
+    except ValueError as e:
+        raise HTTPException(422, f"Bad topic JSON: {e}")
+    if not outline:
+        raise HTTPException(422, "Topic JSON is empty")
+
+    subtree = db.query(Curriculum).filter(
+        Curriculum.version == main.version,
+        or_(Curriculum.id == main.id, Curriculum.path.startswith(main.path + " > ")),
+    ).all()
+    nodes = [
+        {"id": n.id, "parent_id": n.parent_id, "name": n.name, "level": n.level,
+         "path": n.path, "color": n.color}
+        for n in subtree
+    ]
+    main_dict = {"id": main.id, "parent_id": main.parent_id, "name": main.name,
+                 "level": main.level, "path": main.path, "color": main.color}
+
+    result = align(outline, main_dict, nodes)
+    tree = build_merged_tree(outline, main_dict, nodes, result)
+    return {
+        "tree": tree,
+        "summary": result["levels"],
+        "fuzzy": result["fuzzy"],
+        "main_topic": main_dict,
+    }
 
 
 @router.get("/coverage")
@@ -218,11 +287,144 @@ def get_coverage(version: str = Query('v1'), db: Session = Depends(get_db)):
     return out
 
 
-@router.delete("/{node_id}", status_code=204)
-def delete_node(node_id: int, db: Session = Depends(get_db)):
+class ResetRequest(BaseModel):
+    nodes: Any  # nested [{name, children}] JSON — becomes the topic's new children
+
+
+@router.post("/{node_id}/reset")
+def reset_topic_children(node_id: int, body: ResetRequest, db: Session = Depends(get_db)):
+    """TEMPORARY tooling: replace a MAIN TOPIC's entire subtree with the pasted
+    blueprint JSON. Deletes all descendant topics and their attached sections
+    (cards cascade), then seeds the JSON as the fresh children — a one-click
+    'known-good reset' while validating the new-blueprint workflow."""
+    from backend.services.curriculum_aligner import normalize_topic
+
     node = db.get(Curriculum, node_id)
     if not node:
         raise HTTPException(404)
+    if node.level != 0:
+        raise HTTPException(400, "Reset is only available on main topics (level 0)")
+
+    nodes = body.nodes
+    if isinstance(nodes, dict):
+        nodes = [nodes]
+    if not isinstance(nodes, list) or not nodes:
+        raise HTTPException(422, "Expected a non-empty JSON list of {name, children} objects")
+    # Pasting the whole topic (single root matching the main topic) is fine too.
+    if (len(nodes) == 1 and isinstance(nodes[0], dict)
+            and normalize_topic(str(nodes[0].get("name", ""))) == normalize_topic(node.name)):
+        nodes = nodes[0].get("children") or []
+        if not nodes:
+            raise HTTPException(422, "The pasted topic has no children")
+
+    # Wipe the existing subtree + attached sections (cards cascade via ORM).
+    descendants = db.query(Curriculum).filter(
+        Curriculum.version == node.version,
+        Curriculum.path.startswith(node.path + " > "),
+    ).all()
+    removed_sections = 0
+    if descendants:
+        ids = [d.id for d in descendants]
+        for section in db.query(Section).filter(Section.curriculum_topic_id.in_(ids)).all():
+            db.delete(section)
+            removed_sections += 1
+        db.query(TopicTree).filter(TopicTree.curriculum_id.in_(ids)).update(
+            {"curriculum_id": node.id}, synchronize_session=False,
+        )
+        for d in sorted(descendants, key=lambda x: -x.level):
+            db.delete(d)
+    db.flush()
+
+    imported = 0
+
+    def seed(items, parent, level):
+        nonlocal imported
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict) or not str(item.get("name", "")).strip():
+                raise HTTPException(422, "Each topic must be an object with a non-empty 'name'")
+            name = str(item["name"]).strip()
+            child = Curriculum(
+                parent_id=parent.id, name=name, level=level,
+                path=f"{parent.path} > {name}", sort_order=idx, version=node.version,
+            )
+            db.add(child)
+            db.flush()
+            imported += 1
+            seed(item.get("children") or [], child, level + 1)
+
+    seed(nodes, node, 1)
+    db.commit()
+    return {
+        "imported": imported,
+        "removed_topics": len(descendants),
+        "removed_sections": removed_sections,
+    }
+
+
+@router.delete("/green")
+def delete_all_green(version: str = Query('v1'), db: Session = Depends(get_db)):
+    """TEMPORARY convenience (compare-tool cleanup): delete every green-marked
+    topic subtree in a version, including attached sections (cards cascade).
+    Lets the reviewer wipe the old-blueprint carryovers and re-upload so they
+    get re-created green through the reconcile flow."""
+    greens = db.query(Curriculum).filter(
+        Curriculum.version == version, Curriculum.color == "green",
+    ).all()
+    if not greens:
+        return {"removed_topics": 0, "removed_sections": 0}
+    green_ids = {g.id for g in greens}
+    # Only the top-most green nodes — their subtrees cover nested greens.
+    roots = [g for g in greens if g.parent_id not in green_ids]
+    removed_topics = removed_sections = 0
+    for g in roots:
+        descendants = db.query(Curriculum).filter(
+            Curriculum.version == version,
+            Curriculum.path.startswith(g.path + " > "),
+        ).all()
+        ids = [g.id] + [d.id for d in descendants]
+        for section in db.query(Section).filter(Section.curriculum_topic_id.in_(ids)).all():
+            db.delete(section)  # ORM cascade: content blocks, images, cards
+            removed_sections += 1
+        db.query(TopicTree).filter(TopicTree.curriculum_id.in_(ids)).update(
+            {"curriculum_id": g.parent_id}, synchronize_session=False,
+        )
+        for d in sorted(descendants, key=lambda x: -x.level):
+            db.delete(d)
+        db.delete(g)
+        removed_topics += len(ids)
+    db.commit()
+    return {"removed_topics": removed_topics, "removed_sections": removed_sections}
+
+
+@router.delete("/{node_id}", status_code=204)
+def delete_node(node_id: int, subtree: bool = Query(False), db: Session = Depends(get_db)):
+    node = db.get(Curriculum, node_id)
+    if not node:
+        raise HTTPException(404)
+
+    if subtree:
+        # Compare-tool "Remove": delete the whole intruder subtree AND its
+        # attached sections (cards cascade via the ORM relationships), so a
+        # fresh re-upload re-creates them through reconcile — green from the
+        # start. Topic trees anchored inside the subtree re-anchor to the parent.
+        parent = db.get(Curriculum, node.parent_id) if node.parent_id else None
+        descendants = db.query(Curriculum).filter(
+            Curriculum.version == node.version,
+            Curriculum.path.startswith(node.path + " > "),
+        ).all()
+        ids = [node.id] + [d.id for d in descendants]
+        for section in db.query(Section).filter(Section.curriculum_topic_id.in_(ids)).all():
+            db.delete(section)  # ORM cascade: content blocks, images, cards
+        db.query(TopicTree).filter(TopicTree.curriculum_id.in_(ids)).update(
+            {"curriculum_id": parent.id if parent else None},
+            synchronize_session=False,
+        )
+        for d in sorted(descendants, key=lambda x: -x.level):
+            db.delete(d)
+        db.delete(node)
+        db.commit()
+        return
+
     if db.query(Curriculum).filter_by(parent_id=node_id).count():
         raise HTTPException(400, "Cannot delete node with children")
 

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type {
   CurriculumNode,
+  MergedNode,
   CurriculumMapping,
   CurriculumSection,
   TopicCoverageStats,
@@ -66,14 +67,47 @@ export async function createCurriculumNode(params: {
 
 export async function updateCurriculumNode(
   id: number,
-  params: { name?: string; color?: string | null }
+  params: { name?: string; color?: string | null; cascade_green?: boolean }
 ): Promise<CurriculumNode> {
   const res = await http.patch<CurriculumNode>(`/curriculum/${id}`, params);
   return res.data;
 }
 
-export async function deleteCurriculumNode(id: number): Promise<void> {
-  await http.delete(`/curriculum/${id}`);
+export async function deleteCurriculumNode(id: number, subtree = false): Promise<void> {
+  await http.delete(`/curriculum/${id}`, { params: subtree ? { subtree: true } : undefined });
+}
+
+// Compare a pasted nested-topic JSON (expected blueprint) against the system's
+// subtree under a main topic. 'missing' in the result = extra in system (intruder).
+export async function compareCurriculum(
+  mainTopicId: number,
+  nodes: unknown
+): Promise<{ tree: MergedNode; summary: { depth: number; expected: number; present: number }[] }> {
+  const res = await http.post<{ tree: MergedNode; summary: { depth: number; expected: number; present: number }[] }>(
+    '/curriculum/compare',
+    { main_topic_id: mainTopicId, nodes }
+  );
+  return res.data;
+}
+
+// TEMPORARY: replace a main topic's whole subtree with pasted blueprint JSON.
+export async function resetCurriculumTopic(
+  nodeId: number,
+  nodes: unknown
+): Promise<{ imported: number; removed_topics: number; removed_sections: number }> {
+  const res = await http.post<{ imported: number; removed_topics: number; removed_sections: number }>(
+    `/curriculum/${nodeId}/reset`,
+    { nodes }
+  );
+  return res.data;
+}
+
+// TEMPORARY: bulk-delete all green-marked topic subtrees (+ their sections).
+export async function deleteGreenTopics(version: string): Promise<{ removed_topics: number; removed_sections: number }> {
+  const res = await http.delete<{ removed_topics: number; removed_sections: number }>('/curriculum/green', {
+    params: { version },
+  });
+  return res.data;
 }
 
 // ─── Curriculum Mappings ──────────────────────────────────────────────────────

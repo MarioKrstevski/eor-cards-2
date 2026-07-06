@@ -23,6 +23,7 @@ export interface MergedNode {
   hid: number | null;
   doc_name: string | null;
   score: number | null;
+  color?: string | null;
   children: MergedNode[];
 }
 

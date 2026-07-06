@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import ConfirmModal from '../components/ConfirmModal';
 import CurriculumPicker from '../components/CurriculumPicker';
 import ReconcileModal from '../components/ReconcileModal';
+import CurriculumCompareModal from '../components/CurriculumCompareModal';
 import { buildAggregatedCounts, flattenTree, sortTree } from '../utils';
 import {
   getCurriculum,
@@ -33,6 +34,8 @@ import {
   getPresentations,
   deletePresentation,
   apiErrorMessage,
+  deleteGreenTopics,
+  resetCurriculumTopic,
 } from '../api';
 import type { CurriculumMapping, CurriculumNode, MergedNode, ReviewMarkType, RuleSet, ScanResult, TopicCoverageStats, TopicTree } from '../types';
 import { useSettings } from '../context/SettingsContext';
@@ -91,6 +94,7 @@ interface TopicNodeProps {
   editMode: boolean;
   onRefresh: () => void;
   onDeleteRequest: (id: number, name: string) => void;
+  onResetRequest?: (id: number, name: string) => void;
 }
 
 function topicStyle(active: number, unreviewed: number) {
@@ -99,7 +103,7 @@ function topicStyle(active: number, unreviewed: number) {
   return 'text-gray-800';
 }
 
-function TopicNode({ node, depth, cardCounts, editMode, onRefresh, onDeleteRequest }: TopicNodeProps) {
+function TopicNode({ node, depth, cardCounts, editMode, onRefresh, onDeleteRequest, onResetRequest }: TopicNodeProps) {
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(node.name);
@@ -193,6 +197,11 @@ function TopicNode({ node, depth, cardCounts, editMode, onRefresh, onDeleteReque
             <button onClick={() => { setRenaming(true); setRenameValue(node.name); }} title="Rename" className="p-0.5 text-gray-300 hover:text-amber-500 rounded transition-colors duration-150">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
             </button>
+            {node.level === 0 && onResetRequest && (
+              <button onClick={() => onResetRequest(node.id, node.name)} title="Reset children from blueprint JSON (deletes subtree + sections)" className="p-0.5 text-gray-300 hover:text-purple-600 rounded transition-colors duration-150">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+              </button>
+            )}
             <button onClick={() => onDeleteRequest(node.id, node.name)} disabled={hasChildren} title={hasChildren ? 'Remove children first' : 'Delete'} className={`p-0.5 rounded transition-colors duration-150 ${hasChildren ? 'text-gray-200 cursor-not-allowed' : 'text-gray-300 hover:text-red-500'}`}>
               <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6" /></svg>
             </button>
@@ -217,7 +226,7 @@ function TopicNode({ node, depth, cardCounts, editMode, onRefresh, onDeleteReque
 
       {/* Children */}
       {open && hasChildren && node.children.map((child) => (
-        <TopicNode key={child.id} node={child} depth={depth + 1} cardCounts={cardCounts} editMode={editMode} onRefresh={onRefresh} onDeleteRequest={onDeleteRequest} />
+        <TopicNode key={child.id} node={child} depth={depth + 1} cardCounts={cardCounts} editMode={editMode} onRefresh={onRefresh} onDeleteRequest={onDeleteRequest} onResetRequest={onResetRequest} />
       ))}
     </div>
   );
@@ -233,6 +242,11 @@ export default function LibraryPage() {
   const [curriculum, setCurriculum] = useState<CurriculumNode[]>([]);
   const [cardCounts, setCardCounts] = useState<Record<string, TopicCoverageStats>>({});
   const [confirmDeleteNode, setConfirmDeleteNode] = useState<{ id: number; name: string } | null>(null);
+  const [showCompare, setShowCompare] = useState(false);
+  const [resetTopic, setResetTopic] = useState<{ id: number; name: string } | null>(null);
+  const [resetJson, setResetJson] = useState('');
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
   // Topics tab controls
   const [topicSearch, setTopicSearch] = useState('');
   const [topicEditMode, setTopicEditMode] = useState(false);
@@ -636,10 +650,33 @@ export default function LibraryPage() {
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                   {topicEditMode ? 'Done' : 'Edit'}
                 </button>
+                {topicEditMode && (
+                  <button
+                    onClick={async () => {
+                      if (!window.confirm('Delete ALL green-marked topics (with their subtopics and attached sections, incl. cards) in this curriculum version?')) return;
+                      try {
+                        const res = await deleteGreenTopics(curriculumVersion);
+                        window.alert(`Removed ${res.removed_topics} topic(s) and ${res.removed_sections} section(s).`);
+                        loadCurriculum();
+                      } catch (err: unknown) { window.alert(apiErrorMessage(err, 'Delete green failed')); }
+                    }}
+                    title="TEMP: delete every green-marked topic subtree + its sections"
+                    className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-lg border bg-white text-red-600 border-red-200 hover:bg-red-50 transition-colors duration-150"
+                  >
+                    Delete green
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowCompare(true)}
+                  title="Compare the curriculum against a pasted blueprint JSON"
+                  className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-lg border bg-white text-gray-600 border-gray-200 hover:bg-gray-50 transition-colors duration-150 ml-auto"
+                >
+                  Compare
+                </button>
                 <button
                   onClick={() => setTopicSort((v) => v === 'curriculum' ? 'alpha' : 'curriculum')}
                   title={topicSort === 'curriculum' ? 'Curriculum order — click for A–Z' : 'Alphabetical — click for curriculum order'}
-                  className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-lg border bg-white text-gray-600 border-gray-200 hover:bg-gray-50 transition-colors duration-150 ml-auto"
+                  className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-lg border bg-white text-gray-600 border-gray-200 hover:bg-gray-50 transition-colors duration-150"
                 >
                   {topicSort === 'alpha' ? 'A–Z' : '# Order'}
                 </button>
@@ -683,6 +720,7 @@ export default function LibraryPage() {
                     editMode={topicEditMode}
                     onRefresh={loadCurriculum}
                     onDeleteRequest={(id, name) => setConfirmDeleteNode({ id, name })}
+                    onResetRequest={(id, name) => { setResetTopic({ id, name }); setResetJson(''); }}
                   />
                 ))
               )}
@@ -1305,6 +1343,57 @@ export default function LibraryPage() {
           onConfirm={handleDeleteNode}
           onCancel={() => setConfirmDeleteNode(null)}
         />
+      )}
+      {showCompare && (
+        <CurriculumCompareModal
+          roots={sortedCurriculum}
+          onClose={() => setShowCompare(false)}
+          onChanged={loadCurriculum}
+        />
+      )}
+      {resetTopic && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => !resetBusy && setResetTopic(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[640px] max-w-[92vw] max-h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-gray-200">
+              <h2 className="text-sm font-bold text-gray-900">Reset “{resetTopic.name}” from JSON</h2>
+              <p className="text-[11px] text-gray-500">Deletes ALL subtopics and their attached sections (incl. cards), then imports the pasted blueprint JSON as the fresh children.</p>
+            </div>
+            <div className="p-4 flex-1 overflow-y-auto">
+              <textarea
+                value={resetJson}
+                onChange={(e) => setResetJson(e.target.value)}
+                placeholder='[{"name": "Cardiovascular", "children": [{"name": "Arrhythmias"}]}, …]'
+                rows={12}
+                className="w-full text-[11px] font-mono border border-gray-200 rounded-lg px-2 py-1.5 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+              />
+              {resetError && <p className="text-[11px] text-red-600 mt-1">{resetError}</p>}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-200">
+              <button onClick={() => setResetTopic(null)} disabled={resetBusy} className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+              <button
+                onClick={async () => {
+                  if (!resetTopic) return;
+                  let parsed: unknown;
+                  try { parsed = JSON.parse(resetJson); }
+                  catch { setResetError('Invalid JSON'); return; }
+                  if (!window.confirm(`Replace all children of "${resetTopic.name}"? This deletes the current subtree + its sections.`)) return;
+                  setResetBusy(true); setResetError(null);
+                  try {
+                    const res = await resetCurriculumTopic(resetTopic.id, parsed);
+                    window.alert(`Imported ${res.imported} topic(s); removed ${res.removed_topics} old topic(s), ${res.removed_sections} section(s).`);
+                    setResetTopic(null);
+                    loadCurriculum();
+                  } catch (err: unknown) { setResetError(apiErrorMessage(err, 'Reset failed')); }
+                  finally { setResetBusy(false); }
+                }}
+                disabled={resetBusy || !resetJson.trim()}
+                className="px-3 py-1.5 text-xs font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50"
+              >
+                {resetBusy ? 'Resetting…' : 'Reset from JSON'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {confirmDeleteTree && (
         <ConfirmModal
