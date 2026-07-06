@@ -217,6 +217,13 @@ def parse_docx(filepath: str) -> list[dict]:
                     t = f"<u>{t}</u>"
                 html_parts.append(t)
             html = "".join(html_parts) or text
+            # Word soft line breaks (Shift+Enter) come through python-docx as "\n"
+            # in the run/paragraph text. Make them explicit <br> so the structure
+            # survives into content_html — the section modal then renders the real
+            # lines, and the source we send the AI keeps them on separate lines
+            # (instead of collapsing into one run-together block). Mirrors what a
+            # copy-paste from Word into a chat would preserve.
+            html = html.replace("\n", "<br>")
 
             # Detect list items by style name or numbering XML
             is_list = False

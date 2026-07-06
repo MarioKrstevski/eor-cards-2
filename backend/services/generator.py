@@ -46,18 +46,38 @@ Example: 1|Primary card text with {{c1::clozes}}.|Other items: item A, item B, i
 
 def _inline_text(node) -> str:
     """Inner text of an element, dropping ALL tags (and nested lists, which are
-    rendered separately). Whitespace collapsed — reads like a clean paste, with
-    no HTML clutter."""
+    rendered separately). Only horizontal whitespace is collapsed — a <br> (Word
+    soft line break) is preserved as a real "\\n" so multi-line content stays on
+    separate lines instead of running together (see _push_lines)."""
     from bs4 import NavigableString, Tag
     parts = []
     for child in node.children:
         if isinstance(child, NavigableString):
             parts.append(str(child))
         elif isinstance(child, Tag):
-            if child.name in ("ul", "ol"):
+            if child.name == "br":
+                parts.append("\n")
+            elif child.name in ("ul", "ol"):
                 continue
-            parts.append(_inline_text(child))
-    return re.sub(r"\s+", " ", "".join(parts)).strip()
+            else:
+                parts.append(_inline_text(child))
+    return re.sub(r"[ \t]+", " ", "".join(parts)).strip()
+
+
+def _push_lines(out: list, depth: int, marker: str, text: str) -> None:
+    """Append `text` to `out` as one line per hard break ("\\n"), indented by
+    `depth`. `marker` (e.g. "- ") goes on the FIRST visual line only; continuation
+    lines (from Word soft breaks) sit at the same indent with no marker — exactly
+    what pasting the section from Word would look like. Blank segments dropped."""
+    if not text:
+        return
+    first = True
+    for seg in text.split("\n"):
+        seg = seg.strip()
+        if not seg:
+            continue
+        out.append(f"{'  ' * depth}{marker if first else ''}{seg}")
+        first = False
 
 
 def structured_source_from_html(html: str) -> str:
@@ -70,8 +90,7 @@ def structured_source_from_html(html: str) -> str:
     lines: list[str] = []
 
     def emit(depth: int, marker: str, text: str):
-        if text:
-            lines.append(f"{'  ' * depth}{marker}{text}")
+        _push_lines(lines, depth, marker, text)
 
     def walk_list(list_tag, depth):
         for li in list_tag.find_all("li", recursive=False):
@@ -112,6 +131,9 @@ def _inline_md(node) -> str:
         if isinstance(child, NavigableString):
             parts.append(str(child))
         elif isinstance(child, Tag):
+            if child.name == "br":
+                parts.append("\n")  # Word soft break — kept as a real newline
+                continue
             if child.name in ("ul", "ol"):
                 continue
             inner = _inline_md(child)
@@ -124,7 +146,7 @@ def _inline_md(node) -> str:
                 parts.append(f"*{stripped}*")
             else:
                 parts.append(inner)
-    return re.sub(r"\s+", " ", "".join(parts)).strip()
+    return re.sub(r"[ \t]+", " ", "".join(parts)).strip()
 
 
 _UNIT_PX = {"in": 96.0, "pt": 96 / 72.0, "em": 16.0, "px": 1.0, "cm": 37.8}
@@ -172,9 +194,7 @@ def markdown_source_from_html(html: str) -> str:
 
     def walk_list(list_tag, depth):
         for li in list_tag.find_all("li", recursive=False):
-            text = _inline_md(li)
-            if text:
-                lines.append(f"{'  ' * depth}- {text}")
+            _push_lines(lines, depth, "- ", _inline_md(li))
             for sub in li.find_all(["ul", "ol"], recursive=False):
                 walk_list(sub, depth + 1)
 
@@ -183,24 +203,19 @@ def markdown_source_from_html(html: str) -> str:
             if el.name in ("ul", "ol"):
                 walk_list(el, 0)
             elif el.name == "li":  # bare <li> not wrapped in a list (paste)
-                text = _inline_md(el)
-                if text:
-                    lines.append(f"{'  ' * margin_depth(el)}- {text}")
+                _push_lines(lines, margin_depth(el), "- ", _inline_md(el))
                 for sub in el.find_all(["ul", "ol"], recursive=False):
                     walk_list(sub, margin_depth(el) + 1)
             elif re.fullmatch(r"h[1-6]", el.name or ""):
-                text = _inline_md(el)
-                if text:
-                    lines.append(f"{'#' * int(el.name[1])} {text}")
+                _push_lines(lines, 0, f"{'#' * int(el.name[1])} ", _inline_md(el))
             elif el.name == "div" and "image-placeholder" in (el.get("class") or []):
                 idx = el.get("data-img-index")
                 lines.append(f"[Image {idx}]" if idx else "[Image]")
             else:
                 # Paragraph — keep its text (incl. any manual bullet glyph), indent
                 # by its (ranked) left margin so the modal's nesting is preserved.
-                text = _inline_md(el)
-                if text:
-                    lines.append(f"{'  ' * margin_depth(el)}{text}")
+                # Soft line breaks inside it become their own lines (_push_lines).
+                _push_lines(lines, margin_depth(el), "", _inline_md(el))
         else:
             t = re.sub(r"\s+", " ", str(el)).strip()
             if t:
@@ -418,7 +433,14 @@ def build_generation_prompt(section_data: dict, rules_text: str) -> tuple[str, s
         f"Now generate cards from the following study note content.\n\n"
         f"{topic_line}Section: {section_data.get('heading', '')}\n"
         f"{tree_section}\n"
-        f"Source text:\n{source_text}"
+        f"Source text:\n{source_text}\n\n"
+        # Reconnect the rules (system prompt) to the source at the point of the ask,
+        # and anchor the sibling-split decision to the source's line structure —
+        # this is what removes the coin-flip on whether to split multi-point content.
+        "Now generate the cards from the Source text above, applying every rule and "
+        "the exact output format from your instructions — and treat each separate "
+        "line or indented sub-point in the source as its own distinct idea, giving it "
+        "its own sibling card rather than merging multiple sub-points into one card."
     )
     system_text = rules_text  # ANCHOR_INSTRUCTION no longer prepended — its rules now live in the rule set
     return system_text, user_text
