@@ -42,20 +42,24 @@ STYLE: Second person present tense. Bold key clinical terms using <b> tags. Use 
             ))
             db.commit()
 
-        # Seed the default Step-by-Step rule set (prompt split into phased sections).
+        # Seed / keep-in-sync the default Step-by-Step rule set from the seed file.
+        # The DEFAULT is seed-managed (so prompt fixes propagate on deploy); the
+        # reviewer customizes by DUPLICATING it — duplicates are never touched here.
         from backend.models import SbsRuleSet
-        if db.query(SbsRuleSet).count() == 0:
-            sbs_path = os.path.join(SEED_DIR, "sbs-default-prompt.txt")
-            if os.path.exists(sbs_path):
-                from backend.services.sbs_generator import split_prompt_into_sections
-                with open(sbs_path) as f:
-                    prompt_text = f.read()
+        sbs_path = os.path.join(SEED_DIR, "sbs-default-prompt.txt")
+        if os.path.exists(sbs_path):
+            from backend.services.sbs_generator import split_prompt_into_sections
+            with open(sbs_path) as f:
+                sections = split_prompt_into_sections(f.read())
+            default = db.query(SbsRuleSet).filter_by(name="Default Step-by-Step Rules").first()
+            if default is None:
                 db.add(SbsRuleSet(
-                    name="Default Step-by-Step Rules",
-                    sections=split_prompt_into_sections(prompt_text),
-                    is_default=True,
+                    name="Default Step-by-Step Rules", sections=sections,
+                    is_default=(db.query(SbsRuleSet).count() == 0),
                 ))
-                db.commit()
+            else:
+                default.sections = sections  # keep canonical default in sync with seed
+            db.commit()
 
         # Seed curriculum from seed files (v1 + v2)
         if db.query(Curriculum).count() == 0:

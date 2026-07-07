@@ -97,16 +97,18 @@ ISOLATED COMPREHENSION: Each card must be fully understandable in isolation. If 
 THE CONNECTOR SPLITTING ALGORITHM (MANDATORY): Do NOT include logical coordinate conjunctions ("and", "or"), conditional indicators ("with", "without", "following"), or list punctuation (commas, semicolons) inside active cloze brackets.
 • SCANNING ROUTINE: Before placing a cloze bracket, you must scan the target phrase for these words or punctuation marks. If any are present, you MUST split the cloze into separate tags using the exact same cloze index (c1), forcing the connector to sit completely naked on the outside.
 • CONTRASTIVE CONTROLS (STRICT ENFORCEMENT):
-o BANNED: <span style="color:#1f77b4">**{{c1::stillbirth or fetal demise}}**</span>
-o CORRECT: <span style="color:#1f77b4">**{{c1::stillbirth}}**</span> or <span style="color:#1f77b4">**{{c1::fetal demise}}**</span>
-o BANNED: <span style="color:#1f77b4">**{{c1::smoking, alcohol, or cocaine use}}**</span>
-o CORRECT: <span style="color:#1f77b4">**{{c1::smoking}}**</span>, <span style="color:#1f77b4">**{{c1::alcohol}}**</span>, or <span style="color:#1f77b4">**{{c1::cocaine use}}**</span>
-o BANNED: <span style="color:#1f77b4">**{{c1::mifepristone and misoprostol}}**</span>
-o CORRECT: <span style="color:#1f77b4">**{{c1::mifepristone}}**</span> and <span style="color:#b4">**{{c1::misoprostol}}**</span>
+o BANNED: <span style="color:#1f77b4"><b>{{c1::stillbirth or fetal demise}}</b></span>
+o CORRECT: <span style="color:#1f77b4"><b>{{c1::stillbirth}}</b></span> or <span style="color:#1f77b4"><b>{{c1::fetal demise}}</b></span>
+o BANNED: <span style="color:#1f77b4"><b>{{c1::smoking, alcohol, or cocaine use}}</b></span>
+o CORRECT: <span style="color:#1f77b4"><b>{{c1::smoking}}</b></span>, <span style="color:#1f77b4"><b>{{c1::alcohol}}</b></span>, or <span style="color:#1f77b4"><b>{{c1::cocaine use}}</b></span>
+o BANNED: <span style="color:#1f77b4"><b>{{c1::mifepristone and misoprostol}}</b></span>
+o CORRECT: <span style="color:#1f77b4"><b>{{c1::mifepristone}}</b></span> and <span style="color:#b4"><b>{{c1::misoprostol}}</b></span>
 
 THE SUBJECT ANCHOR RULE: The subject of the card is defined as any word, phrase, or concept that functions as the primary anchor of the card, meaning it is the thing being described, tested, or elaborated upon in the card stem. The subject must never be clozed regardless of its category, position, or form in the source. If removing a term would leave the card without a clear reference point for what is being studied, that term is the subject and must remain visible. Only the target recall element may be clozed. When the primary recall target of a card is also the governing concept of the card stem, it must be clozed. The condition or diagnosis that provides clinical context for the card remains visible and unclozed as the true anchor.
 
 CATEGORY WORD EXCLUSION: When clozing a named clinical entity, cloze only the distinguishing name and leave the category word visible as a contextual hint. The category word is defined as any word that identifies the type of entity being named, such that its presence gives the student a meaningful clue about what is being recalled without revealing the answer itself. Do not cloze the category word. When clozing a multi-word clinical phrase, cloze only the specific identifying term that represents the independently testable recall target and leave the descriptor, qualifier, or category word visible as a contextual hint. Single word clinical terms that are independently testable are clozed in full. Do not apply partial cloze to single word terms.
+
+UNIT EXCLUSION: A unit of measurement (weeks, days, hours, months, years, minutes, mg, mL, mmHg, %, etc.) is never included inside the cloze. Cloze only the numeric value or range, and leave the unit visible immediately after the cloze as a hint to the student. Correct: {{c1::14-18}} weeks. Banned: {{c1::14-18 weeks}}. Correct: {{c1::48}} hours. Banned: {{c1::48 hours}}.
 
 LANGUAGE & ABBREVIATION RULES
 
@@ -136,11 +138,11 @@ When content originates from third-party test preparation sources or includes in
 
 CLOZE STYLING RULES
 
-Apply inline HTML bold and blue styling to all clozed terms using the color #1f77b4. Wrap each clozed term globally using the following syntax: <span style="color:#1f77b4">**{{c1::term}}**</span>. Do not apply any other color coding, highlights, or additional HTML styling beyond this blue-bold format to clozed terms.
+Apply inline HTML bold and blue styling to all clozed terms using the color #1f77b4. Wrap each clozed term globally using the following syntax: <span style="color:#1f77b4"><b>{{c1::term}}</b></span>. Do not apply any other color coding, highlights, or additional HTML styling beyond this blue-bold format to clozed terms.
 
 The closing HTML tag must always be rendered as exactly </span> with the closing angle bracket included. Never output </span without the closing bracket.
 
-Bold non-clozed words without color or highlight when they function as any of the following:
+Use HTML <b>...</b> tags for ALL bold, never markdown asterisks (**). Bold non-clozed words without color or highlight when they function as any of the following:
 • Structural orientation labels explicitly present in the original text such as section headers, stage names, phase names, timing markers, or categorical labels.
 • Explicit emphasis qualifiers present in the source such as most common, most important, gold standard, first line, and contraindicated.
 • Key clinical anchor terms that orient the student to the clinical context, mechanism, or decision point being tested. Do not bold filler words, prepositions, conjunctions, or non-clinical connecting language. Bolding of non-clozed terms applies on both the front and back of the card as it is part of the card text itself.
