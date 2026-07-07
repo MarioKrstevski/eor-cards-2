@@ -110,7 +110,8 @@ SEGMENT_TOOL = {
                     "properties": {
                         "id": {"type": "integer", "description": "unique unit id"},
                         "type": {"type": "string", "enum": ["standalone", "sibling_set"]},
-                        "anchor": {"type": "string", "description": "the heading/subject anchor that must stay visible on each card"},
+                        "question": {"type": "string", "description": "the ONE exam-style question this card answers, e.g. 'How is suction curettage performed?'. For a sibling_set, the shared question the set answers, e.g. 'What are the risk factors for spontaneous abortion?'. If you cannot phrase a single clean question, the unit is mis-scoped — split or regroup it."},
+                        "anchor": {"type": "string", "description": "the heading/subject anchor (the thing the question is about) that must stay visible on each card"},
                         "footer_label": {"type": "string", "description": "for sibling_set: the 'Other …:' label derived from the parent heading; empty for standalone"},
                         "members": {
                             "type": "array",
@@ -124,7 +125,7 @@ SEGMENT_TOOL = {
                             },
                         },
                     },
-                    "required": ["id", "type", "anchor", "members"],
+                    "required": ["id", "type", "question", "anchor", "members"],
                 },
             }
         },
@@ -176,7 +177,10 @@ def run_segment(client, section_data: dict, sections: list[dict], model: str):
         "Segment this section into units for card generation, applying the rules above. "
         "Governing principle: ONE IDEA PER CARD. Each card must test a single thing a "
         "student would answer on the exam — not the anchor plus the value plus the "
-        "causes at once. So:\n"
+        "causes at once. For every unit, first write the single exam-style QUESTION the "
+        "card answers (e.g. 'How is suction curettage performed?'); this is your "
+        "self-check — if you cannot phrase one clean question for the unit, it is "
+        "mis-scoped, so split it or regroup it. Then:\n"
         "1. A sentence that contains several independently testable facts becomes "
         "SEVERAL standalone units (one idea each) — do not bundle them into one unit.\n"
         "2. A heading or label followed by two or more PARALLEL items of the same "
@@ -209,7 +213,10 @@ def run_segment(client, section_data: dict, sections: list[dict], model: str):
 def _plan_for_author(units: list[dict]) -> str:
     lines = []
     for u in units:
-        lines.append(f"Unit {u['id']} ({u['type']}), anchor: {u.get('anchor','')}")
+        lines.append(
+            f"Unit {u['id']} ({u['type']}) — question: {u.get('question','')} "
+            f"| anchor: {u.get('anchor','')}"
+        )
         for i, m in enumerate(u.get("members", [])):
             lines.append(f"  member {i}: {m.get('source_text','')}")
     return "\n".join(lines)
@@ -222,10 +229,12 @@ def run_author(client, section_data: dict, units: list[dict], sections: list[dic
     user = (
         f"Section: {heading}\n\n"
         "Here is the approved plan. Write ONE cloze card stem per member listed, via "
-        "submit_cards, referencing unit_id and member_index. For sibling-set members, "
-        "the stem must contain ONLY that member (the footer of other members is added "
-        "separately — do not put other members in the stem). Apply the cloze, styling, "
-        "rewording, and language rules.\n\n"
+        "submit_cards, referencing unit_id and member_index. Each card must directly "
+        "answer that unit's QUESTION, with the anchor visible (unclozed) and the "
+        "answer clozed — nothing else. For sibling-set members, the stem must contain "
+        "ONLY that member (the footer of other members is added separately — do not put "
+        "other members in the stem). Apply the cloze, styling, rewording, and language "
+        "rules.\n\n"
         f"PLAN:\n{_plan_for_author(units)}\n\n"
         f"Full source (for wording reference):\n{_section_source(section_data)}"
     )
