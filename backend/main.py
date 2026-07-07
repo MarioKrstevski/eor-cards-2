@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from backend.db import engine, Base, SessionLocal
-from backend.routers import documents, sections, cards, generate, curriculum, rules, export, usage, review_marks, fix_batches, presentations
+from backend.routers import documents, sections, cards, generate, curriculum, rules, export, usage, review_marks, fix_batches, presentations, sbs
 from backend import models  # noqa — ensure all models registered
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -41,6 +41,21 @@ STYLE: Second person present tense. Bold key clinical terms using <b> tags. Use 
                 is_default=True,
             ))
             db.commit()
+
+        # Seed the default Step-by-Step rule set (prompt split into phased sections).
+        from backend.models import SbsRuleSet
+        if db.query(SbsRuleSet).count() == 0:
+            sbs_path = os.path.join(SEED_DIR, "sbs-default-prompt.txt")
+            if os.path.exists(sbs_path):
+                from backend.services.sbs_generator import split_prompt_into_sections
+                with open(sbs_path) as f:
+                    prompt_text = f.read()
+                db.add(SbsRuleSet(
+                    name="Default Step-by-Step Rules",
+                    sections=split_prompt_into_sections(prompt_text),
+                    is_default=True,
+                ))
+                db.commit()
 
         # Seed curriculum from seed files (v1 + v2)
         if db.query(Curriculum).count() == 0:
@@ -317,7 +332,7 @@ async def _no_store_api(request, call_next):
 
 
 # Bumped on each deploy so /api/version can confirm what's actually running.
-APP_VERSION = 82
+APP_VERSION = 83
 
 
 @app.get("/api/version")
@@ -346,6 +361,7 @@ app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
 app.include_router(review_marks.router, prefix="/api/review-marks", tags=["review_marks"])
 app.include_router(fix_batches.router, prefix="/api/fix-batches", tags=["fix_batches"])
 app.include_router(presentations.router, prefix="/api/presentations", tags=["presentations"])
+app.include_router(sbs.router, prefix="/api/sbs", tags=["sbs"])
 
 
 @app.post("/api/admin/clear-storage")

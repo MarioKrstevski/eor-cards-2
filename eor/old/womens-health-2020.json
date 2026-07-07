@@ -1,0 +1,87 @@
+[
+  { "name": "Gynecology", "children": [
+    { "name": "Menstruation", "children": [
+      { "name": "Amenorrhea" },
+      { "name": "Dysfunctional uterine bleeding" },
+      { "name": "Dysmenorrhea" },
+      { "name": "Menopause" },
+      { "name": "Normal physiology" },
+      { "name": "Premenstrual dysphoric disorder" },
+      { "name": "Premenstrual syndrome" }
+    ]},
+    { "name": "Infections", "children": [
+      { "name": "Cervicitis (gonorrhea, chlamydia, herpes simplex, human papilloma virus)" },
+      { "name": "Chancroid" },
+      { "name": "Lymphogranuloma venereum" },
+      { "name": "Pelvic Inflammatory disease" },
+      { "name": "Syphilis" },
+      { "name": "Vaginitis (trichomoniasis, bacterial vaginosis, atrophic vaginitis, candidiasis)" }
+    ]},
+    { "name": "Neoplasms", "children": [
+      { "name": "Breast cancer" },
+      { "name": "Cervical carcinoma" },
+      { "name": "Cervical dysplasia" },
+      { "name": "Endometrial cancer" },
+      { "name": "Ovarian neoplasms" },
+      { "name": "Vaginal/vulvar neoplasms" }
+    ]},
+    { "name": "Disorders of the Breast", "children": [
+      { "name": "Breast abscess" },
+      { "name": "Breast fibroadenoma" },
+      { "name": "Fibrocystic disease" },
+      { "name": "Mastitis" }
+    ]},
+    { "name": "Structural Abnormalities", "children": [
+      { "name": "Cystocele" },
+      { "name": "Ovarian torsion" },
+      { "name": "Rectocele" },
+      { "name": "Uterine prolapse" }
+    ]},
+    { "name": "Other", "children": [
+      { "name": "Contraceptive methods" },
+      { "name": "Endometriosis" },
+      { "name": "Infertility" },
+      { "name": "Leiomyoma" },
+      { "name": "Ovarian cyst" },
+      { "name": "Sexual assault" },
+      { "name": "Spouse or partner neglect/violence" },
+      { "name": "Urinary incontinence" }
+    ]}
+  ]},
+  { "name": "Obstetrics", "children": [
+    { "name": "Prenatal Care/Normal Pregnancy", "children": [
+      { "name": "Apgar score" },
+      { "name": "Fetal position" },
+      { "name": "Multiple gestation" },
+      { "name": "Normal labor and delivery (stages, duration, mechanism of delivery, monitoring)" },
+      { "name": "Physiology of pregnancy" },
+      { "name": "Prenatal diagnosis/care" }
+    ]},
+    { "name": "Pregnancy Complications", "children": [
+      { "name": "Abortion" },
+      { "name": "Ectopic pregnancy" },
+      { "name": "Gestational diabetes" },
+      { "name": "Gestational trophoblastic disease (molar pregnancy, choriocarcinoma)" },
+      { "name": "Incompetent cervix" },
+      { "name": "Placenta abruption" },
+      { "name": "Placenta previa" },
+      { "name": "Preeclampsia/eclampsia" },
+      { "name": "Pregnancy induced hypertension" },
+      { "name": "Rh incompatibility" }
+    ]},
+    { "name": "Labor and Delivery Complications", "children": [
+      { "name": "Breech presentation" },
+      { "name": "Dystocia" },
+      { "name": "Fetal distress" },
+      { "name": "Premature rupture of membranes" },
+      { "name": "Preterm labor" },
+      { "name": "Prolapsed umbilical cord" }
+    ]},
+    { "name": "Postpartum Care", "children": [
+      { "name": "Endometritis" },
+      { "name": "Normal physiology changes of puerperium" },
+      { "name": "Perineal laceration/episiotomy care" },
+      { "name": "Postpartum hemorrhage" }
+    ]}
+  ]}
+]

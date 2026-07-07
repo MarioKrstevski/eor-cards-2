@@ -782,3 +782,31 @@ export async function sendChatMessage(
   });
   return res.data;
 }
+
+// ── Step-by-Step (SBS) generation ─────────────────────────────────────────────
+import type { SbsRuleSet, SbsPreview, SbsJob } from './types';
+
+export async function listSbsRules(): Promise<SbsRuleSet[]> {
+  return (await http.get<SbsRuleSet[]>('/sbs/rules')).data;
+}
+export async function createSbsRule(name: string, sections: SbsRuleSet['sections']): Promise<SbsRuleSet> {
+  return (await http.post<SbsRuleSet>('/sbs/rules', { name, sections })).data;
+}
+export async function updateSbsRule(id: number, patch: Partial<Pick<SbsRuleSet, 'name' | 'sections' | 'is_default'>>): Promise<SbsRuleSet> {
+  return (await http.patch<SbsRuleSet>(`/sbs/rules/${id}`, patch)).data;
+}
+export async function deleteSbsRule(id: number): Promise<void> {
+  await http.delete(`/sbs/rules/${id}`);
+}
+export async function sbsPreview(sectionId: number, sbsRuleSetId: number): Promise<SbsPreview> {
+  return (await http.post<SbsPreview>('/sbs/preview', { section_id: sectionId, sbs_rule_set_id: sbsRuleSetId })).data;
+}
+export async function startSbs(params: { section_id: number; sbs_rule_set_id: number; card_version: string; model: string }): Promise<SbsJob> {
+  return (await http.post<SbsJob>('/sbs/start', params)).data;
+}
+export async function getSbsJob(id: number): Promise<SbsJob> {
+  return (await http.get<SbsJob>(`/sbs/jobs/${id}`)).data;
+}
+export function sbsReportUrl(jobId: number): string {
+  return `/api/sbs/jobs/${jobId}/report`;
+}

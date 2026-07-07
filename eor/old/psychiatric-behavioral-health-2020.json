@@ -1,0 +1,70 @@
+[
+  { "name": "Depressive Disorders; Bipolar and Related Disorders", "children": [
+    { "name": "Bipolar I disorder" },
+    { "name": "Bipolar II disorder" },
+    { "name": "Cyclothymic disorder" },
+    { "name": "Major depressive disorder" },
+    { "name": "Persistent depressive disorder (dysthymia)" }
+  ]},
+  { "name": "Anxiety Disorders; Trauma- and Stress-Related Disorders", "children": [
+    { "name": "Generalized anxiety disorder" },
+    { "name": "Panic disorder" },
+    { "name": "Phobic disorders" },
+    { "name": "Post-traumatic stress disorder" },
+    { "name": "Specific phobias" }
+  ]},
+  { "name": "Substance-Related Disorders", "children": [
+    { "name": "Alcohol-related disorders" },
+    { "name": "Cannabis-related disorders" },
+    { "name": "Hallucinogen-related disorders" },
+    { "name": "Inhalant-related disorders" },
+    { "name": "Opioid-related disorders" },
+    { "name": "Sedative-, hypnotic-, or anxiolytic-related disorders" },
+    { "name": "Stimulant-related disorders" },
+    { "name": "Tobacco-related disorders" }
+  ]},
+  { "name": "Schizophrenia Spectrum and Other Psychotic Disorders", "children": [
+    { "name": "Delusional disorder" },
+    { "name": "Schizoaffective disorder" },
+    { "name": "Schizophrenia" },
+    { "name": "Schizophreniform disorder" }
+  ]},
+  { "name": "Disruptive, Impulse-Control and Conduct Disorders; Neurodevelopmental Disorders", "children": [
+    { "name": "Attention-deficit/hyperactivity disorder" },
+    { "name": "Autism spectrum disorder" },
+    { "name": "Conduct disorder" },
+    { "name": "Oppositional defiant disorder" }
+  ]},
+  { "name": "Personality Disorders; Obsessive-Compulsive and Related Disorders", "children": [
+    { "name": "Antisocial personality disorder" },
+    { "name": "Avoidant personality disorder" },
+    { "name": "Body dysmorphic disorder" },
+    { "name": "Borderline personality disorder" },
+    { "name": "Dependent personality disorder" },
+    { "name": "Histrionic personality disorder" },
+    { "name": "Narcissistic personality disorder" },
+    { "name": "Obsessive-compulsive disorder" },
+    { "name": "Obsessive-compulsive personality disorder" },
+    { "name": "Paranoid personality disorder" },
+    { "name": "Schizoid personality disorder" },
+    { "name": "Schizotypal personality disorder" }
+  ]},
+  { "name": "Somatic Symptom and Related Disorders; Nonadherence to Medical Treament", "children": [
+    { "name": "Factitious disorder" },
+    { "name": "Illness anxiety disorder" },
+    { "name": "Somatic symptom disorder" }
+  ]},
+  { "name": "Feeding or Eating Disorders", "children": [
+    { "name": "Anorexia nervosa" },
+    { "name": "Bulimia nervosa" }
+  ]},
+  { "name": "Paraphilic Disorders; Sexual Dysfunctions", "children": [
+    { "name": "Exhibitionistic disorder" },
+    { "name": "Female sexual interest/arousal disorder" },
+    { "name": "Fetishistic disorder" },
+    { "name": "Male hypoactive sexual desire disorder" },
+    { "name": "Pedophilic disorder" },
+    { "name": "Sexual masochism disorder" },
+    { "name": "Voyeuristic disorder" }
+  ]}
+]

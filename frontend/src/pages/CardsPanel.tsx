@@ -53,6 +53,7 @@ import {
 import type { Card, CardStatus, CostEstimate, ReviewMarkType, SectionImage, FixProposal, Model, RuleSet } from '../types';
 import { loadRegenHistory, pushSnapshots, rollbackToIndex, type RegenHistory } from '../regenHistory';
 import ConfirmModal from '../components/ConfirmModal';
+import SbsGenerateModal from '../components/SbsGenerateModal';
 import AlertModal from '../components/AlertModal';
 import AnkifyModal from '../components/AnkifyModal';
 import CreatePresentationModal from '../components/CreatePresentationModal';
@@ -1201,6 +1202,7 @@ export default function CardsPanel({
 
   // ── Generate confirm ─────────────────────────────────────────────────────
   const [showGenerateConfirm, setShowGenerateConfirm] = useState(false);
+  const [showSbs, setShowSbs] = useState(false);  // step-by-step generation modal
   // Generation rule sets, so we can show which card version a run will target.
   const [genRuleSets, setGenRuleSets] = useState<RuleSet[]>([]);
   useEffect(() => { getRuleSets('generation').then(setGenRuleSets).catch(() => {}); }, []);
@@ -3046,6 +3048,16 @@ export default function CardsPanel({
           </button>
           {effectiveSectionId && (
             <button
+              onClick={() => setShowSbs(true)}
+              disabled={jobRunning}
+              className="px-2 py-1.5 text-xs font-medium text-indigo-700 bg-white border border-indigo-200 rounded-lg hover:bg-indigo-50 disabled:opacity-50 transition-colors duration-150"
+              title="Phased step-by-step generation (segment → author → assemble) with a downloadable audit"
+            >
+              Generate — Step by Step
+            </button>
+          )}
+          {effectiveSectionId && (
+            <button
               onClick={handleInspectPrompt}
               disabled={inspectLoading || jobRunning}
               className="px-2 py-1.5 text-xs font-medium text-blue-700 bg-white border border-blue-200 rounded-lg hover:bg-blue-50 disabled:opacity-50 transition-colors duration-150 flex items-center gap-1"
@@ -3249,6 +3261,15 @@ export default function CardsPanel({
           confirmLabel="Generate"
           onConfirm={handleGenerate}
           onCancel={() => setShowGenerateConfirm(false)}
+        />
+      )}
+
+      {showSbs && effectiveSectionId && (
+        <SbsGenerateModal
+          sectionId={effectiveSectionId}
+          model={selectedModel}
+          onClose={() => setShowSbs(false)}
+          onDone={() => fetchCards(sectionId, topicPath, false, undefined, sectionIds)}
         />
       )}
 

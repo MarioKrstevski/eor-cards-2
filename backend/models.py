@@ -52,6 +52,37 @@ class RuleSet(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+# ── Step-by-Step (SBS) card generation — fully isolated from the single-shot flow ──
+# A step-by-step rule set is the same prompt, but split into sections each assigned
+# to a phase (segment / author / shared). Own table + own tab so it never mixes
+# with the existing `rule_sets`.
+class SbsRuleSet(Base):
+    __tablename__ = "sbs_rule_sets"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    # sections: [{"heading": str, "phase": "segment"|"author"|"shared", "text": str}]
+    sections: Mapped[list] = mapped_column(JSON, default=list)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class SbsJob(Base):
+    __tablename__ = "sbs_jobs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    section_id: Mapped[int] = mapped_column(ForeignKey("sections.id"))
+    sbs_rule_set_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sbs_rule_sets.id"), nullable=True)
+    card_version: Mapped[str] = mapped_column(String(10), default="base")
+    model: Mapped[str] = mapped_column(String(60), default="")
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/running/done/failed
+    phase: Mapped[str] = mapped_column(String(20), default="")  # segment/author/assemble/done
+    plan: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # the segmentation plan (for review)
+    trace: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # per-phase input/output for the audit report
+    total_cards: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+
 # ── Topic Tree (one per H1 main topic) ──
 
 class TopicTree(Base):

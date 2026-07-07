@@ -321,3 +321,35 @@ export interface FixProposal {
   is_resolved: boolean;
   in_fix_batch?: boolean;
 }
+
+// ── Step-by-Step (SBS) generation ─────────────────────────────────────────────
+export interface SbsSection {
+  heading: string;
+  phase: 'segment' | 'author' | 'shared';
+  text: string;
+}
+
+export interface SbsRuleSet {
+  id: number;
+  name: string;
+  sections: SbsSection[];
+  is_default: boolean;
+}
+
+export interface SbsPreview {
+  section_heading: string;
+  source: string;
+  phases: Array<{ phase: string; system: string }>;
+  sections: SbsSection[];
+}
+
+export interface SbsJob {
+  id: number;
+  section_id: number;
+  status: 'pending' | 'running' | 'done' | 'failed';
+  phase: string;
+  total_cards: number;
+  error_message: string | null;
+  card_version: string;
+  plan: unknown;
+}

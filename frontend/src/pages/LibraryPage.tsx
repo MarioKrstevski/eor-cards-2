@@ -3,6 +3,7 @@ import ConfirmModal from '../components/ConfirmModal';
 import CurriculumPicker from '../components/CurriculumPicker';
 import ReconcileModal from '../components/ReconcileModal';
 import CurriculumCompareModal from '../components/CurriculumCompareModal';
+import SbsRulesTab from '../components/SbsRulesTab';
 import { buildAggregatedCounts, flattenTree, sortTree } from '../utils';
 import {
   getCurriculum,
@@ -236,7 +237,7 @@ function TopicNode({ node, depth, cardCounts, editMode, onRefresh, onDeleteReque
 
 export default function LibraryPage() {
   const { curriculumVersion } = useSettings();
-  const [activeTab, setActiveTab] = useState<'topics' | 'documents' | 'rules' | 'marks' | 'mapping' | 'presentations'>('topics');
+  const [activeTab, setActiveTab] = useState<'topics' | 'documents' | 'rules' | 'sbs' | 'marks' | 'mapping' | 'presentations'>('topics');
 
   // Curriculum
   const [curriculum, setCurriculum] = useState<CurriculumNode[]>([]);
@@ -604,7 +605,7 @@ export default function LibraryPage() {
       <div className="max-w-6xl mx-auto px-6 py-6">
         {/* Tab bar */}
         <div className="flex items-center gap-1 mb-6 bg-white rounded-xl p-1 shadow-sm border border-gray-200 w-fit">
-          {(['topics', 'documents', 'rules', 'marks', 'mapping', 'presentations'] as const).map((tab) => (
+          {(['topics', 'documents', 'rules', 'sbs', 'marks', 'mapping', 'presentations'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -614,7 +615,7 @@ export default function LibraryPage() {
                   : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
               }`}
             >
-              {tab === 'topics' ? 'Topics' : tab === 'documents' ? 'Documents' : tab === 'rules' ? 'Rules' : tab === 'marks' ? 'Marks' : tab === 'mapping' ? 'Mapping' : 'Presentations'}
+              {tab === 'topics' ? 'Topics' : tab === 'documents' ? 'Documents' : tab === 'rules' ? 'Rules' : tab === 'sbs' ? 'Step-by-Step' : tab === 'marks' ? 'Marks' : tab === 'mapping' ? 'Mapping' : 'Presentations'}
             </button>
           ))}
         </div>
@@ -1062,6 +1063,8 @@ export default function LibraryPage() {
         )}
 
         {/* Marks tab */}
+        {activeTab === 'sbs' && <SbsRulesTab />}
+
         {activeTab === 'marks' && (
           <div className="max-w-md">
             <div className="flex items-center gap-2 mb-3">
