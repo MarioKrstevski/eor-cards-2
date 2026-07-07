@@ -16,7 +16,9 @@ import logging
 
 import anthropic
 
-from backend.config import ANTHROPIC_API_KEY, anthropic_model, DEFAULT_MODEL
+from backend.config import (
+    ANTHROPIC_API_KEY, anthropic_model, DEFAULT_MODEL, provider_for, resolve_model,
+)
 from backend.services.ai_utils import tool_use_input, usage_dict
 from backend.services.generator import _render_source_text, strip_card_html, fix_markdown_bold
 
@@ -161,12 +163,73 @@ def _client() -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=300)
 
 
+def run_tool(system: str, user: str, tool: dict, model: str) -> tuple[dict, dict]:
+    """Get structured output for a phase. Claude → forced tool call. Gemini →
+    structured output (response_schema). Returns (data_dict, usage_dict). The
+    model dropdown now honors Gemini for SBS instead of coercing it to Claude."""
+    if provider_for(model) == "google":
+        return _run_gemini(system, user, tool, model)
+    return _run_anthropic(system, user, tool, model)
+
+
+def _run_anthropic(system, user, tool, model):
+    client = _client()
+    resp = client.messages.create(
+        model=anthropic_model(model),
+        max_tokens=8192,
+        temperature=0,
+        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        tools=[tool],
+        tool_choice={"type": "tool", "name": tool["name"]},
+        messages=[{"role": "user", "content": user}],
+    )
+    return tool_use_input(resp, tool["name"]), usage_dict(resp)
+
+
+def _run_gemini(system, user, tool, model):
+    """Gemini structured output: force JSON matching the tool's input_schema.
+    thinking disabled (determinism + thought tokens eat the output budget)."""
+    import json
+    from backend.services import llm
+    if llm.genai is None:
+        raise RuntimeError("google-genai not installed")
+    client = llm._google_client()
+    gt = llm.genai_types
+    base = resolve_model(model)[0]
+    schema = tool["input_schema"]
+
+    def _cfg(**extra):
+        return gt.GenerateContentConfig(
+            system_instruction=system, temperature=0, max_output_tokens=8192,
+            response_mime_type="application/json", response_schema=schema, **extra,
+        )
+    try:
+        config = _cfg(thinking_config=gt.ThinkingConfig(thinking_budget=0))
+    except TypeError:
+        config = _cfg()
+
+    resp = client.models.generate_content(model=base, contents=user, config=config)
+    try:
+        data = json.loads(resp.text)
+    except (TypeError, json.JSONDecodeError) as e:
+        raise ValueError(f"Gemini did not return valid JSON for {tool['name']}: {e}")
+    um = getattr(resp, "usage_metadata", None)
+    usage = {
+        "input_tokens": getattr(um, "prompt_token_count", 0) or 0,
+        "output_tokens": ((getattr(um, "candidates_token_count", 0) or 0)
+                          + (getattr(um, "thoughts_token_count", 0) or 0)),
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+    return data, usage
+
+
 def _section_source(section_data: dict) -> str:
     return _render_source_text(section_data)
 
 
-def run_segment(client, section_data: dict, sections: list[dict], model: str):
-    """Phase 1 — produce the plan. Returns (units, usage)."""
+def run_segment(section_data: dict, sections: list[dict], model: str):
+    """Phase 1 — produce the plan. Returns (units, usage, trace)."""
     system = build_phase_system(sections, "segment")
     heading = section_data.get("heading", "")
     path = section_data.get("curriculum_topic_path", "")
@@ -209,18 +272,10 @@ def run_segment(client, section_data: dict, sections: list[dict], model: str):
         "For each unit give the VERBATIM source text of every member. Do NOT write any "
         "cards yet — return only the plan via submit_plan."
     )
-    resp = client.messages.create(
-        model=anthropic_model(model),
-        max_tokens=8192,
-        temperature=0,
-        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-        tools=[SEGMENT_TOOL],
-        tool_choice={"type": "tool", "name": "submit_plan"},
-        messages=[{"role": "user", "content": user}],
-    )
-    plan = tool_use_input(resp, "submit_plan")
-    trace = {"phase": "segment", "system": system, "user": user, "output": plan.get("units", [])}
-    return plan.get("units", []), usage_dict(resp), trace
+    plan, usage = run_tool(system, user, SEGMENT_TOOL, model)
+    units = plan.get("units", [])
+    trace = {"phase": "segment", "system": system, "user": user, "output": units}
+    return units, usage, trace
 
 
 def _plan_for_author(units: list[dict]) -> str:
@@ -235,8 +290,8 @@ def _plan_for_author(units: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def run_author(client, section_data: dict, units: list[dict], sections: list[dict], model: str):
-    """Phase 2 — author the cloze stem for each member. Returns (cards, usage)."""
+def run_author(section_data: dict, units: list[dict], sections: list[dict], model: str):
+    """Phase 2 — author the cloze stem for each member. Returns (cards, usage, trace)."""
     system = build_phase_system(sections, "author")
     heading = section_data.get("heading", "")
     user = (
@@ -251,18 +306,10 @@ def run_author(client, section_data: dict, units: list[dict], sections: list[dic
         f"PLAN:\n{_plan_for_author(units)}\n\n"
         f"Full source (for wording reference):\n{_section_source(section_data)}"
     )
-    resp = client.messages.create(
-        model=anthropic_model(model),
-        max_tokens=8192,
-        temperature=0,
-        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-        tools=[AUTHOR_TOOL],
-        tool_choice={"type": "tool", "name": "submit_cards"},
-        messages=[{"role": "user", "content": user}],
-    )
-    out = tool_use_input(resp, "submit_cards")
-    trace = {"phase": "author", "system": system, "user": user, "output": out.get("cards", [])}
-    return out.get("cards", []), usage_dict(resp), trace
+    out, usage = run_tool(system, user, AUTHOR_TOOL, model)
+    cards = out.get("cards", [])
+    trace = {"phase": "author", "system": system, "user": user, "output": cards}
+    return cards, usage, trace
 
 
 def _normalize_cloze(front: str) -> tuple[str, bool]:
@@ -330,9 +377,8 @@ def generate_sbs(section_data: dict, sections: list[dict], model: str = DEFAULT_
     """Run the full 3-phase pipeline.
     Returns (cards, plan, usage_total, traces) where traces is a per-phase list of
     {phase, system/input, output} for the downloadable audit report."""
-    client = _client()
-    units, u1, t1 = run_segment(client, section_data, sections, model)
-    authored, u2, t2 = run_author(client, section_data, units, sections, model)
+    units, u1, t1 = run_segment(section_data, sections, model)
+    authored, u2, t2 = run_author(section_data, units, sections, model)
     cards = assemble(units, authored)
     t3 = {
         "phase": "assemble",
