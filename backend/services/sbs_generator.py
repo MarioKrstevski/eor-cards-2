@@ -18,7 +18,30 @@ import anthropic
 
 from backend.config import ANTHROPIC_API_KEY, anthropic_model, DEFAULT_MODEL
 from backend.services.ai_utils import tool_use_input, usage_dict
-from backend.services.generator import _render_source_text, strip_card_html
+from backend.services.generator import _render_source_text, strip_card_html, fix_markdown_bold
+
+# Units of measurement that should stay OUTSIDE the cloze as a hint to the student
+# ("{{c1::14–18}} weeks", not "{{c1::14–18 weeks}}").
+_UNIT = r"(?:weeks?|days?|hours?|months?|years?|minutes?|mg|mcg|mL|mmHg|%)"
+_CLOZE_UNIT_STYLED = re.compile(
+    r"(\{\{c1::[^{}]+?)\s+(" + _UNIT + r")\}\}(\*\*</span>|</b></span>)"
+)
+_CLOZE_UNIT_BARE = re.compile(r"\{\{c1::([^{}]+?)\s+(" + _UNIT + r")\}\}")
+
+
+def _units_out(front: str) -> str:
+    """Pull a trailing unit of measurement out of the cloze so the unit stays
+    visible: '{{c1::14–18 weeks}}**</span>' -> '{{c1::14–18}}**</span> weeks'."""
+    front = _CLOZE_UNIT_STYLED.sub(r"\1}}\3 \2", front)     # styled span form
+    front = _CLOZE_UNIT_BARE.sub(r"{{c1::\1}} \2", front)   # any bare cloze that slipped through
+    return front
+
+
+def _strip_trailing_footer(front: str) -> str:
+    """Sibling stems must contain ONLY the active member; the footer is built in
+    code from the plan. If the author still appended an 'Other …:' footer to the
+    stem, remove it so it isn't duplicated with the extra field."""
+    return re.sub(r"(?:<br\s*/?>|\s)*(?:\*\*|<b>)?Other\b.*$", "", front, flags=re.I | re.S).rstrip()
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +270,12 @@ def assemble(units: list[dict], authored: list[dict]) -> list[dict]:
             if not front:
                 continue  # author skipped this member
             number += 1
+            # Deterministic cleanup: sibling stems must not carry a footer; units
+            # of measurement leave the cloze; markdown ** -> HTML <b>; cloze -> c1.
+            if is_sibling:
+                front = _strip_trailing_footer(front)
+            front = _units_out(front)
+            front = fix_markdown_bold(front)
             front_html, needs_review = _normalize_cloze(front)
             extra = _build_footer(u, i) if is_sibling else None
             cards.append({

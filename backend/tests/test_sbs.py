@@ -75,3 +75,27 @@ def test_report_contains_prompt_input_output_per_step():
     assert "AUTH RULES" in md and "PLAN" in md            # step 2 prompt + input
     assert "Step 1" in md and "Step 2" in md and "Step 3" in md
     assert "Final cards" in md
+
+
+def test_assemble_units_out_bold_and_footer_dedup():
+    units = [
+        {"id": 1, "type": "standalone", "members": [{"source_text": "x"}]},
+        {"id": 2, "type": "sibling_set", "footer_label": "Other causes",
+         "members": [{"source_text": "genetic"}, {"source_text": "uterine"}]},
+    ]
+    authored = [
+        {"unit_id": 1, "member_index": 0,
+         "front": 'used at <span style="color:#1f77b4">**{{c1::14–18 weeks}}**</span>. **Outpatient**.'},
+        {"unit_id": 2, "member_index": 0,
+         "front": '<span style="color:#1f77b4">**{{c1::genetic}}**</span>.<br><br>**Other causes:** uterine'},
+        {"unit_id": 2, "member_index": 1,
+         "front": '<span style="color:#1f77b4">**{{c1::uterine}}**</span>.'},
+    ]
+    cards = assemble(units, authored)
+    # unit moved OUT of the cloze; markdown ** -> <b>
+    assert "{{c1::14–18}}" in cards[0]["front_html"] and "weeks" in cards[0]["front_html"]
+    assert "{{c1::14–18 weeks}}" not in cards[0]["front_html"]
+    assert "<b>Outpatient</b>" in cards[0]["front_html"] and "**" not in cards[0]["front_html"]
+    # author-appended footer stripped from the sibling stem (no duplicate)
+    assert "Other causes" not in cards[1]["front_html"]
+    assert cards[1]["extra"].startswith("<b>Other causes:</b>")
