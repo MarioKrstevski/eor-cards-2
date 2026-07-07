@@ -84,6 +84,32 @@ def dup_collapsed_flag(elems: list[dict]) -> Optional[str]:
     return f"{DUP_COLLAPSED_FLAG}: {parts}"
 
 
+def _list_info(para):
+    """(is_list, list_type, indent_level) for a paragraph — so an image sitting
+    in a bullet keeps its nesting instead of breaking out of the list."""
+    try:
+        style = (para.style.name or "").lower()
+    except AttributeError:
+        style = ""
+    is_list = "list" in style
+    list_type = "ol" if ("number" in style or "ordered" in style) else "ul"
+    num_pr = para._element.find(f'.//{_W}numPr')
+    if num_pr is not None:
+        num_id = num_pr.find(f'{_W}numId')
+        if num_id is None or int(num_id.get(f'{_W}val', '0')) != 0:
+            is_list = True
+    indent = 0
+    if is_list:
+        ilvl = para._element.find(f'.//{_W}ilvl')
+        if ilvl is not None:
+            indent = int(ilvl.get(f'{_W}val', '0'))
+        else:
+            ind = para._element.find(f'.//{_W}ind')
+            if ind is not None:
+                indent = max(0, int(ind.get(f'{_W}left', '0')) // 720)
+    return is_list, list_type, indent
+
+
 def _all_runs(para):
     """All runs in a paragraph in document order, INCLUDING runs wrapped in
     inline content controls (<w:sdt>). Google Docs exports wrap suggested/edited
@@ -148,6 +174,7 @@ def parse_docx(filepath: str) -> list[dict]:
 
         # Check for images in paragraph runs
         _WP_NS = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'
+        _img_is_list, _img_lt, _img_indent = _list_info(para)
         for run in _runs:
             if run._element.findall(f'.//{_W}drawing'):
                 # Extract inline images
@@ -169,14 +196,19 @@ def parse_docx(filepath: str) -> list[dict]:
                                 content_type = rel.target_part.content_type or "image/png"
                                 b64 = base64.b64encode(image_data).decode('utf-8')
                                 data_uri = f"data:{content_type};base64,{b64}"
-                                elements.append({
+                                img_elem = {
                                     "type": "image",
                                     "text": "",
                                     "html": "",
                                     "data_uri": data_uri,
                                     "alt_text": alt_text,
                                     "heading_context": _build_heading_context(current_headings),
-                                })
+                                }
+                                # Keep the image nested in its bullet if it was one.
+                                if _img_is_list:
+                                    img_elem["indent_level"] = _img_indent
+                                    img_elem["list_type"] = _img_lt
+                                elements.append(img_elem)
                             except (KeyError, AttributeError, ValueError):
                                 # ValueError: externally-linked image (target_part is
                                 # undefined for external rels) — skip, don't crash.
@@ -532,8 +564,12 @@ def build_content_html(elements: list[dict]) -> str:
 
     for elem in elements:
         elem_type = elem.get("type", "paragraph")
+        is_image = elem_type == "image"
+        # An image that sat inside a bullet keeps its nesting (rendered as a list
+        # item at its indent) instead of breaking out of the list.
+        in_list = elem_type == "list_item" or (is_image and elem.get("indent_level") is not None)
 
-        if elem_type == "list_item":
+        if in_list:
             target_indent = elem.get("indent_level", 0)
             lt = elem.get("list_type", "ul")
 
@@ -550,14 +586,21 @@ def build_content_html(elements: list[dict]) -> str:
                 # Same level — close previous <li>
                 html_parts.append("</li>")
 
-            html_parts.append(f"<li>{elem.get('html', elem.get('text', ''))}")
+            if is_image:
+                img_counter += 1
+                html_parts.append(
+                    f'<li><div class="image-placeholder" data-img-index="{img_counter}">'
+                    f'[Image {img_counter}]</div>'
+                )
+            else:
+                html_parts.append(f"<li>{elem.get('html', elem.get('text', ''))}")
         else:
             # Close all open lists before non-list content
             while list_stack:
                 html_parts.append(f"</li></{list_stack[-1][0]}>")
                 list_stack.pop()
 
-            if elem_type == "image":
+            if is_image:
                 img_counter += 1
                 html_parts.append(
                     f'<div class="image-placeholder" data-img-index="{img_counter}">'
