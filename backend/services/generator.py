@@ -223,19 +223,23 @@ def markdown_source_from_html(html: str) -> str:
     return "\n".join(lines)
 
 
+def _strip_image_markers(text: str) -> str:
+    """Remove reference-image placeholders ("[Image N]") from the AI source — a
+    reference image carries no meaning to pass the model, and EXTRACT images
+    already had their text merged into the content. The image still shows in the
+    section modal (content_html is untouched)."""
+    text = re.sub(r'(?m)^\s*-?\s*\[Image\s*\d*\]\s*$', '', text)  # whole-line markers
+    text = re.sub(r'\s*\[Image\s*\d*\]', '', text)                # inline markers
+    return re.sub(r'\n{3,}', '\n\n', text).strip()
+
+
 def build_content_source(content_html: str, heading: str | None = None) -> str:
     """The faithful source block we freeze at parse time and send the AI verbatim:
     the section heading as the first line (so the model sees the same anchor the
     reviewer pastes into chat), then the indented body rendered from content_html.
     Stored on Section.content_source so payload == inspect == stored, no re-render
     at send time."""
-    body = markdown_source_from_html(content_html or "")
-    # Drop reference-image placeholders ("[Image N]") — a reference image carries
-    # no meaning to pass the model, and EXTRACT images already had their text
-    # merged into content_html. The image still shows in the section modal.
-    body = re.sub(r'(?m)^\s*-?\s*\[Image\s*\d*\]\s*$', '', body)  # whole-line markers
-    body = re.sub(r'\s*\[Image\s*\d*\]', '', body)                # inline markers
-    body = re.sub(r'\n{3,}', '\n\n', body).strip()
+    body = _strip_image_markers(markdown_source_from_html(content_html or ""))
     heading = (heading or "").strip()
     if heading and body:
         return f"{heading}\n{body}"
@@ -251,7 +255,7 @@ def _render_source_text(section_data: dict) -> str:
         return frozen
     html = section_data.get("content_html")
     if html:
-        rendered = markdown_source_from_html(html)
+        rendered = _strip_image_markers(markdown_source_from_html(html))
         if rendered.strip():
             return rendered
     return (section_data.get("content_text") or "").strip()
