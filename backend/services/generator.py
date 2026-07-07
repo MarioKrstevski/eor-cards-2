@@ -230,6 +230,12 @@ def build_content_source(content_html: str, heading: str | None = None) -> str:
     Stored on Section.content_source so payload == inspect == stored, no re-render
     at send time."""
     body = markdown_source_from_html(content_html or "")
+    # Drop reference-image placeholders ("[Image N]") — a reference image carries
+    # no meaning to pass the model, and EXTRACT images already had their text
+    # merged into content_html. The image still shows in the section modal.
+    body = re.sub(r'(?m)^\s*-?\s*\[Image\s*\d*\]\s*$', '', body)  # whole-line markers
+    body = re.sub(r'\s*\[Image\s*\d*\]', '', body)                # inline markers
+    body = re.sub(r'\n{3,}', '\n\n', body).strip()
     heading = (heading or "").strip()
     if heading and body:
         return f"{heading}\n{body}"
