@@ -194,7 +194,10 @@ def markdown_source_from_html(html: str) -> str:
 
     def walk_list(list_tag, depth):
         for li in list_tag.find_all("li", recursive=False):
-            _push_lines(lines, depth, "- ", _inline_md(li))
+            # Continuation items (grouped under a bullet in the source) carry no
+            # marker — they render as an indented line at the same depth.
+            marker = "" if "cont" in (li.get("class") or []) else "- "
+            _push_lines(lines, depth, marker, _inline_md(li))
             for sub in li.find_all(["ul", "ol"], recursive=False):
                 walk_list(sub, depth + 1)
 

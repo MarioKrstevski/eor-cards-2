@@ -139,6 +139,11 @@ def parse_docx(filepath: str) -> list[dict]:
     current_headings = {}  # level -> heading text
     seen: set = set()           # normalized content keys within the current H2 section
     current_h2: Optional[dict] = None  # ref to the current H2 heading element (for dup flag)
+    # Track the most recent list item so an indented NON-list paragraph that sits at
+    # the same left indent (a list-continuation line, e.g. "Medical management: …"
+    # under a "Management" bullet) is grouped with it instead of rendering flush.
+    last_list_left: Optional[int] = None
+    last_list_indent = 0
 
     # Single pass in true document order: paragraphs and tables interleaved, with
     # content controls unwrapped (see iter_block_items).
@@ -240,6 +245,7 @@ def parse_docx(filepath: str) -> list[dict]:
                 "heading_context": _build_heading_context(current_headings),
             }
             elements.append(heading_elem)
+            last_list_left = None  # a heading breaks any list-continuation grouping
             # Each H2 starts a new section — reset the dedup window and track it.
             if level == 2:
                 seen = set()
@@ -302,6 +308,11 @@ def parse_docx(filepath: str) -> list[dict]:
                         indent_level = max(0, int(left) // 720)  # 720 twips ≈ 0.5 inch
 
             if is_list:
+                # Remember this bullet's absolute left indent so a following
+                # indented plain paragraph at the same indent groups with it.
+                _ind = para._element.find(f'.//{_W}ind')
+                last_list_left = int(_ind.get(f'{_W}left', '0')) if _ind is not None else None
+                last_list_indent = indent_level
                 _append_element(elements, {
                     "type": "list_item",
                     "text": text,
@@ -313,11 +324,25 @@ def parse_docx(filepath: str) -> list[dict]:
             else:
                 # Check for indentation on regular paragraphs
                 ind_el = para._element.find(f'.//{_W}ind')
+                para_left = int(ind_el.get(f'{_W}left', '0')) if ind_el is not None else 0
                 if ind_el is not None:
-                    left = ind_el.get(f'{_W}left', '0')
-                    indent_level = max(0, int(left) // 720)
+                    indent_level = max(0, para_left // 720)
 
-                if indent_level > 0:
+                # List-continuation: an indented plain paragraph at (about) the same
+                # left as the last bullet belongs to that bullet's group — emit it as
+                # a bullet-less list item so it nests correctly instead of going flush.
+                if (last_list_left is not None and para_left > 0
+                        and para_left >= last_list_left - 120):
+                    _append_element(elements, {
+                        "type": "list_item",
+                        "text": text,
+                        "html": html,
+                        "list_type": "ul",
+                        "indent_level": last_list_indent,
+                        "no_bullet": True,
+                        "heading_context": _build_heading_context(current_headings),
+                    }, seen, current_h2)
+                elif indent_level > 0:
                     _append_element(elements, {
                         "type": "paragraph",
                         "text": text,
@@ -593,7 +618,9 @@ def build_content_html(elements: list[dict]) -> str:
                     f'[Image {img_counter}]</div>'
                 )
             else:
-                html_parts.append(f"<li>{elem.get('html', elem.get('text', ''))}")
+                # Continuation lines (grouped under a bullet) carry no marker.
+                li_attr = ' class="cont"' if elem.get("no_bullet") else ''
+                html_parts.append(f"<li{li_attr}>{elem.get('html', elem.get('text', ''))}")
         else:
             # Close all open lists before non-list content
             while list_stack:
