@@ -140,6 +140,8 @@ def _migrate_db():
             "ALTER TABLE curriculum ADD COLUMN color VARCHAR(20)",
             # Frozen faithful source block sent to the AI verbatim (heading + body).
             "ALTER TABLE sections ADD COLUMN content_source TEXT",
+            # SBS audit trace — added after sbs_jobs shipped, so existing DBs need it.
+            "ALTER TABLE sbs_jobs ADD COLUMN trace JSON",
             # Indexes for the most common filters (no-ops if they already exist)
             "CREATE INDEX IF NOT EXISTS ix_cards_section_id ON cards(section_id)",
             "CREATE INDEX IF NOT EXISTS ix_cards_status ON cards(status)",
