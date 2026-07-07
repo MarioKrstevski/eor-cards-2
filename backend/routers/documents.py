@@ -1109,6 +1109,15 @@ def _run_processing(job_id: int, resolution: dict | None = None,
 
             db.commit()
 
+        # Freeze the faithful AI source block for every section from its FINAL
+        # content_html (after image extraction). One place so all paths — new,
+        # merged, with or without images — get a consistent, stored payload that
+        # generation and the inspect view send verbatim.
+        from backend.services.generator import build_content_source
+        for sec in db.query(Section).filter_by(topic_tree_id=upload.topic_tree_id).all():
+            sec.content_source = build_content_source(sec.content_html, sec.heading)
+        db.commit()
+
         upload.status = "ready"
         job.pipeline_step = "done"
         job.status = JobStatus.done
@@ -1147,6 +1156,7 @@ def _run_ai_heading_processing(job_id: int, curriculum_version: str = 'v1'):
     from backend.services.heading_detector import parse_docx_with_ai_headings
     from backend.services.table_converter import convert_table_elements
     from backend.services.doc_processor import split_by_h2, build_heading_tree, build_content_html, dup_collapsed_flag
+    from backend.services.generator import build_content_source
     from backend.config import DEFAULT_MODEL
 
     db = SessionLocal()
@@ -1203,6 +1213,7 @@ def _run_ai_heading_processing(job_id: int, curriculum_version: str = 'v1'):
                 heading_tree=heading_tree,
                 content_text=content_text,
                 content_html=content_html,
+                content_source=build_content_source(content_html, heading),
                 image_count=image_count,
                 table_count=table_count,
                 sort_order=idx,

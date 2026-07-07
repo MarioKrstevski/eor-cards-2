@@ -123,6 +123,8 @@ def _migrate_db():
             "ALTER TABLE uploads ADD COLUMN resolution_map JSON",
             # Topic color marker (green = added outside the official curriculum).
             "ALTER TABLE curriculum ADD COLUMN color VARCHAR(20)",
+            # Frozen faithful source block sent to the AI verbatim (heading + body).
+            "ALTER TABLE sections ADD COLUMN content_source TEXT",
             # Indexes for the most common filters (no-ops if they already exist)
             "CREATE INDEX IF NOT EXISTS ix_cards_section_id ON cards(section_id)",
             "CREATE INDEX IF NOT EXISTS ix_cards_status ON cards(status)",
@@ -315,7 +317,7 @@ async def _no_store_api(request, call_next):
 
 
 # Bumped on each deploy so /api/version can confirm what's actually running.
-APP_VERSION = 81
+APP_VERSION = 82
 
 
 @app.get("/api/version")

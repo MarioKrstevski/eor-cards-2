@@ -223,9 +223,26 @@ def markdown_source_from_html(html: str) -> str:
     return "\n".join(lines)
 
 
+def build_content_source(content_html: str, heading: str | None = None) -> str:
+    """The faithful source block we freeze at parse time and send the AI verbatim:
+    the section heading as the first line (so the model sees the same anchor the
+    reviewer pastes into chat), then the indented body rendered from content_html.
+    Stored on Section.content_source so payload == inspect == stored, no re-render
+    at send time."""
+    body = markdown_source_from_html(content_html or "")
+    heading = (heading or "").strip()
+    if heading and body:
+        return f"{heading}\n{body}"
+    return heading or body
+
+
 def _render_source_text(section_data: dict) -> str:
-    """Source block for the prompt: Markdown mirroring the section modal when
-    content_html is available, else the plain content_text."""
+    """Source block for the prompt. Prefer the frozen content_source (built at
+    parse time); fall back to rendering content_html, then plain content_text
+    (for sections created before content_source existed)."""
+    frozen = section_data.get("content_source")
+    if frozen and frozen.strip():
+        return frozen
     html = section_data.get("content_html")
     if html:
         rendered = markdown_source_from_html(html)

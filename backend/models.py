@@ -76,6 +76,9 @@ class Section(Base):
     heading_tree: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # nested H3/H4 structure
     content_text: Mapped[str] = mapped_column(Text, default="")  # merged plain text
     content_html: Mapped[str] = mapped_column(Text, default="")  # for display
+    # Frozen faithful source block sent to the AI VERBATIM (heading + indented
+    # body). Built once at parse time so payload == inspect == stored, no drift.
+    content_source: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     curriculum_topic_id: Mapped[Optional[int]] = mapped_column(ForeignKey("curriculum.id"), nullable=True)
     curriculum_topic_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     image_count: Mapped[int] = mapped_column(Integer, default=0)

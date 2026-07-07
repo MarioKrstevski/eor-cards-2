@@ -124,3 +124,29 @@ def test_inline_sdt_runs_not_dropped():
         assert any("Hidden inline SDT text" in (e.get("text") or "") for e in els)
     finally:
         os.unlink(path)
+
+
+def test_content_source_prepends_heading_and_body():
+    from backend.services.generator import build_content_source
+    html = "<p>Abortion is defined as loss before <b>20 weeks</b>.</p><ul><li>Early: before 12 weeks</li></ul>"
+    src = build_content_source(html, "Abortion")
+    lines = src.split("\n")
+    assert lines[0] == "Abortion"                       # heading first line
+    assert any(l.startswith("- Early") for l in lines)   # body preserved
+
+
+def test_render_source_prefers_frozen_content_source():
+    from backend.services.generator import _render_source_text
+    # content_source wins over content_html even if html differs.
+    data = {"content_source": "Frozen block\n- item", "content_html": "<p>DIFFERENT</p>"}
+    assert _render_source_text(data) == "Frozen block\n- item"
+    # falls back to html render when no frozen source.
+    assert "item" in _render_source_text({"content_html": "<ul><li>item</li></ul>"})
+
+
+def test_generation_prompt_uses_content_source():
+    from backend.services.generator import build_generation_prompt
+    _, user = build_generation_prompt(
+        {"content_source": "Abortion\n- loss before 20 weeks", "heading": "Abortion"}, "RULES",
+    )
+    assert "Abortion\n- loss before 20 weeks" in user

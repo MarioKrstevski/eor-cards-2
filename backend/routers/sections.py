@@ -130,6 +130,11 @@ def update_section(section_id: int, body: SectionUpdate, db: Session = Depends(g
         section.content_text = body.content_text
     if body.content_html is not None:
         section.content_html = body.content_html
+    # Reviewer edited the content and/or heading — rebuild the frozen AI source
+    # block so what we send stays in sync with the edit.
+    if body.content_html is not None or body.heading is not None:
+        from backend.services.generator import build_content_source
+        section.content_source = build_content_source(section.content_html, section.heading)
     if body.curriculum_topic_id is not None:
         section.curriculum_topic_id = body.curriculum_topic_id
     if body.curriculum_topic_path is not None:
