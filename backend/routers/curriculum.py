@@ -1,3 +1,4 @@
+import re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, case, or_
 from sqlalchemy.orm import Session
@@ -291,33 +292,52 @@ class ResetRequest(BaseModel):
     nodes: Any  # nested [{name, children}] JSON — becomes the topic's new children
 
 
-@router.post("/{node_id}/reset")
-def reset_topic_children(node_id: int, body: ResetRequest, db: Session = Depends(get_db)):
-    """TEMPORARY tooling: replace a MAIN TOPIC's entire subtree with the pasted
-    blueprint JSON. Deletes all descendant topics and their attached sections
-    (cards cascade), then seeds the JSON as the fresh children — a one-click
-    'known-good reset' while validating the new-blueprint workflow."""
+# Main topic name (normalized) -> its official blueprint JSON in seed/blueprints/.
+# Aliases fold the DB names ("Women's Health", "Psychiatry …") onto the 2025 files.
+_BLUEPRINT_FILES = {
+    "emergency medicine": "emergency-medicine-2025.json",
+    "family medicine": "family-medicine-2025.json",
+    "internal medicine": "internal-medicine-2025.json",
+    "pediatrics": "pediatrics-2025.json",
+    "surgery": "surgery-2023.json",
+    "psychiatry & behavioral health": "psychiatric-behavioral-health-2025.json",
+    "psychiatric & behavioral health": "psychiatric-behavioral-health-2025.json",
+    "women's health": "gynecologic-sexual-reproductive-health-2025.json",
+    "gynecologic, sexual, and reproductive health": "gynecologic-sexual-reproductive-health-2025.json",
+}
+
+
+def load_blueprint_for(topic_name: str):
+    """Return the nested [{name, children}] blueprint for a main topic, or None if
+    that topic has no shipped blueprint."""
+    import os, json
+    from backend.config import SEED_DIR
+    key = re.sub(r"\s+", " ", (topic_name or "").strip().lower())
+    fname = _BLUEPRINT_FILES.get(key)
+    if not fname:
+        return None
+    path = os.path.join(SEED_DIR, "blueprints", fname)
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+
+def reset_children_from_json(db: Session, node: Curriculum, nodes) -> dict:
+    """Wipe a main topic's subtree (+ attached sections; cards cascade) and reseed
+    it from a nested [{name, children}] list. Flushes but does NOT commit. Raises
+    ValueError on bad input. Shared by the reset endpoint and delete-topic-tree."""
     from backend.services.curriculum_aligner import normalize_topic
-
-    node = db.get(Curriculum, node_id)
-    if not node:
-        raise HTTPException(404)
-    if node.level != 0:
-        raise HTTPException(400, "Reset is only available on main topics (level 0)")
-
-    nodes = body.nodes
     if isinstance(nodes, dict):
         nodes = [nodes]
     if not isinstance(nodes, list) or not nodes:
-        raise HTTPException(422, "Expected a non-empty JSON list of {name, children} objects")
-    # Pasting the whole topic (single root matching the main topic) is fine too.
+        raise ValueError("Expected a non-empty JSON list of {name, children} objects")
     if (len(nodes) == 1 and isinstance(nodes[0], dict)
             and normalize_topic(str(nodes[0].get("name", ""))) == normalize_topic(node.name)):
         nodes = nodes[0].get("children") or []
         if not nodes:
-            raise HTTPException(422, "The pasted topic has no children")
+            raise ValueError("The pasted topic has no children")
 
-    # Wipe the existing subtree + attached sections (cards cascade via ORM).
     descendants = db.query(Curriculum).filter(
         Curriculum.version == node.version,
         Curriculum.path.startswith(node.path + " > "),
@@ -341,7 +361,7 @@ def reset_topic_children(node_id: int, body: ResetRequest, db: Session = Depends
         nonlocal imported
         for idx, item in enumerate(items):
             if not isinstance(item, dict) or not str(item.get("name", "")).strip():
-                raise HTTPException(422, "Each topic must be an object with a non-empty 'name'")
+                raise ValueError("Each topic must be an object with a non-empty 'name'")
             name = str(item["name"]).strip()
             child = Curriculum(
                 parent_id=parent.id, name=name, level=level,
@@ -353,12 +373,25 @@ def reset_topic_children(node_id: int, body: ResetRequest, db: Session = Depends
             seed(item.get("children") or [], child, level + 1)
 
     seed(nodes, node, 1)
+    return {"imported": imported, "removed_topics": len(descendants), "removed_sections": removed_sections}
+
+
+@router.post("/{node_id}/reset")
+def reset_topic_children(node_id: int, body: ResetRequest, db: Session = Depends(get_db)):
+    """TEMPORARY tooling: replace a MAIN TOPIC's entire subtree with the pasted
+    blueprint JSON. Deletes all descendant topics and their attached sections
+    (cards cascade), then seeds the JSON as the fresh children."""
+    node = db.get(Curriculum, node_id)
+    if not node:
+        raise HTTPException(404)
+    if node.level != 0:
+        raise HTTPException(400, "Reset is only available on main topics (level 0)")
+    try:
+        result = reset_children_from_json(db, node, body.nodes)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     db.commit()
-    return {
-        "imported": imported,
-        "removed_topics": len(descendants),
-        "removed_sections": removed_sections,
-    }
+    return result
 
 
 @router.delete("/green")

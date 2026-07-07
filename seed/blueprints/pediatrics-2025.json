@@ -1,0 +1,362 @@
+[
+  { "name": "Eyes, Ears, Nose, Oral Cavity, and Throat (EENOT) – 12%", "children": [
+    { "name": "Ear disorders", "children": [
+      { "name": "Cerumen impaction" },
+      { "name": "Dysfunction of eustachian tube" },
+      { "name": "Foreign body" },
+      { "name": "Hearing disorders" },
+      { "name": "Mastoiditis" },
+      { "name": "Otitis externa" },
+      { "name": "Otitis media (with/without effusion)" },
+      { "name": "Tympanic membrane perforation" }
+    ]},
+    { "name": "Eye disorders", "children": [
+      { "name": "Conjunctivitis" },
+      { "name": "Lacrimal disorders" },
+      { "name": "Optic neuritis" },
+      { "name": "Orbital/periorbital cellulitis" },
+      { "name": "Retinoblastoma" },
+      { "name": "Strabismus" },
+      { "name": "Vision abnormalities" }
+    ]},
+    { "name": "Nose/sinus disorders", "children": [
+      { "name": "Acute/chronic rhinosinusitis" },
+      { "name": "Allergic rhinitis" },
+      { "name": "Epistaxis" },
+      { "name": "Nasal polyps" }
+    ]},
+    { "name": "Oropharyngeal disorders", "children": [
+      { "name": "Ankyloglossia" },
+      { "name": "Congenital palate disorders" },
+      { "name": "Dental caries" },
+      { "name": "Dental trauma" },
+      { "name": "Diphtheria" },
+      { "name": "Epiglottis" },
+      { "name": "Gingivitis" },
+      { "name": "Herpes simplex virus" },
+      { "name": "Laryngitis" },
+      { "name": "Laryngotracheobronchitis (croup)" },
+      { "name": "Leukoplakia" },
+      { "name": "Oral candidiasis" },
+      { "name": "Oral health" },
+      { "name": "Oral lesions" },
+      { "name": "Parotitis" },
+      { "name": "Peritonsillar abscess/retropharyngeal abscess" },
+      { "name": "Pharyngitis" },
+      { "name": "Salivary disorders" },
+      { "name": "Tonsillar hypertrophy" }
+    ]}
+  ]},
+  { "name": "Pulmonary – 12%", "children": [
+    { "name": "Asthma" },
+    { "name": "Cystic fibrosis" },
+    { "name": "Foreign body aspiration" },
+    { "name": "Infectious disorders", "children": [
+      { "name": "Acute bronchiolitis" },
+      { "name": "Acute bronchitis" },
+      { "name": "Acute epiglottis" },
+      { "name": "Influenza" },
+      { "name": "Laryngotracheal bronchitis" },
+      { "name": "Pertussis" },
+      { "name": "Pneumonias", "children": [
+        { "name": "Bacterial" },
+        { "name": "Viral" }
+      ]}
+    ]},
+    { "name": "Pneumothorax" },
+    { "name": "Respiratory distress" },
+    { "name": "Respiratory distress syndrome in the newborn" },
+    { "name": "Sleep apnea" }
+  ]},
+  { "name": "Dermatologic – 10%", "children": [
+    { "name": "Acne vulgaris" },
+    { "name": "Allergic reactions", "children": [
+      { "name": "Drug eruptions" },
+      { "name": "Urticaria" }
+    ]},
+    { "name": "Diseases of hair, nails, or skin", "children": [
+      { "name": "Acanthosis nigricans" },
+      { "name": "Alopecia" },
+      { "name": "Atopic dermatitis" },
+      { "name": "Erythema multiforme" },
+      { "name": "Lichen planus" },
+      { "name": "Pityriasis rosea" },
+      { "name": "Seborrhea dermatitis" },
+      { "name": "Steven-Johnson syndrome" },
+      { "name": "Tinea versicolor" },
+      { "name": "Toxic epidermal necrolysis" }
+    ]},
+    { "name": "Infectious disorders", "children": [
+      { "name": "Bacterial", "children": [
+        { "name": "Abscess" },
+        { "name": "Cellulitis" },
+        { "name": "Impetigo" },
+        { "name": "Paronychia" }
+      ]},
+      { "name": "Fungal", "children": [
+        { "name": "Tinea" }
+      ]},
+      { "name": "Viral", "children": [
+        { "name": "Coxsackie" },
+        { "name": "Measles" },
+        { "name": "Molluscum contagiosum" },
+        { "name": "Rubella/rubeola" },
+        { "name": "Varicella" },
+        { "name": "Verrucae" },
+        { "name": "Viral exanthems" }
+      ]}
+    ]},
+    { "name": "Skin infestations", "children": [
+      { "name": "Pediculosis" },
+      { "name": "Scabies" }
+    ]},
+    { "name": "Skin lesions", "children": [
+      { "name": "Keloid" },
+      { "name": "Sebaceous cyst" }
+    ]},
+    { "name": "Wounds", "children": [
+      { "name": "Abrasions/lacerations" },
+      { "name": "Bites/stings" },
+      { "name": "Burns" }
+    ]}
+  ]},
+  { "name": "Gastrointestinal – 10%", "children": [
+    { "name": "Esophageal disorders", "children": [
+      { "name": "Gastroesophageal reflux disease" }
+    ]},
+    { "name": "Foodborne illness" },
+    { "name": "Foreign body ingestion" },
+    { "name": "Gastric disorders", "children": [
+      { "name": "Pyloric stenosis" }
+    ]},
+    { "name": "Gastrointestinal bleeding" },
+    { "name": "Hepatic disorders", "children": [
+      { "name": "Hepatitis" },
+      { "name": "Inborn errors of metabolism (PKU, galactosemia)" }
+    ]},
+    { "name": "Intestinal/colorectal disorders", "children": [
+      { "name": "Acute gastroenteritis (viral, bacterial)" },
+      { "name": "Appendicitis" },
+      { "name": "Biliary/duodenal atresia" },
+      { "name": "Celiac disease" },
+      { "name": "Fetal impaction/encopresis" },
+      { "name": "Functional constipation" },
+      { "name": "Hernias" },
+      { "name": "Hirschsprung disease" },
+      { "name": "Inflammatory bowel disease" },
+      { "name": "Intussusception" },
+      { "name": "Volvulus" }
+    ]},
+    { "name": "Neonatal hyperbilirubinemia" },
+    { "name": "Toxidromes", "children": [
+      { "name": "Acetaminophen poisoning" },
+      { "name": "Ingestion of harmful substances" },
+      { "name": "Reye syndrome" }
+    ]}
+  ]},
+  { "name": "Growth and Development – 10%", "children": [
+    { "name": "Breast health (pain, mass)" },
+    { "name": "Chromosomal abnormalities (Down syndrome, Turner syndrome, Klinefelter syndrome, Trisomy 13/18)" },
+    { "name": "Developmental milestones" },
+    { "name": "Digital/technology guidelines" },
+    { "name": "Failure to thrive" },
+    { "name": "Feeding and nutrition" },
+    { "name": "Gender identity" },
+    { "name": "Immunization guidelines" },
+    { "name": "Menarche" },
+    { "name": "Newborn assessment" },
+    { "name": "Physical activity" },
+    { "name": "Physical growth parameters" },
+    { "name": "Physical safety" },
+    { "name": "Puberty" },
+    { "name": "Sexual and reproductive health" },
+    { "name": "Sexual orientation" },
+    { "name": "Social, emotional, and behavioral development" },
+    { "name": "Sudden unexplained infant death" },
+    { "name": "Tanner staging" },
+    { "name": "Teething" },
+    { "name": "Vitamin/nutritional deficiencies" }
+  ]},
+  { "name": "Infectious Diseases – 10%", "children": [
+    { "name": "Bacterial infections", "children": [
+      { "name": "Botulism" },
+      { "name": "Group A streptococcus", "children": [
+        { "name": "Acute rheumatic fever" }
+      ]},
+      { "name": "Group B streptococcus" },
+      { "name": "Pertussis" }
+    ]},
+    { "name": "Congenital infections" },
+    { "name": "Fever", "children": [
+      { "name": "Fever in the infant" },
+      { "name": "Fever of unknown origin" },
+      { "name": "Fever without a source" }
+    ]},
+    { "name": "Fungal infections" },
+    { "name": "Multisystem inflammatory syndrome in children (MIS-C)" },
+    { "name": "Parasitic infections", "children": [
+      { "name": "Pinworms" }
+    ]},
+    { "name": "Sepsis" },
+    { "name": "Sexually transmitted infections" },
+    { "name": "Vector-borne infections" },
+    { "name": "Viral infections", "children": [
+      { "name": "Coronavirus disease 2019 (COVID-19)" },
+      { "name": "Epstein-Barr virus" },
+      { "name": "Erythema infectiosum" },
+      { "name": "Hand-foot-and-mouth disease" },
+      { "name": "Herpes simplex virus" },
+      { "name": "Influenza" },
+      { "name": "Measles" },
+      { "name": "Mumps" },
+      { "name": "Roseola" },
+      { "name": "Rubella" },
+      { "name": "Varicella" }
+    ]}
+  ]},
+  { "name": "Cardiovascular – 8%", "children": [
+    { "name": "Congenital heart disease", "children": [
+      { "name": "Acyanotic" },
+      { "name": "Atrial septal defect" },
+      { "name": "Coarctation of the aorta" },
+      { "name": "Cyanotic" },
+      { "name": "Patent ductus arteriosus" },
+      { "name": "Pulmonary atresia" },
+      { "name": "Tetralogy of Fallot" },
+      { "name": "Transposition of the great vessels" },
+      { "name": "Ventricular septal defect" }
+    ]},
+    { "name": "Hypertensive disorders", "children": [
+      { "name": "Primary hypertension" },
+      { "name": "Secondary hypertension" }
+    ]},
+    { "name": "Lipid disorders" },
+    { "name": "Shock", "children": [
+      { "name": "Cardiogenic" }
+    ]},
+    { "name": "Traumatic, infectious, and inflammatory heart conditions", "children": [
+      { "name": "Acute rheumatic carditis" },
+      { "name": "Kawasaki disease" }
+    ]},
+    { "name": "Valvular disorders", "children": [
+      { "name": "Aortic" },
+      { "name": "Mitral" },
+      { "name": "Pulmonary" },
+      { "name": "Rheumatic heart disease" },
+      { "name": "Tricuspid" }
+    ]}
+  ]},
+  { "name": "Neurologic/Psychiatric/Behavioral Health – 8%", "children": [
+    { "name": "Adverse childhood experiences" },
+    { "name": "Anxiety disorders" },
+    { "name": "Attention-Deficit/Hyperactivity Disorder" },
+    { "name": "Autism spectrum disorder" },
+    { "name": "Child abuse and neglect" },
+    { "name": "Congenital/genetic disorders", "children": [
+      { "name": "Cerebral palsy" },
+      { "name": "Chiari malformation" },
+      { "name": "Fetal alcohol spectrum disorders" },
+      { "name": "Huntington disease" },
+      { "name": "Prader Willi syndrome" },
+      { "name": "Spina bifida" },
+      { "name": "Trisomy 13, 18, 21" },
+      { "name": "Turner syndrome" }
+    ]},
+    { "name": "Depressive disorders" },
+    { "name": "Disruptive, impulse-control, and conduct disorders" },
+    { "name": "Eating disorders" },
+    { "name": "Febrile seizure" },
+    { "name": "Fetal alcohol spectrum disorders" },
+    { "name": "Headache (migraine, tension, idiopathic intracranial hypertension)" },
+    { "name": "Meningitis" },
+    { "name": "Neoplasms of the central nervous system" },
+    { "name": "Seizure disorders" },
+    { "name": "Self-harm" },
+    { "name": "Sleep disorders" },
+    { "name": "Substance use disorders" },
+    { "name": "Suicidality" },
+    { "name": "Syncope, neurogenic" },
+    { "name": "Tic disorders" },
+    { "name": "Traumatic brain injury" }
+  ]},
+  { "name": "Endocrine – 5%", "children": [
+    { "name": "Adrenal disorders", "children": [
+      { "name": "Congenital adrenal hyperplasia" }
+    ]},
+    { "name": "Diabetes mellitus" },
+    { "name": "Diabetic ketoacidosis" },
+    { "name": "Gender diverse care" },
+    { "name": "Gynecomastia" },
+    { "name": "Hypoglycemia" },
+    { "name": "Obesity" },
+    { "name": "Pituitary disorders", "children": [
+      { "name": "Growth hormone deficiency" },
+      { "name": "Hypogonadism" }
+    ]},
+    { "name": "Thyroid and parathyroid disorders", "children": [
+      { "name": "Congenital hyperthyroidism" }
+    ]}
+  ]},
+  { "name": "Hematologic – 5%", "children": [
+    { "name": "Anemias", "children": [
+      { "name": "Aplastic anemia" },
+      { "name": "Hemolytic" },
+      { "name": "Macrocytic" },
+      { "name": "Microcytic" },
+      { "name": "Normocytic" },
+      { "name": "Sideroblastic anemia" }
+    ]},
+    { "name": "Coagulation disorders", "children": [
+      { "name": "Immune thrombocytopenic purpura" }
+    ]},
+    { "name": "Hemolytic uremic syndrome" },
+    { "name": "Lead poisoning" },
+    { "name": "Leukemias" },
+    { "name": "Sickle cell disease" },
+    { "name": "Thalassemias" }
+  ]},
+  { "name": "Renal/Genitourinary – 5%", "children": [
+    { "name": "Circumcision" },
+    { "name": "Congenital/genetic disorders" },
+    { "name": "Cryptorchidism" },
+    { "name": "Enuresis" },
+    { "name": "Hydrocele" },
+    { "name": "Hypospadias" },
+    { "name": "Infectious disorders", "children": [
+      { "name": "Cystitis" },
+      { "name": "Orchitis" }
+    ]},
+    { "name": "Neoplasms", "children": [
+      { "name": "Benign" },
+      { "name": "Malignant" },
+      { "name": "Wilms tumor" }
+    ]},
+    { "name": "Paraphimosis" },
+    { "name": "Phimosis" },
+    { "name": "Renal disease", "children": [
+      { "name": "Glomerulonephritis" },
+      { "name": "Nephritic syndrome" },
+      { "name": "Nephrotic syndrome" }
+    ]},
+    { "name": "Testicular mass" },
+    { "name": "Testicular torsion" },
+    { "name": "Vesicourethral reflux" }
+  ]},
+  { "name": "Rheumatologic/Musculoskeletal – 5%", "children": [
+    { "name": "Avascular necrosis" },
+    { "name": "Birth trauma (clavicle fracture, brachial plexus injury, cephalohematoma, subgaleal hematoma)" },
+    { "name": "Developmental dysplasia of the hip" },
+    { "name": "Fractures/dislocations" },
+    { "name": "Juvenile idiopathic arthritis" },
+    { "name": "Muscular dystrophy" },
+    { "name": "Neoplasia of the musculoskeletal system" },
+    { "name": "Osgood-Schlatter disease" },
+    { "name": "Plagiocephaly" },
+    { "name": "Radial head subluxation" },
+    { "name": "Scoliosis" },
+    { "name": "Slipped capital femoral epiphysis" },
+    { "name": "Sprains/strains" },
+    { "name": "Talipes equionvarus (Club foot)" },
+    { "name": "Torticollis" }
+  ]}
+]

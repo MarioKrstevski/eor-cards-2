@@ -601,8 +601,29 @@ def delete_topic_tree(topic_tree_id: int, db: Session = Depends(get_db)):
             os.remove(os.path.join(UPLOAD_DIR, u.filename))
         except OSError:
             pass
+    main_topic_id = tt.curriculum_id  # the level-0 main topic this document sat under
     db.delete(tt)
     db.commit()
+
+    # Deleting a document resets its main topic's curriculum back to the official
+    # blueprint — wiping the green (user-added) topics so a fresh re-upload starts
+    # clean. Only when NO other document still hangs off that main topic (so we
+    # never nuke another document's sections), and only if a blueprint ships for it.
+    if main_topic_id is not None:
+        main = db.get(Curriculum, main_topic_id)
+        if main is not None and main.level == 0:
+            still_used = db.query(TopicTree).filter(TopicTree.curriculum_id == main.id).count()
+            if still_used == 0:
+                from backend.routers.curriculum import load_blueprint_for, reset_children_from_json
+                blueprint = load_blueprint_for(main.name)
+                if blueprint:
+                    try:
+                        reset_children_from_json(db, main, blueprint)
+                        db.commit()
+                        logger.info("Reset curriculum for '%s' to blueprint after document delete", main.name)
+                    except Exception:
+                        db.rollback()
+                        logger.exception("Blueprint reset failed for '%s'", main.name)
 
 
 @router.post("/{topic_tree_id}/ai-headings")

@@ -1,0 +1,173 @@
+[
+  { "name": "Gastrointestinal", "children": [
+    { "name": "Gastrointestinal diagnoses", "children": [
+      { "name": "Anal disorders" },
+      { "name": "Appendicitis" },
+      { "name": "Bowel obstruction" },
+      { "name": "Cholecystitis/cholelithiasis" },
+      { "name": "Diverticulitis" },
+      { "name": "Gastrointestinal bleeding" },
+      { "name": "Hiatal hernia" },
+      { "name": "Ileus" },
+      { "name": "Inflammatory bowel disease" },
+      { "name": "Malignancy of the gastrointestinal tract" },
+      { "name": "Obesity" },
+      { "name": "Pancreatitis" },
+      { "name": "Peritonitis" },
+      { "name": "Toxic megacolon" }
+    ]},
+    { "name": "Perioperative gastrointestinal risk assessment and complications" },
+    { "name": "Gastrointestinal procedures", "children": [
+      { "name": "Abdominal drains" },
+      { "name": "Colonoscopy" },
+      { "name": "Endoscopic retrograde cholangiopancreatography" },
+      { "name": "Endoscopy" },
+      { "name": "Ileostomy" },
+      { "name": "Nasogastric tubes" },
+      { "name": "Parenteral nutrition" },
+      { "name": "Percutaneous endoscopic gastronomy tube" }
+    ]}
+  ]},
+  { "name": "Cardiovascular", "children": [
+    { "name": "Cardiovascular diagnoses", "children": [
+      { "name": "Acute arterial occlusion" },
+      { "name": "Aortic aneurysm" },
+      { "name": "Aortic dissection" },
+      { "name": "Chronic arterial insufficiency" },
+      { "name": "Chronic venous insufficiency" },
+      { "name": "Compartment syndrome" },
+      { "name": "Coronary artery disease" },
+      { "name": "Carotid artery stenosis" },
+      { "name": "Intestinal ischemia" },
+      { "name": "Renal vascular disease" },
+      { "name": "Valvular heart disease" },
+      { "name": "Varicose veins" }
+    ]},
+    { "name": "Perioperative cardiovascular risk assessment and complications" },
+    { "name": "Cardiovascular procedures", "children": [
+      { "name": "Advanced cardiac life support" },
+      { "name": "Arteriovenous fistula placement" },
+      { "name": "Central line placement" },
+      { "name": "Permacath/port placement" },
+      { "name": "Vascular access" }
+    ]}
+  ]},
+  { "name": "Pulmonary/Thoracic Surgery", "children": [
+    { "name": "Pulmonary/thoracic surgery diagnoses", "children": [
+      { "name": "Chylothorax" },
+      { "name": "Empyema" },
+      { "name": "Hemothorax" },
+      { "name": "Lung malignancy" },
+      { "name": "Mediastinal disorders" },
+      { "name": "Pleural effusion" },
+      { "name": "Pneumothorax" },
+      { "name": "Pulmonary nodule" }
+    ]},
+    { "name": "Perioperative pulmonary/thoracic surgery risk assessment and complications" },
+    { "name": "Pulmonary/thoracic surgery procedures", "children": [
+      { "name": "Chest tube" },
+      { "name": "Thoracentesis" }
+    ]}
+  ]},
+  { "name": "Breast Surgery", "children": [
+    { "name": "Breast surgery diagnoses", "children": [
+      { "name": "Breast abscess" },
+      { "name": "Benign breast disease" },
+      { "name": "Carcinoma of the female breast" },
+      { "name": "Carcinoma of the male breast" },
+      { "name": "Disorders of the augmented breast" },
+      { "name": "Fat necrosis" },
+      { "name": "Mastitis" },
+      { "name": "Phyllodes tumor" }
+    ]},
+    { "name": "Perioperative breast surgery risk assessment and complications" },
+    { "name": "Breast surgery procedures", "children": [
+      { "name": "Biopsy" }
+    ]}
+  ]},
+  { "name": "Dermatologic", "children": [
+    { "name": "Dermatologic diagnoses", "children": [
+      { "name": "Burns" },
+      { "name": "Cellulitis" },
+      { "name": "Dermatologic neoplasms" },
+      { "name": "Epidermal inclusion cyst" },
+      { "name": "Hidradenitis suppurativa" },
+      { "name": "Lipoma" },
+      { "name": "Pressure ulcer" }
+    ]},
+    { "name": "Perioperative dermatologic risk assessment and complications" },
+    { "name": "Dermatologic procedures", "children": [
+      { "name": "Aspiration of seroma/hematoma" },
+      { "name": "Incision and drainage of abscess" },
+      { "name": "Skin biopsy" },
+      { "name": "Skin graft and flap" },
+      { "name": "Suturing" }
+    ]}
+  ]},
+  { "name": "Renal/Genitourinary", "children": [
+    { "name": "Renal/genitourinary diagnoses", "children": [
+      { "name": "Benign prostatic hyperplasia" },
+      { "name": "Nephrolithiasis" },
+      { "name": "Paraphimosis/phimosis" },
+      { "name": "Testicular torsion" },
+      { "name": "Urethral stricture" },
+      { "name": "Urologic/renal neoplasms" }
+    ]},
+    { "name": "Perioperative renal/genitourinary risk assessment and complications" },
+    { "name": "Renal/genitourinary procedures", "children": [
+      { "name": "Lithotripsy" },
+      { "name": "Urinary catheterization" },
+      { "name": "Vasectomy" }
+    ]}
+  ]},
+  { "name": "Trauma/Acute Care", "children": [
+    { "name": "Trauma/acute care diagnoses", "children": [
+      { "name": "Acute abdomen" },
+      { "name": "Alteration in consciousness" },
+      { "name": "Compound fractures" },
+      { "name": "Shock" }
+    ]},
+    { "name": "Perioperative trauma/acute care risk assessment and complications" },
+    { "name": "Trauma/acute care procedures", "children": [
+      { "name": "Transfusion" }
+    ]}
+  ]},
+  { "name": "Neurologic/Neurosurgery", "children": [
+    { "name": "Neurologic/neurosurgery diagnoses", "children": [
+      { "name": "Carpal tunnel syndrome" },
+      { "name": "Epidural hematoma" },
+      { "name": "Neurologic neoplasms" },
+      { "name": "Subarachnoid hemorrhage" }
+    ]},
+    { "name": "Perioperative neurologic/neurosurgery risk assessment and complications" },
+    { "name": "Neurologic/neurosurgery procedures", "children": [
+      { "name": "Lumbar puncture" }
+    ]}
+  ]},
+  { "name": "Pain Medicine/Anesthesia", "children": [
+    { "name": "Pain medicine/anesthesia diagnoses", "children": [
+      { "name": "Acute pain" },
+      { "name": "Chronic pain" },
+      { "name": "Substance use disorder" }
+    ]},
+    { "name": "Perioperative pain medicine/anesthesia risk assessment and complications" },
+    { "name": "Pain medicine/anesthesia procedures", "children": [
+      { "name": "Endotracheal intubation" },
+      { "name": "Intravenous line placement" },
+      { "name": "Local and regional anesthesia" }
+    ]}
+  ]},
+  { "name": "Endocrine", "children": [
+    { "name": "Endocrine diagnoses", "children": [
+      { "name": "Adrenal disorders" },
+      { "name": "Endocrine neoplasms" },
+      { "name": "Parathyroid disorders" },
+      { "name": "Pituitary disorders" },
+      { "name": "Thyroid disorders" }
+    ]},
+    { "name": "Perioperative endocrine risk assessment and complications" },
+    { "name": "Endocrine procedures", "children": [
+      { "name": "Fine needle biopsy" }
+    ]}
+  ]}
+]

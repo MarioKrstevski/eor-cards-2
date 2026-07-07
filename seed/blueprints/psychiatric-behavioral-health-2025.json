@@ -1,0 +1,97 @@
+[
+  { "name": "Depressive Disorders; Bipolar and Related Disorders – 17%", "children": [
+    { "name": "Bipolar I disorder" },
+    { "name": "Bipolar II disorder" },
+    { "name": "Cyclothymic disorder" },
+    { "name": "Major depressive disorder" },
+    { "name": "Persistent depressive disorder (dysthymia)" },
+    { "name": "Premenstrual dysphoric disorder" },
+    { "name": "Suicidal behaviors" }
+  ]},
+  { "name": "Substance-Related Disorders; Addictive Disorders – 15%", "children": [
+    { "name": "Alcohol-related disorders" },
+    { "name": "Caffeine-related disorders" },
+    { "name": "Cannabis-related disorders" },
+    { "name": "Hallucinogen-related disorders" },
+    { "name": "Inhalant-related disorders" },
+    { "name": "Nonsubstance-related disorders" },
+    { "name": "Opioid-related disorders" },
+    { "name": "Sedative-, hypnotic-, or anxiolytic-related disorders" },
+    { "name": "Stimulant-related disorders" },
+    { "name": "Tobacco-related disorders" }
+  ]},
+  { "name": "Trauma and Stress-Related Disorders; Abuse and Neglect – 13%", "children": [
+    { "name": "Acute stress disorder" },
+    { "name": "Adjustment disorder" },
+    { "name": "Bereavement" },
+    { "name": "Child abuse and neglect" },
+    { "name": "Elder abuse and neglect" },
+    { "name": "Intimate partner violence" },
+    { "name": "Physical abuse" },
+    { "name": "Posttraumatic stress disorder" },
+    { "name": "Prolonged grief disorder" },
+    { "name": "Psychosocial abuse" },
+    { "name": "Reactive attachment disorder" },
+    { "name": "Sexual abuse" }
+  ]},
+  { "name": "Anxiety; Somatic Symptom and Related Disorders – 11%", "children": [
+    { "name": "Factitious disorder" },
+    { "name": "Functional neurologic symptom disorder" },
+    { "name": "Generalized anxiety disorder" },
+    { "name": "Illness anxiety disorder" },
+    { "name": "Panic disorder" },
+    { "name": "Separation anxiety disorder" },
+    { "name": "Social anxiety disorder" },
+    { "name": "Somatic symptom disorder" }
+  ]},
+  { "name": "Schizophrenia Spectrum and Other Psychotic Disorders – 11%", "children": [
+    { "name": "Brief psychotic disorder" },
+    { "name": "Catatonia" },
+    { "name": "Delusional disorder" },
+    { "name": "Schizoaffective disorder" },
+    { "name": "Schizophrenia" },
+    { "name": "Schizophreniform disorder" }
+  ]},
+  { "name": "Feeding or Eating Disorders – 8%", "children": [
+    { "name": "Anorexia nervosa" },
+    { "name": "Avoidant/restrictive food intake disorder" },
+    { "name": "Binge eating disorders" },
+    { "name": "Bulimia nervosa" }
+  ]},
+  { "name": "Neurodevelopmental Disorders; Dissociative Disorders – 8%", "children": [
+    { "name": "Attention-Deficit/Hyperactivity Disorder" },
+    { "name": "Autism spectrum disorder" },
+    { "name": "Depersonalization/derealization disorder" },
+    { "name": "Dissociative amnesia" },
+    { "name": "Dissociative identity disorder" },
+    { "name": "Intellectual disabilities" },
+    { "name": "Stereotypic movement disorder" },
+    { "name": "Tic disorder" }
+  ]},
+  { "name": "Sleep-Wake Disorders – 7%", "children": [
+    { "name": "Circadian rhythms sleep-wake disorders" },
+    { "name": "Hypersomnolence" },
+    { "name": "Insomnia" },
+    { "name": "Narcolepsy" },
+    { "name": "Parasomnias" }
+  ]},
+  { "name": "Human Sexuality – 5%", "children": [
+    { "name": "Gender dysphoria" },
+    { "name": "Gender identity" },
+    { "name": "Psychosexual disorders" }
+  ]},
+  { "name": "Personality Disorders; Obsessive-Compulsive and Related Disorders – 5%", "children": [
+    { "name": "Antisocial personality disorder" },
+    { "name": "Avoidant personality disorder" },
+    { "name": "Body dysmorphic disorder" },
+    { "name": "Borderline personality disorder" },
+    { "name": "Dependent personality disorder" },
+    { "name": "Histrionic personality disorder" },
+    { "name": "Narcissistic personality disorder" },
+    { "name": "Obsessive-compulsive disorder" },
+    { "name": "Obsessive-compulsive personality disorder" },
+    { "name": "Paranoid personality disorder" },
+    { "name": "Schizoid personality disorder" },
+    { "name": "Schizotypal personality disorder" }
+  ]}
+]

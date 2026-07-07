@@ -1,0 +1,114 @@
+[
+  { "name": "Prenatal Care/Pregnancy – 20%", "children": [
+    { "name": "Abortion" },
+    { "name": "Cervical insufficiency" },
+    { "name": "Cholestasis of pregnancy" },
+    { "name": "Eclampsia/HELLP" },
+    { "name": "Ectopic pregnancy" },
+    { "name": "Gestational diabetes" },
+    { "name": "Gestational trophoblastic disease" },
+    { "name": "Hyperemesis gravidarum" },
+    { "name": "Hypertensive disorders of pregnancy" },
+    { "name": "Multiple gestations" },
+    { "name": "Placenta attachment disorders (previa, accretia, increta, percreta)" },
+    { "name": "Pregnancy physiology" },
+    { "name": "Pregnancy-induced hypertension" },
+    { "name": "Prenatal management" },
+    { "name": "Rh incompatibility" }
+  ]},
+  { "name": "Uterine/Cervix – 12%", "children": [
+    { "name": "Abnormal uterine bleeding" },
+    { "name": "Amenorrhea" },
+    { "name": "Cervical dysplasia" },
+    { "name": "Cervical neoplasm" },
+    { "name": "Cervicitis" },
+    { "name": "Dysmenorrhea" },
+    { "name": "Endometrial neoplasm" },
+    { "name": "Endometriosis" },
+    { "name": "Leiomyoma" },
+    { "name": "Uterine neoplasm" }
+  ]},
+  { "name": "Fertility Management – 10%", "children": [
+    { "name": "Assisted reproduction" },
+    { "name": "Barrier contraception" },
+    { "name": "Emergency contraception" },
+    { "name": "Hormonal contraception" },
+    { "name": "Infertility" },
+    { "name": "Non-hormonal contraception" },
+    { "name": "Pre-conception counseling" },
+    { "name": "Surgical contraception" }
+  ]},
+  { "name": "Sexual Health & Development – 10%", "children": [
+    { "name": "Differences of sexual development" },
+    { "name": "Dyspareunia" },
+    { "name": "Gender diverse care" },
+    { "name": "Human sexuality" },
+    { "name": "Menopause" },
+    { "name": "Perimenopause" },
+    { "name": "Physiology of menses" },
+    { "name": "Physiology of sexual development" }
+  ]},
+  { "name": "Labor & Delivery – 9%", "children": [
+    { "name": "Breech presentation" },
+    { "name": "Fetal distress" },
+    { "name": "Labor dystocias" },
+    { "name": "Mechanisms of delivery" },
+    { "name": "Normal labor and delivery" },
+    { "name": "Post-term pregnancy" },
+    { "name": "Prelabor rupture of membranes" },
+    { "name": "Preterm labor" },
+    { "name": "Prolapsed umbilical cord" }
+  ]},
+  { "name": "Postpartum Care – 8%", "children": [
+    { "name": "Amniotic fluid embolism" },
+    { "name": "APGAR" },
+    { "name": "Endometritis" },
+    { "name": "Lactation" },
+    { "name": "Perineal laceration/episiotomy care" },
+    { "name": "Postpartum hemorrhage" },
+    { "name": "Postpartum physiology" }
+  ]},
+  { "name": "Breast – 7%", "children": [
+    { "name": "Breast abscess" },
+    { "name": "Breast adenoma" },
+    { "name": "Breast augmentation/reduction" },
+    { "name": "Breast neoplasm" },
+    { "name": "Fibrocystic breast disease" },
+    { "name": "Mastitis" }
+  ]},
+  { "name": "Vulva/Vaginal/Pelvic Floor – 7%", "children": [
+    { "name": "Atrophic vaginitis" },
+    { "name": "Bartholin gland cyst" },
+    { "name": "Lichen sclerosis" },
+    { "name": "Pelvic organ prolapse" },
+    { "name": "Urinary incontinence" },
+    { "name": "Vaginal/vulvar neoplasm" },
+    { "name": "Vaginitis" }
+  ]},
+  { "name": "Psychiatric/Behavioral Health – 6%", "children": [
+    { "name": "Postpartum anxiety" },
+    { "name": "Postpartum depression" },
+    { "name": "Postpartum psychosis" },
+    { "name": "Premenstrual dysphoric disorder" },
+    { "name": "Premenstrual syndrome" },
+    { "name": "Violence and abuse (intimate partner violence, sexual abuse, sexual assault)" }
+  ]},
+  { "name": "Infections – 6%", "children": [
+    { "name": "Bacterial vaginosis" },
+    { "name": "Candida" },
+    { "name": "Chancroid" },
+    { "name": "Chlamydia" },
+    { "name": "Gonorrhea" },
+    { "name": "Herpes simplex virus" },
+    { "name": "Human papillomavirus" },
+    { "name": "Pelvic inflammatory disease" },
+    { "name": "Syphilis" },
+    { "name": "Trichomoniasis" }
+  ]},
+  { "name": "Ovary/Adnexa – 5%", "children": [
+    { "name": "Ovarian cysts" },
+    { "name": "Ovarian neoplasm" },
+    { "name": "Ovarian torsion" },
+    { "name": "Polycystic ovarian syndrome" }
+  ]}
+]
