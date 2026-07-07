@@ -2582,11 +2582,11 @@ export default function CardsPanel({
   // view it is derived from the current page's cards and would page-dependently
   // narrow the export to one section.
   const allScopeUrl = sectionId != null
-    ? exportCardsUrl({ section_id: sectionId, tag_set: activeTagSet })
+    ? exportCardsUrl({ section_id: sectionId, tag_set: activeTagSet, card_version: activeCardVersion })
     : topicPath
-      ? exportCardsUrl({ topic_path: topicPath, tag_set: activeTagSet })
+      ? exportCardsUrl({ topic_path: topicPath, tag_set: activeTagSet, card_version: activeCardVersion })
       : topicTreeId
-        ? exportCardsUrl({ topic_tree_id: topicTreeId, tag_set: activeTagSet })
+        ? exportCardsUrl({ topic_tree_id: topicTreeId, tag_set: activeTagSet, card_version: activeCardVersion })
         : undefined;
 
   // Download via a blob so the exact client-side filename is used — the plain
@@ -2921,7 +2921,7 @@ export default function CardsPanel({
                         scope: `Selected cards (${selectedIds.size})`,
                         section: scopeSectionName,
                         path: scopePath,
-                        url: exportCardsUrl({ card_ids: [...selectedIds], tag_set: activeTagSet }),
+                        url: exportCardsUrl({ card_ids: [...selectedIds], tag_set: activeTagSet, card_version: activeCardVersion }),
                         filename: scopeFileName,
                       });
                     }}

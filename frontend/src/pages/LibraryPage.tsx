@@ -236,7 +236,7 @@ function TopicNode({ node, depth, cardCounts, editMode, onRefresh, onDeleteReque
 // ─── Main Library Page ───────────────────────────────────────────────────────
 
 export default function LibraryPage() {
-  const { curriculumVersion } = useSettings();
+  const { curriculumVersion, activeCardVersion } = useSettings();
   const [activeTab, setActiveTab] = useState<'topics' | 'documents' | 'rules' | 'sbs' | 'marks' | 'mapping' | 'presentations'>('topics');
 
   // Curriculum
@@ -827,7 +827,7 @@ export default function LibraryPage() {
                         </button>
                         {tree.total_cards > 0 && (
                           <a
-                            href={exportCardsUrl({ topic_tree_id: tree.id })}
+                            href={exportCardsUrl({ topic_tree_id: tree.id, card_version: activeCardVersion })}
                             onClick={(e) => e.stopPropagation()}
                             className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
                           >

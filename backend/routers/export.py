@@ -27,6 +27,7 @@ def export_cards(
     topic_path: Optional[str] = None,  # curriculum_topic_path string
     card_ids: Optional[str] = None,  # comma-separated IDs
     tag_set: Optional[str] = None,  # 'old' → tags column, 'new' → tags_mapped
+    card_version: Optional[str] = None,  # base (default) / v1 / v2 / v3
     db: Session = Depends(get_db),
 ):
     # Rejected cards never export — they're soft-deleted from the deck's view.
@@ -65,6 +66,18 @@ def export_cards(
 
     cards = q.all()
 
+    # Export the CURRENTLY SELECTED version. v1/v2/v3 live in their own columns;
+    # a card with no content for that version falls back to base so nothing is lost.
+    from backend.services.generator import strip_card_html
+
+    def _versioned(card):
+        if card_version in ("v1", "v2", "v3"):
+            fh = getattr(card, f"front_html_{card_version}", None)
+            if fh:
+                ex = getattr(card, f"extra_{card_version}", None)
+                return fh, strip_card_html(fh), (ex or "")
+        return card.front_html, card.front_text, (card.extra or "")
+
     tree_names = {t.id: t.name for t in db.query(TopicTree).all()}
 
     output = io.StringIO()
@@ -77,11 +90,12 @@ def export_cards(
     writer.writeheader()
     for card in cards:
         section = card.section
+        v_front_html, v_front_text, v_extra = _versioned(card)
         writer.writerow({
             "note_id": card.note_id or "",
             "id": card.id,
-            "front_text": card.front_text,
-            "front_html": card.front_html,
+            "front_text": v_front_text,
+            "front_html": v_front_html,
             # Tags follow the header's selected tag set, matching the table:
             # 'new' → tags_mapped, otherwise ('old') → tags. Fall back to the
             # other column if the selected one is empty.
@@ -94,7 +108,7 @@ def export_cards(
                 if tag_set == "new"
                 else (card.tags or card.tags_mapped or [])
             ),
-            "extra": card.extra or "",
+            "extra": v_extra,
             "vignette": card.vignette or "",
             "teaching_case": card.teaching_case or "",
             "ref_img_position": card.ref_img_position or "",

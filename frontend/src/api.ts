@@ -671,9 +671,13 @@ export function exportCardsUrl(params?: {
   card_ids?: number[];
   section_id?: number;
   tag_set?: 'old' | 'new';
+  card_version?: string;
 }): string {
   const url = new URL('/api/export/cards', window.location.origin);
   if (params?.tag_set) url.searchParams.set('tag_set', params.tag_set);
+  if (params?.card_version && params.card_version !== 'base') {
+    url.searchParams.set('card_version', params.card_version);
+  }
   if (params?.card_ids?.length) {
     url.searchParams.set('card_ids', params.card_ids.join(','));
   } else if (params?.section_id != null) {
