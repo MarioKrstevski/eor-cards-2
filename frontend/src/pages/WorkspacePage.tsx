@@ -82,8 +82,34 @@ function buildSectionTree<T extends SectionLike>(sections: T[], treeName: string
       }
       node = node.children.get(part)!;
     }
-    node.sections.push(section);
+    // A section whose path IS the (base) topic itself — the topic's own general
+    // content, no sub-leaf — is shown FIRST, not last (Topics view flat list).
+    if (parts.length === 1 && parts[0] === '') node.sections.unshift(section);
+    else node.sections.push(section);
   }
+
+  // A section whose path ENDS at a topic that also has sub-topics (e.g. the
+  // "Cervicitis" general-info section under a "Cervicitis" heading that also has
+  // "Gonorrhea Cervicitis", … below it) lands next to that group instead of in it.
+  // Move it INSIDE the matching group and put it FIRST — it's the parent's own
+  // content, not a sibling.
+  const leafOf = (section: T): string => {
+    let rp = section.curriculum_topic_path || '';
+    if (basePath && rp.startsWith(basePath)) rp = rp.slice(basePath.length).replace(/^ > /, '');
+    const p = rp.split(' > ');
+    return p[p.length - 1];
+  };
+  const promote = (node: SectionTreeNode<T>) => {
+    const keep: T[] = [];
+    for (const sec of node.sections) {
+      const child = node.children.get(leafOf(sec));
+      if (child) child.sections.unshift(sec);  // parent's own content, first
+      else keep.push(sec);
+    }
+    node.sections = keep;
+    node.children.forEach(promote);
+  };
+  promote(root);
   return root;
 }
 
