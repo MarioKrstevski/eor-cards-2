@@ -9,6 +9,12 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
 
+# Skip the image vision step (classify + text extraction) during upload while the
+# focus is document→topic parsing. Images are still RECOGNIZED in place (the
+# [Image N] marker + SectionImage row stay); we just don't call the vision model.
+# Default ON; set SKIP_IMAGE_PROCESSING=0 to restore full image handling later.
+SKIP_IMAGE_PROCESSING = os.getenv("SKIP_IMAGE_PROCESSING", "1") not in ("0", "false", "False", "no")
+
 MODELS = {
     # ── Add or remove models here. Order determines display order in Settings. ──
     "claude-haiku-4-5-20251001": {

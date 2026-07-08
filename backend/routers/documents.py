@@ -1024,6 +1024,16 @@ def _run_processing(job_id: int, resolution: dict | None = None,
             .all()
         )
 
+        from backend.config import SKIP_IMAGE_PROCESSING
+        if images_to_process and SKIP_IMAGE_PROCESSING:
+            # Ignoring images for now: they stay recognized in place (the [Image N]
+            # marker + SectionImage rows remain) but we skip the vision model.
+            logger.info(
+                "Skipping image vision step for %d image(s) (SKIP_IMAGE_PROCESSING on)",
+                len(images_to_process),
+            )
+            images_to_process = []
+
         if images_to_process:
             job.pipeline_step = "images"
             db.commit()
