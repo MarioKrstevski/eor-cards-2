@@ -1466,15 +1466,16 @@ export default function CardsPanel({
           <input
             type="checkbox"
             checked={selectedIds.has(row.original.id)}
-            // Shift-click selects/deselects the whole range from the last-clicked
-            // row to this one (like a file list). We handle it in onClick because
-            // that's where shiftKey lives; preventDefault stops the native toggle
-            // so onChange doesn't also fire and double-handle the clicked row.
+            // All selection logic lives in onClick because that's where shiftKey
+            // is available. onChange is a no-op so it can't also toggle the
+            // clicked row and undo the range in shift mode. Shift-click
+            // selects/deselects the whole range from the last-clicked row to this
+            // one (like a file list); a plain click toggles just this row.
             onClick={(e) => {
               const idx = row.index;
-              if (e.shiftKey && lastSelectedIndex.current !== null) {
-                e.preventDefault();
-                const willSelect = !selectedIds.has(row.original.id);
+              const id = row.original.id;
+              if (e.shiftKey && lastSelectedIndex.current !== null && lastSelectedIndex.current !== idx) {
+                const willSelect = !selectedIds.has(id);
                 const start = Math.min(lastSelectedIndex.current, idx);
                 const end = Math.max(lastSelectedIndex.current, idx);
                 setSelectedIds((prev) => {
@@ -1487,17 +1488,17 @@ export default function CardsPanel({
                   }
                   return next;
                 });
+              } else {
+                setSelectedIds((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(id)) next.delete(id);
+                  else next.add(id);
+                  return next;
+                });
               }
               lastSelectedIndex.current = idx;
             }}
-            onChange={() => {
-              setSelectedIds((prev) => {
-                const next = new Set(prev);
-                if (next.has(row.original.id)) next.delete(row.original.id);
-                else next.add(row.original.id);
-                return next;
-              });
-            }}
+            onChange={() => {}}
             className="w-[18px] h-[18px] cursor-pointer rounded border-gray-300 text-blue-700 focus:ring-blue-500"
           />
         ),
