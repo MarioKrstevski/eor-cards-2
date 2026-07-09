@@ -16,10 +16,11 @@ and Gemini (reuses the SBS structured-output dispatch, run_tool)."""
 from __future__ import annotations
 import re
 import logging
+from typing import Optional
 
 from backend.config import DEFAULT_MODEL
 from backend.services.generator import (
-    generate_cards_for_section, strip_card_html, fix_markdown_bold,
+    generate_cards_for_section, strip_card_html, fix_markdown_bold, format_extra_as_list,
 )
 from backend.services.sbs_generator import run_tool
 
@@ -117,9 +118,10 @@ def _cards_for_prompt(cards: list[dict]) -> str:
     lines = []
     for c in cards:
         cid = c.get("id", c.get("card_number"))
-        lines.append(f"[card {cid}] {c.get('front_html', '')}")
-        if c.get("extra"):
-            lines.append(f"    extra: {c['extra']}")
+        lines.append(f"[card {cid}] FRONT: {c.get('front_html', '')}")
+        # The extra/footer travels WITH the card — for sibling cards it carries the
+        # other members, so it must be judged/fixed together with the front.
+        lines.append(f"    EXTRA/FOOTER: {c.get('extra') or '(blank)'}")
     return "\n".join(lines)
 
 
@@ -129,6 +131,16 @@ def _finalize_front(front: str) -> tuple[str, str]:
     front = fix_markdown_bold(front or "")
     front = re.sub(r"\{\{c\d+::", "{{c1::", front)
     return front, strip_card_html(front)
+
+
+def _finalize_extra(extra) -> Optional[str]:
+    """The extra/footer field matters as much as the front — give it the SAME
+    treatment the generation pipeline applies (markdown ** -> <b>, list
+    formatting). Empty stays empty."""
+    extra = (extra or "").strip()
+    if not extra:
+        return None
+    return format_extra_as_list(fix_markdown_bold(extra))
 
 
 # ── The AI stages ─────────────────────────────────────────────────────────────
@@ -145,11 +157,18 @@ def run_verify(rules_text: str, cards: list[dict], model: str):
     user = (
         "You generated the flashcards below from a study note, using the rules in your "
         "instructions. Now review them with fresh eyes AGAINST THOSE SAME RULES and flag "
-        "every card that breaks a rule — do not rewrite anything, only judge. Look "
-        "especially for cards that were wrongly bundled together (should be split) or "
-        "wrongly separated (should be combined), and cards that clozed the wrong target. "
-        "For each violation give the card id(s), the reason, and a suggested_action. List "
-        "the ids of all cards that are correct in passed_card_ids. Return via submit_verdict.\n\n"
+        "every card that breaks a rule — do not rewrite anything, only judge. Judge "
+        "BOTH the FRONT and the EXTRA/FOOTER of each card. Look especially for:\n"
+        "- cards wrongly bundled together (should be split) or wrongly separated "
+        "(should be combined), and cards that clozed the wrong target;\n"
+        "- SIBLING FOOTER CONNECTION: for a set of sibling cards, each card's "
+        "EXTRA/FOOTER must carry the OTHER siblings' content (the card about condition A "
+        "lists B and C in its footer; the B card lists A and C; etc.). Flag any sibling "
+        "card whose footer is missing, wrong, out of sync, or disconnected from its set "
+        "— even if the front is correct.\n"
+        "For each violation give the card id(s) (include ALL siblings in the set when the "
+        "footers are the problem), the reason, and a suggested_action. List the ids of all "
+        "correct cards in passed_card_ids. Return via submit_verdict.\n\n"
         f"Cards:\n{_cards_for_prompt(cards)}"
     )
     data, usage = run_tool(system, user, VERIFY_TOOL, model)
@@ -166,10 +185,15 @@ def run_fix(rules_text: str, flagged: list[dict], violations: list[dict], model:
     )
     user = (
         "These cards were flagged as breaking the rules. Fix ONLY these, following the "
-        "rules and the suggested actions. For a combine, return ONE merged card whose "
+        "rules and the suggested actions. Fix BOTH the front AND the extra/footer — the "
+        "footer matters as much as the front. For a combine, return ONE merged card whose "
         "replaces_card_ids lists all the merged ids. For a split, return the N cards and "
-        "list the single id it replaces. For refocus/reword, return the one corrected "
-        "card. Do not touch or re-emit any other cards. Return via submit_fixes.\n\n"
+        "list the single id it replaces. For refocus/reword, return the one corrected card.\n"
+        "SIBLING FOOTERS: each fixed card's extra/footer must correctly carry the OTHER "
+        "members of its sibling set (A's footer lists B and C, etc.). If the flagged set "
+        "spans several siblings whose footers are out of sync, return ALL of them so their "
+        "footers are re-synced together — list every affected id in replaces_card_ids.\n"
+        "Do not touch or re-emit any other cards. Return via submit_fixes.\n\n"
         f"Flagged reasons:\n{viol_txt}\n\n"
         f"Flagged cards:\n{_cards_for_prompt(flagged)}"
     )
@@ -208,7 +232,7 @@ def merge_deck(original: list[dict], fixes: list[dict]) -> tuple[list[dict], lis
         for nc in f.get("cards", []) or []:
             fh, ft = _finalize_front(nc.get("front", ""))
             card = {"front_html": fh, "front_text": ft,
-                    "extra": (nc.get("extra") or None), "source_ref": None,
+                    "extra": _finalize_extra(nc.get("extra")), "source_ref": None,
                     "needs_review": not bool(re.search(r"\{\{c1::", fh)),
                     "derived_from": from_ids}
             final.append(card)

@@ -72,3 +72,18 @@ def test_report_has_all_stages():
     md = build_verify_report_md("Abortion", "claude-sonnet-4-6", trace, final)
     for s in ["Stage 1", "Stage 2", "Stage 3", "Stage 4", "Stage 5", "Before → after", "Final deck", "(from [3, 4])"]:
         assert s in md, s
+
+
+def test_merge_finalizes_extra_too():
+    from backend.services.verify_generator import _cards_for_prompt
+    original = [_card(1, "a")]
+    # fix returns markdown in BOTH front and extra
+    fixes = [{"replaces_card_ids": [1],
+              "cards": [{"front": "front {{c1::x}}", "extra": "**Other:** item"}]}]
+    final, _ = merge_deck(original, fixes)
+    assert "<b>Other:</b>" in final[0]["extra"] and "**" not in final[0]["extra"]
+    # the extra/footer is included in what verify/fix see
+    payload = _cards_for_prompt([{"id": 1, "front_html": "f", "extra": "the footer"}])
+    assert "EXTRA/FOOTER: the footer" in payload
+    # blank footer is shown explicitly (so the verifier can flag a missing footer)
+    assert "EXTRA/FOOTER: (blank)" in _cards_for_prompt([{"id": 2, "front_html": "f"}])
