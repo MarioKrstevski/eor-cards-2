@@ -57,6 +57,7 @@ import SbsGenerateModal from '../components/SbsGenerateModal';
 import VerifyModal from '../components/VerifyModal';
 import AlertModal from '../components/AlertModal';
 import AnkifyModal from '../components/AnkifyModal';
+import CompareVersionsModal from '../components/CompareVersionsModal';
 import CreatePresentationModal from '../components/CreatePresentationModal';
 import SectionViewer from './SectionViewer';
 import { useSettings } from '../context/SettingsContext';
@@ -1197,6 +1198,7 @@ export default function CardsPanel({
 
   // ── Ankify modal ─────────────────────────────────────────────────────────
   const [ankifyOpen, setAnkifyOpen] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);  // side-by-side version compare
 
   // ── Create presentation modal ─────────────────────────────────────────────
   const [showCreatePresentation, setShowCreatePresentation] = useState(false);
@@ -2792,6 +2794,9 @@ export default function CardsPanel({
                 <button onClick={() => { setShowActionsMenu(false); setAnkifyOpen(true); }} className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50">
                   Ankify
                 </button>
+                <button onClick={() => { setShowActionsMenu(false); setCompareOpen(true); }} className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50">
+                  Compare versions
+                </button>
                 <button onClick={() => { setShowActionsMenu(false); setShowCreatePresentation(true); }} className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50">
                   Save Presentation
                 </button>
@@ -3299,7 +3304,15 @@ export default function CardsPanel({
       {ankifyOpen && (
         <AnkifyModal
           cards={selectedIds.size > 0 ? cards.filter(c => selectedIds.has(c.id)) : filteredCards}
+          cardVersion={activeCardVersion}
           onClose={() => setAnkifyOpen(false)}
+        />
+      )}
+
+      {compareOpen && (
+        <CompareVersionsModal
+          cards={selectedIds.size > 0 ? cards.filter(c => selectedIds.has(c.id)) : filteredCards}
+          onClose={() => setCompareOpen(false)}
         />
       )}
 

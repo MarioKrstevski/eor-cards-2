@@ -3,7 +3,19 @@ import type { Card } from '../types';
 
 interface AnkifyModalProps {
   cards: Card[];
+  cardVersion?: string;  // which version to preview (base/v1/v2/v3)
   onClose: () => void;
+}
+
+// Front/extra for the selected version, falling back to base so a card with no
+// content for that version still previews (base is what most cards have).
+function frontFor(card: Card, ver: string): string {
+  const v = ver !== 'base' ? ((card as unknown as Record<string, string>)[`front_html_${ver}`] || '') : '';
+  return v || card.front_html || '';
+}
+function extraFor(card: Card, ver: string): string | undefined {
+  const v = ver !== 'base' ? ((card as unknown as Record<string, string>)[`extra_${ver}`] || '') : '';
+  return v || card.extra || undefined;
 }
 
 // Replace cloze syntax with blank placeholders
@@ -70,11 +82,13 @@ function CollapsibleSection({ title, html }: { title: string; html: string }) {
   );
 }
 
-export default function AnkifyModal({ cards, onClose }: AnkifyModalProps) {
+export default function AnkifyModal({ cards, cardVersion = 'base', onClose }: AnkifyModalProps) {
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
 
   const card = cards[index];
+  const frontHtml = card ? frontFor(card, cardVersion) : '';
+  const extra = card ? extraFor(card, cardVersion) : undefined;
 
   const advance = useCallback(() => {
     if (index >= cards.length - 1) {
@@ -152,16 +166,16 @@ export default function AnkifyModal({ cards, onClose }: AnkifyModalProps) {
             <div
               className="text-base leading-relaxed text-gray-800"
               dangerouslySetInnerHTML={{
-                __html: revealed ? renderRevealed(card.front_html) : renderHidden(card.front_html),
+                __html: revealed ? renderRevealed(frontHtml) : renderHidden(frontHtml),
               }}
             />
           </div>
 
           {/* Extra field — shown after reveal */}
-          {revealed && card.extra && (
+          {revealed && extra && (
             <div className="mt-4 bg-white rounded-xl border border-gray-200 px-5 py-3.5">
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Additional context</p>
-              <div className="text-sm text-gray-600 leading-relaxed" dangerouslySetInnerHTML={{ __html: card.extra }} />
+              <div className="text-sm text-gray-600 leading-relaxed" dangerouslySetInnerHTML={{ __html: extra }} />
             </div>
           )}
 
