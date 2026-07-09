@@ -140,8 +140,9 @@ def _cards_for_prompt(cards: list[dict]) -> str:
 
 
 def _finalize_front(front: str) -> tuple[str, str]:
-    """Same deterministic cleanup the SBS assemble step uses: markdown ** -> <b>,
-    normalize any cloze index to c1, and derive plain front_text."""
+    """Light cleanup only: markdown ** -> <b> and normalize any cloze index to c1,
+    then derive plain front_text. Card CONTENT rules (units out of the cloze, etc.)
+    are the reviewer's PROMPT's job — we do not inject or post-process those."""
     front = fix_markdown_bold(front or "")
     front = re.sub(r"\{\{c\d+::", "{{c1::", front)
     return front, strip_card_html(front)
@@ -298,7 +299,7 @@ def deterministic_checks(cards: list[dict]) -> list[dict]:
 
 
 def generate_and_verify(section_data: dict, rules_text: str, model: str = DEFAULT_MODEL):
-    """Run the full chain. Returns (final_cards, trace)."""
+    """Run the full chain on the reviewer's prompt AS-IS. Returns (final_cards, trace)."""
     trace: list[dict] = []
 
     cards, _u1 = run_generate(section_data, rules_text, model)

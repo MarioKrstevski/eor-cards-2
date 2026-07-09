@@ -1,13 +1,18 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Card } from '../types';
+import { getCards, apiErrorMessage } from '../api';
 
 /**
  * Full-screen side-by-side comparison of card versions. Each row is one card;
  * each chosen version (base / v1 / v2 / v3) is a column — so you can see how the
  * same card came out across different models/approaches and pick the best.
+ *
+ * Fetches the WHOLE card set for the scope (all rows, every version) — NOT the
+ * version-filtered/paginated view — so a version that made more cards than base
+ * still shows its extra rows, with blanks where another version has no card.
  */
 interface Props {
-  cards: Card[];
+  scope: { sectionId?: number | null; topicPath?: string | null; sectionIds?: number[] | null };
   onClose: () => void;
 }
 
