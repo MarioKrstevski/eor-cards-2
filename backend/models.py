@@ -83,6 +83,24 @@ class SbsJob(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
 
 
+class VerifyJob(Base):
+    """Generate → Verify → Fix → re-verify chain (own flow, own table). The trace
+    holds every stage's input/output for the downloadable report."""
+    __tablename__ = "verify_jobs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    section_id: Mapped[int] = mapped_column(ForeignKey("sections.id"))
+    rule_set_id: Mapped[Optional[int]] = mapped_column(ForeignKey("rule_sets.id"), nullable=True)
+    card_version: Mapped[str] = mapped_column(String(10), default="base")
+    model: Mapped[str] = mapped_column(String(60), default="")
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/running/done/failed
+    phase: Mapped[str] = mapped_column(String(20), default="")  # generate/verify/fix/reverify/done
+    trace: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # per-stage record for the report
+    total_cards: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+
 # ── Topic Tree (one per H1 main topic) ──
 
 class TopicTree(Base):

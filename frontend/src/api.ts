@@ -814,3 +814,16 @@ export async function getSbsJob(id: number): Promise<SbsJob> {
 export function sbsReportUrl(jobId: number): string {
   return `/api/sbs/jobs/${jobId}/report`;
 }
+
+// ── Generate & Verify ─────────────────────────────────────────────────────────
+import type { VerifyJob } from './types';
+
+export async function startVerify(params: { section_id: number; rule_set_id?: number | null; card_version: string; model: string }): Promise<VerifyJob> {
+  return (await http.post<VerifyJob>('/verify/start', params)).data;
+}
+export async function getVerifyJob(id: number): Promise<VerifyJob> {
+  return (await http.get<VerifyJob>(`/verify/jobs/${id}`)).data;
+}
+export function verifyReportUrl(jobId: number): string {
+  return `/api/verify/jobs/${jobId}/report`;
+}

@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from backend.db import engine, Base, SessionLocal
-from backend.routers import documents, sections, cards, generate, curriculum, rules, export, usage, review_marks, fix_batches, presentations, sbs
+from backend.routers import documents, sections, cards, generate, curriculum, rules, export, usage, review_marks, fix_batches, presentations, sbs, verify
 from backend import models  # noqa — ensure all models registered
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -368,6 +368,7 @@ app.include_router(review_marks.router, prefix="/api/review-marks", tags=["revie
 app.include_router(fix_batches.router, prefix="/api/fix-batches", tags=["fix_batches"])
 app.include_router(presentations.router, prefix="/api/presentations", tags=["presentations"])
 app.include_router(sbs.router, prefix="/api/sbs", tags=["sbs"])
+app.include_router(verify.router, prefix="/api/verify", tags=["verify"])
 
 
 @app.post("/api/admin/clear-storage")

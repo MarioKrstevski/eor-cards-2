@@ -353,3 +353,14 @@ export interface SbsJob {
   card_version: string;
   plan: unknown;
 }
+
+export interface VerifyJob {
+  id: number;
+  section_id: number;
+  status: 'pending' | 'running' | 'done' | 'failed';
+  phase: string;
+  total_cards: number;
+  error_message: string | null;
+  card_version: string;
+  trace?: unknown;
+}

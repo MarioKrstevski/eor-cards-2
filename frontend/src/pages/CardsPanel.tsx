@@ -54,6 +54,7 @@ import type { Card, CardStatus, CostEstimate, ReviewMarkType, SectionImage, FixP
 import { loadRegenHistory, pushSnapshots, rollbackToIndex, type RegenHistory } from '../regenHistory';
 import ConfirmModal from '../components/ConfirmModal';
 import SbsGenerateModal from '../components/SbsGenerateModal';
+import VerifyModal from '../components/VerifyModal';
 import AlertModal from '../components/AlertModal';
 import AnkifyModal from '../components/AnkifyModal';
 import CreatePresentationModal from '../components/CreatePresentationModal';
@@ -1203,6 +1204,7 @@ export default function CardsPanel({
   // ── Generate confirm ─────────────────────────────────────────────────────
   const [showGenerateConfirm, setShowGenerateConfirm] = useState(false);
   const [showSbs, setShowSbs] = useState(false);  // step-by-step generation modal
+  const [showVerify, setShowVerify] = useState(false);  // generate & verify modal
   // Generation rule sets, so we can show which card version a run will target.
   const [genRuleSets, setGenRuleSets] = useState<RuleSet[]>([]);
   useEffect(() => { getRuleSets('generation').then(setGenRuleSets).catch(() => {}); }, []);
@@ -3058,6 +3060,16 @@ export default function CardsPanel({
           )}
           {effectiveSectionId && (
             <button
+              onClick={() => setShowVerify(true)}
+              disabled={jobRunning}
+              className="px-2 py-1.5 text-xs font-medium text-teal-700 bg-white border border-teal-200 rounded-lg hover:bg-teal-50 disabled:opacity-50 transition-colors duration-150"
+              title="Generate, then verify against the rules and fix flagged cards — all internal, with a full report"
+            >
+              Generate &amp; Verify
+            </button>
+          )}
+          {effectiveSectionId && (
+            <button
               onClick={handleInspectPrompt}
               disabled={inspectLoading || jobRunning}
               className="px-2 py-1.5 text-xs font-medium text-blue-700 bg-white border border-blue-200 rounded-lg hover:bg-blue-50 disabled:opacity-50 transition-colors duration-150 flex items-center gap-1"
@@ -3269,6 +3281,17 @@ export default function CardsPanel({
           sectionId={effectiveSectionId}
           model={selectedModel}
           onClose={() => setShowSbs(false)}
+          onDone={() => fetchCards(sectionId, topicPath, false, undefined, sectionIds)}
+        />
+      )}
+
+      {showVerify && effectiveSectionId && (
+        <VerifyModal
+          sectionId={effectiveSectionId}
+          model={selectedModel}
+          ruleSetId={selectedRuleSetId}
+          cardVersion={activeCardVersion}
+          onClose={() => setShowVerify(false)}
           onDone={() => fetchCards(sectionId, topicPath, false, undefined, sectionIds)}
         />
       )}
