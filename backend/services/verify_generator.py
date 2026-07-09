@@ -113,10 +113,24 @@ REVERIFY_TOOL = {
 }
 
 
+def _as_ints(xs) -> list[int]:
+    """Coerce a model-returned id list to ints, dropping anything unparseable —
+    models sometimes return '3' or a stray non-int. Keeps the pipeline crash-proof."""
+    out = []
+    for x in (xs or []):
+        try:
+            out.append(int(x))
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
 def _cards_for_prompt(cards: list[dict]) -> str:
     """Render the deck for a verify/fix call: id + card text + extra."""
     lines = []
     for c in cards:
+        if not isinstance(c, dict):
+            continue
         cid = c.get("id", c.get("card_number"))
         lines.append(f"[card {cid}] FRONT: {c.get('front_html', '')}")
         # The extra/footer travels WITH the card — for sibling cards it carries the
@@ -220,16 +234,19 @@ def merge_deck(original: list[dict], fixes: list[dict]) -> tuple[list[dict], lis
     """Passed cards are kept VERBATIM; code (not the model) decides what's removed.
     Final = (cards whose id is in no fix's replaces list) + (all fix replacement
     cards, each carrying derived_from). Returns (final_cards, before_after)."""
+    fixes = [f for f in (fixes or []) if isinstance(f, dict)]
     replaced: set[int] = set()
     for f in fixes:
-        replaced.update(f.get("replaces_card_ids", []) or [])
+        replaced.update(_as_ints(f.get("replaces_card_ids")))
 
-    final: list[dict] = [dict(c) for c in original if c["id"] not in replaced]
+    final: list[dict] = [dict(c) for c in original if c.get("id") not in replaced]
     before_after: list[dict] = []
     for f in fixes:
-        from_ids = f.get("replaces_card_ids", []) or []
+        from_ids = _as_ints(f.get("replaces_card_ids"))
         new_ids = []
-        for nc in f.get("cards", []) or []:
+        for nc in (f.get("cards") or []):
+            if not isinstance(nc, dict):
+                continue
             fh, ft = _finalize_front(nc.get("front", ""))
             card = {"front_html": fh, "front_text": ft,
                     "extra": _finalize_extra(nc.get("extra")), "source_ref": None,
@@ -291,7 +308,9 @@ def generate_and_verify(section_data: dict, rules_text: str, model: str = DEFAUL
     violations, passed_ids, _u2, vtrace = run_verify(rules_text, cards, model)
     trace.append(vtrace)
 
-    flagged_ids = sorted({cid for v in violations for cid in (v.get("card_ids") or [])})
+    flagged_ids = sorted({
+        cid for v in violations if isinstance(v, dict) for cid in _as_ints(v.get("card_ids"))
+    })
     if not flagged_ids:
         final = cards
         trace.append({"stage": "result", "note": "Verify found no violations — no fix pass run."})
