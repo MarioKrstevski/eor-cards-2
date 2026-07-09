@@ -1131,9 +1131,45 @@ def add_manual_cards(body: AddManualCardsRequest, db: Session = Depends(get_db))
     # Which card version the new cards' front/extra land in (base or v1/v2/v3).
     target_version = body.card_version if body.card_version in ("v1", "v2", "v3") else "base"
 
-    created: list[Card] = []
+    # v1/v2/v3 imports ATTACH onto the section's existing base cards by order
+    # (mirroring _persist_cards in sbs.py): CSV card i fills the version columns
+    # on the i-th existing base card. Only the overflow (more CSV cards than base
+    # cards) becomes new rows, with an empty base front and the content in the
+    # version columns. Base imports always create new rows (unchanged behavior).
+    existing_base: list[Card] = []
+    if target_version != "base":
+        existing_base = (
+            db.query(Card)
+            .filter(Card.section_id == section.id)
+            .order_by(Card.card_number, Card.id)
+            .all()
+        )
+
+    def _apply_supplementals(target: Card, cd: dict) -> None:
+        # Vignette + teaching case are shared (not versioned) — import only when
+        # the user opted in, regardless of which version the fronts go to.
+        if not body.include_supplementals:
+            return
+        if cd.get("vignette"):
+            target.vignette = cd["vignette"]
+        if cd.get("teaching_case"):
+            target.teaching_case = cd["teaching_case"]
+
+    created: list[Card] = []      # new rows (need note_ids)
+    affected: list[Card] = []     # every card touched, in import order (for the response)
     for i, cd in enumerate(to_create):
         fh = cd["front_html"]
+
+        # Attach onto an existing base card (non-base version, within range).
+        if target_version != "base" and i < len(existing_base):
+            target = existing_base[i]
+            setattr(target, _front_field(target_version), fh)
+            setattr(target, _extra_field(target_version), cd.get("extra"))
+            _apply_supplementals(target, cd)
+            affected.append(target)
+            continue
+
+        # New row: base import, or overflow past the existing base cards.
         kwargs = dict(
             section_id=section.id,
             card_number=start_num + i + 1,
@@ -1154,13 +1190,6 @@ def add_manual_cards(body: AddManualCardsRequest, db: Session = Depends(get_db))
             kwargs["front_html"] = ""
             kwargs[_front_field(target_version)] = fh
             kwargs[_extra_field(target_version)] = cd.get("extra")
-        # Vignette + teaching case are shared (not versioned) — import only when
-        # the user opted in, regardless of which version the fronts go to.
-        if body.include_supplementals:
-            if cd.get("vignette"):
-                kwargs["vignette"] = cd["vignette"]
-            if cd.get("teaching_case"):
-                kwargs["teaching_case"] = cd["teaching_case"]
         # Card-specific tags from the paste win; otherwise inherit the section's.
         tags = cd.get("tags") or section_tags
         if cv == "v1":
@@ -1169,8 +1198,10 @@ def add_manual_cards(body: AddManualCardsRequest, db: Session = Depends(get_db))
         else:
             kwargs["tags"] = tags
         card = Card(**kwargs)
+        _apply_supplementals(card, cd)
         db.add(card)
         created.append(card)
+        affected.append(card)
 
     db.flush()
     assign_note_ids(created)
@@ -1196,9 +1227,9 @@ def add_manual_cards(body: AddManualCardsRequest, db: Session = Depends(get_db))
         ))
         db.commit()
 
-    for c in created:
+    for c in affected:
         db.refresh(c)
-    return {"created": [card_to_dict(c, db) for c in created]}
+    return {"created": [card_to_dict(c, db) for c in affected]}
 
 
 @router.delete("/{card_id}", status_code=204)

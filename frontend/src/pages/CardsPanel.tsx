@@ -1133,6 +1133,8 @@ export default function CardsPanel({
   const [totalCards, setTotalCards] = useState(0);
   const [cardsLoading, setCardsLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  // Anchor row index for shift-click range selection (index into filteredCards).
+  const lastSelectedIndex = useRef<number | null>(null);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: CARDS_PAGE_SIZE });
   // Default to 'active' so rejected (soft-deleted) cards don't linger in the
   // view looking "not deleted". They stay recoverable via the filter dropdown.
@@ -1464,6 +1466,30 @@ export default function CardsPanel({
           <input
             type="checkbox"
             checked={selectedIds.has(row.original.id)}
+            // Shift-click selects/deselects the whole range from the last-clicked
+            // row to this one (like a file list). We handle it in onClick because
+            // that's where shiftKey lives; preventDefault stops the native toggle
+            // so onChange doesn't also fire and double-handle the clicked row.
+            onClick={(e) => {
+              const idx = row.index;
+              if (e.shiftKey && lastSelectedIndex.current !== null) {
+                e.preventDefault();
+                const willSelect = !selectedIds.has(row.original.id);
+                const start = Math.min(lastSelectedIndex.current, idx);
+                const end = Math.max(lastSelectedIndex.current, idx);
+                setSelectedIds((prev) => {
+                  const next = new Set(prev);
+                  for (let i = start; i <= end; i++) {
+                    const rid = filteredCards[i]?.id;
+                    if (rid == null) continue;
+                    if (willSelect) next.add(rid);
+                    else next.delete(rid);
+                  }
+                  return next;
+                });
+              }
+              lastSelectedIndex.current = idx;
+            }}
             onChange={() => {
               setSelectedIds((prev) => {
                 const next = new Set(prev);
@@ -1819,7 +1845,7 @@ export default function CardsPanel({
       }),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filteredCards.length, selectedIds, handleCellSelect, handleCellNavigate, handleCellSave, showAnkiFormat, sectionId, sectionIds, topicPath, onReviewChange, fetchCards, markTypes, activeTagSet, activeCardVersion, regenHistory]
+    [filteredCards, selectedIds, handleCellSelect, handleCellNavigate, handleCellSave, showAnkiFormat, sectionId, sectionIds, topicPath, onReviewChange, fetchCards, markTypes, activeTagSet, activeCardVersion, regenHistory]
   );
 
   const pageCount = Math.ceil(totalCards / pagination.pageSize);
@@ -3311,7 +3337,7 @@ export default function CardsPanel({
 
       {compareOpen && (
         <CompareVersionsModal
-          cards={selectedIds.size > 0 ? cards.filter(c => selectedIds.has(c.id)) : filteredCards}
+          scope={{ sectionId, topicPath, sectionIds }}
           onClose={() => setCompareOpen(false)}
         />
       )}

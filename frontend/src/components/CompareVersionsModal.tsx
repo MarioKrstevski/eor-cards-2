@@ -7,9 +7,10 @@ import { getCards, apiErrorMessage } from '../api';
  * each chosen version (base / v1 / v2 / v3) is a column — so you can see how the
  * same card came out across different models/approaches and pick the best.
  *
- * Fetches the WHOLE card set for the scope (all rows, every version) — NOT the
- * version-filtered/paginated view — so a version that made more cards than base
- * still shows its extra rows, with blanks where another version has no card.
+ * Fetches the WHOLE card set for the scope (all rows, every version, no version
+ * filter) — NOT the version-filtered/paginated table view — so a version that
+ * made more cards than base still shows its extra rows, with blanks where
+ * another version has no card at that position.
  */
 interface Props {
   scope: { sectionId?: number | null; topicPath?: string | null; sectionIds?: number[] | null };
@@ -35,16 +36,52 @@ function reveal(html: string): string {
     .replace(/\{\{c\d+::([^}]+)\}\}/g, '<span style="color:#1f77b4;font-weight:700">$1</span>');
 }
 
-export default function CompareVersionsModal({ cards, onClose }: Props) {
+export default function CompareVersionsModal({ scope, onClose }: Props) {
+  const [cards, setCards] = useState<Card[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch every active card in scope, all versions (no version filter), so the
+  // grid can show the full union across versions with blanks where a version
+  // has fewer cards than another.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const params: Parameters<typeof getCards>[0] = { limit: 1000, offset: 0, status: 'active' };
+        if (scope.sectionId != null) params.section_id = scope.sectionId;
+        else if (scope.sectionIds && scope.sectionIds.length > 0) params.section_ids = scope.sectionIds.join(',');
+        else if (scope.topicPath) params.topic = scope.topicPath;
+        const resp = await getCards(params);
+        if (!cancelled) setCards(resp.cards);
+      } catch (e) {
+        if (!cancelled) setError(apiErrorMessage(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [scope.sectionId, scope.topicPath, scope.sectionIds]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   // Default to the versions that actually have content somewhere in the deck.
   const populated = useMemo(() => {
     const has: Record<Ver, boolean> = { base: false, v1: false, v2: false, v3: false };
     for (const c of cards) for (const v of ALL_VERSIONS) if (frontFor(c, v).trim()) has[v] = true;
     return has;
   }, [cards]);
-  const [selected, setSelected] = useState<Ver[]>(
-    () => ALL_VERSIONS.filter((v) => (v === 'base' ? true : populated[v]))
-  );
+  const [selected, setSelected] = useState<Ver[]>(['base']);
+  // Once cards load, expand the default selection to every populated version.
+  useEffect(() => {
+    setSelected(ALL_VERSIONS.filter((v) => (v === 'base' ? true : populated[v])));
+  }, [populated]);
 
   const toggle = (v: Ver) =>
     setSelected((s) => (s.includes(v) ? s.filter((x) => x !== v) : [...ALL_VERSIONS].filter((x) => s.includes(x) || x === v)));
@@ -84,7 +121,9 @@ export default function CompareVersionsModal({ cards, onClose }: Props) {
 
       {/* Rows */}
       <div className="flex-1 overflow-auto px-4 py-3">
-        {cards.map((c, i) => (
+        {loading && <p className="text-sm text-gray-400 text-center py-10">Loading all versions…</p>}
+        {error && <p className="text-sm text-red-500 text-center py-10">{error}</p>}
+        {!loading && !error && cards.map((c, i) => (
           <div key={c.id} className="border-b border-gray-100 py-3"
             style={{ display: 'grid', gridTemplateColumns: `40px repeat(${cols}, 1fr)`, gap: '12px' }}>
             <div className="text-xs text-gray-400 tabular-nums pt-1">{i + 1}</div>
@@ -108,7 +147,7 @@ export default function CompareVersionsModal({ cards, onClose }: Props) {
             })}
           </div>
         ))}
-        {cards.length === 0 && <p className="text-sm text-gray-400 text-center py-10">No cards to compare.</p>}
+        {!loading && !error && cards.length === 0 && <p className="text-sm text-gray-400 text-center py-10">No cards to compare.</p>}
       </div>
     </div>
   );
