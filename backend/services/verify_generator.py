@@ -233,30 +233,49 @@ def run_reverify(rules_text: str, cards: list[dict], model: str):
 # ── Code stages ───────────────────────────────────────────────────────────────
 def merge_deck(original: list[dict], fixes: list[dict]) -> tuple[list[dict], list[dict]]:
     """Passed cards are kept VERBATIM; code (not the model) decides what's removed.
-    Final = (cards whose id is in no fix's replaces list) + (all fix replacement
-    cards, each carrying derived_from). Returns (final_cards, before_after)."""
+    Each fix's replacement cards are substituted IN PLACE at the position of its
+    first replaced card, so deck order follows the source rather than dumping fixed
+    cards at the tail. Returns (final_cards, before_after)."""
     fixes = [f for f in (fixes or []) if isinstance(f, dict)]
-    replaced: set[int] = set()
-    for f in fixes:
-        replaced.update(_as_ints(f.get("replaces_card_ids")))
 
-    final: list[dict] = [dict(c) for c in original if c.get("id") not in replaced]
-    before_after: list[dict] = []
-    for f in fixes:
+    def _build(f) -> list[dict]:
         from_ids = _as_ints(f.get("replaces_card_ids"))
-        new_ids = []
+        built = []
         for nc in (f.get("cards") or []):
             if not isinstance(nc, dict):
                 continue
             fh, ft = _finalize_front(nc.get("front", ""))
-            card = {"front_html": fh, "front_text": ft,
-                    "extra": _finalize_extra(nc.get("extra")), "source_ref": None,
-                    "needs_review": not bool(re.search(r"\{\{c1::", fh)),
-                    "derived_from": from_ids}
-            final.append(card)
-            new_ids.append(card)
-        before_after.append({"from": from_ids, "count": len(new_ids)})
+            built.append({"front_html": fh, "front_text": ft,
+                          "extra": _finalize_extra(nc.get("extra")), "source_ref": None,
+                          "needs_review": not bool(re.search(r"\{\{c1::", fh)),
+                          "derived_from": from_ids})
+        return built
 
+    fix_from = [_as_ints(f.get("replaces_card_ids")) for f in fixes]
+    fix_cards = [_build(f) for f in fixes]
+    # Map each replaced original id to the fix that owns it (first fix wins).
+    replaced_to_fix: dict[int, int] = {}
+    for idx, ids in enumerate(fix_from):
+        for cid in ids:
+            replaced_to_fix.setdefault(cid, idx)
+
+    final: list[dict] = []
+    emitted: set[int] = set()
+    for c in original:
+        fidx = replaced_to_fix.get(c.get("id"))
+        if fidx is None:
+            final.append(dict(c))                       # untouched card, kept verbatim
+        elif fidx not in emitted:
+            final.extend(dict(nc) for nc in fix_cards[fidx])  # insert replacements here
+            emitted.add(fidx)
+        # else: another card folded into an already-emitted fix — drop it
+    # Fallback: a fix whose replaced ids matched no original card goes to the end.
+    for idx, cards in enumerate(fix_cards):
+        if idx not in emitted:
+            final.extend(dict(nc) for nc in cards)
+            emitted.add(idx)
+
+    before_after = [{"from": fix_from[i], "count": len(fix_cards[i])} for i in range(len(fixes))]
     for i, c in enumerate(final, 1):
         c["card_number"] = i
     return final, before_after
