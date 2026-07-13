@@ -1910,7 +1910,7 @@ export default function CardsPanel({
       intervalRef.current = setInterval(async () => {
         try {
           const job = await getGenerationJob(job_id);
-          setJobProgress({ processed: job.processed_sections, total: job.total_sections });
+          setJobProgress(prev => (prev && prev.processed === job.processed_sections && prev.total === job.total_sections) ? prev : { processed: job.processed_sections, total: job.total_sections });
           if (job.status === 'done' || job.status === 'failed') {
             if (intervalRef.current) clearInterval(intervalRef.current);
             setJobRunning(false);
@@ -2068,7 +2068,7 @@ export default function CardsPanel({
       intervalRef.current = setInterval(async () => {
         try {
           const job = await getGenerationJob(relevant.id);
-          setJobProgress({ processed: job.processed_sections, total: job.total_sections });
+          setJobProgress(prev => (prev && prev.processed === job.processed_sections && prev.total === job.total_sections) ? prev : { processed: job.processed_sections, total: job.total_sections });
           if (job.status === 'done' || job.status === 'failed') {
             if (intervalRef.current) clearInterval(intervalRef.current);
             setJobRunning(false);
@@ -2510,7 +2510,7 @@ export default function CardsPanel({
       intervalRef.current = setInterval(async () => {
         try {
           const job = await getGenerationJob(job_id);
-          setJobProgress({ processed: job.processed_sections, total: job.total_sections });
+          setJobProgress(prev => (prev && prev.processed === job.processed_sections && prev.total === job.total_sections) ? prev : { processed: job.processed_sections, total: job.total_sections });
           if (job.status === 'done' || job.status === 'failed') {
             if (intervalRef.current) clearInterval(intervalRef.current);
             setJobRunning(false);

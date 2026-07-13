@@ -40,6 +40,7 @@ export default function CompareVersionsModal({ scope, onClose }: Props) {
   const [cards, setCards] = useState<Card[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // Fetch every active card in scope, all versions (no version filter), so the
   // grid can show the full union across versions with blanks where a version
@@ -88,6 +89,41 @@ export default function CompareVersionsModal({ scope, onClose }: Props) {
 
   const cols = selected.length || 1;
 
+  // Build one text block per selected version — each card as [id] front + extra,
+  // with the raw stored markup ({{c1::}} clozes intact) so the copy is useful for
+  // pasting into a chat and reviewing cloze/anchor quality.
+  function buildCopyText(): string {
+    const blocks = selected.map((v) => {
+      const label = v === 'base' ? 'Current (base)' : v;
+      const rows: string[] = [];
+      for (const c of cards) {
+        const front = frontFor(c, v);
+        if (!front.trim()) continue;
+        const extra = extraFor(c, v).trim();
+        rows.push(`[id ${c.id}] ${front}${extra ? `\n  extra: ${extra}` : ''}`);
+      }
+      return `=== VERSION: ${label} — ${rows.length} card(s) ===\n${rows.join('\n')}`;
+    });
+    return blocks.join('\n\n\n');
+  }
+
+  async function handleCopy() {
+    const text = buildCopyText();
+    const flash = () => { setCopied(true); setTimeout(() => setCopied(false), 1500); };
+    try {
+      await navigator.clipboard.writeText(text);
+      flash();
+    } catch {
+      // Fallback for non-secure contexts where the Clipboard API is unavailable.
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); flash(); } catch { /* give up silently */ }
+      document.body.removeChild(ta);
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-gray-100">
       {/* Header */}
@@ -105,9 +141,19 @@ export default function CompareVersionsModal({ scope, onClose }: Props) {
           </div>
           <span className="text-xs text-gray-400">{cards.length} card(s)</span>
         </div>
-        <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg" title="Close (Esc)">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleCopy}
+            disabled={loading || cards.length === 0}
+            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Copy the selected versions' cards (id + front + extra) to the clipboard"
+          >
+            {copied ? 'Copied!' : `Copy ${selected.length} version${selected.length === 1 ? '' : 's'}`}
+          </button>
+          <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg" title="Close (Esc)">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
       </div>
 
       {/* Column headers (sticky) */}
