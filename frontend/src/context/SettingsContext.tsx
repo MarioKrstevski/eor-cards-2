@@ -19,6 +19,8 @@ interface Settings {
   setActiveTagSet: (v: 'old' | 'new') => void;
   activeCardVersion: 'base' | 'v1' | 'v2' | 'v3';
   setActiveCardVersion: (v: 'base' | 'v1' | 'v2' | 'v3') => void;
+  simpleView: boolean;
+  setSimpleView: (v: boolean) => void;
 }
 
 const defaults: Settings = {
@@ -40,6 +42,8 @@ const defaults: Settings = {
   setActiveTagSet: () => {},
   activeCardVersion: 'base',
   setActiveCardVersion: () => {},
+  simpleView: false,
+  setSimpleView: () => {},
 };
 
 export const SettingsContext = createContext<Settings>(defaults);
@@ -84,6 +88,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   );
   const [activeCardVersion, setActiveCardVersionState] = useState<'base' | 'v1' | 'v2' | 'v3'>(
     () => (localStorage.getItem('settings_active_card_version') as 'base' | 'v1' | 'v2' | 'v3') || 'base'
+  );
+  const [simpleView, setSimpleViewState] = useState<boolean>(
+    () => localStorage.getItem('simpleView') === 'true'
   );
 
   function setSelectedModel(m: string) {
@@ -134,6 +141,11 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('settings_active_card_version', v);
   }
 
+  function setSimpleView(v: boolean) {
+    setSimpleViewState(v);
+    localStorage.setItem('simpleView', String(v));
+  }
+
   return (
     <SettingsContext.Provider
       value={{
@@ -146,6 +158,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
         curriculumVersion, setCurriculumVersion,
         activeTagSet, setActiveTagSet,
         activeCardVersion, setActiveCardVersion,
+        simpleView, setSimpleView,
       }}
     >
       {children}

@@ -2,6 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { getModels, getRuleSets } from '../api';
 import type { Model, RuleSet } from '../types';
 import { useSettings } from '../context/SettingsContext';
+import { SIMPLE_MODELS } from '../constants';
+
+/** Whitelist is by bare model id; a selected value may carry an effort suffix
+ * ("claude-sonnet-4-5:medium"), so match on the prefix before the colon. */
+function modelInSimple(id: string): boolean {
+  return SIMPLE_MODELS.includes(id.split(':')[0]);
+}
 
 export default function SettingsPopover({ onClose }: { onClose: () => void }) {
   const {
@@ -9,6 +16,7 @@ export default function SettingsPopover({ onClose }: { onClose: () => void }) {
     vignetteModel, setVignetteModel,
     selectedRuleSetId, setSelectedRuleSetId,
     vignetteRuleSetId, setVignetteRuleSetId,
+    simpleView,
   } = useSettings();
   const [models, setModels] = useState<Model[]>([]);
   const [ruleSets, setRuleSets] = useState<RuleSet[]>([]);
@@ -46,8 +54,10 @@ export default function SettingsPopover({ onClose }: { onClose: () => void }) {
     return `${m.display} ($${m.input_per_1m.toFixed(2)}/$${m.output_per_1m.toFixed(2)})`;
   }
 
-  const generationRules = ruleSets.filter((rs) => rs.rule_type === 'generation');
+  const generationRules = ruleSets.filter((rs) => rs.rule_type === 'generation' && rs.is_shown);
   const vignetteRules = ruleSets.filter((rs) => rs.rule_type === 'vignette');
+  // Simple view offers only the whitelisted models; Complex view keeps the full list.
+  const modelOptions = simpleView ? models.filter((m) => modelInSimple(m.id)) : models;
 
   const selectClass =
     'text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent transition-colors duration-150';
@@ -57,10 +67,10 @@ export default function SettingsPopover({ onClose }: { onClose: () => void }) {
   function ModelSelect({ value, onChange, fallback }: { value: string; onChange: (v: string) => void; fallback: string }) {
     return (
       <select className={selectClass} value={value} onChange={(e) => onChange(e.target.value)}>
-        {models.map((m) => (
+        {modelOptions.map((m) => (
           <option key={m.id} value={m.id}>{modelLabel(m)}</option>
         ))}
-        {models.length === 0 && <option value={fallback}>{fallback}</option>}
+        {modelOptions.length === 0 && <option value={fallback}>{fallback}</option>}
       </select>
     );
   }
@@ -69,12 +79,10 @@ export default function SettingsPopover({ onClose }: { onClose: () => void }) {
     value,
     onChange,
     options,
-    showVersion,
   }: {
     value: number | null;
     onChange: (id: number | null) => void;
     options: RuleSet[];
-    showVersion?: boolean;
   }) {
     return (
       <select
@@ -85,7 +93,7 @@ export default function SettingsPopover({ onClose }: { onClose: () => void }) {
         <option value="">-- none -- (use default)</option>
         {options.map((rs) => (
           <option key={rs.id} value={rs.id}>
-            {rs.name}{rs.is_default ? ' (default)' : ''}{showVersion && rs.card_version !== 'base' ? ` [${rs.card_version.toUpperCase()}]` : ''}
+            {rs.name}{rs.is_default ? ' (default)' : ''}
           </option>
         ))}
       </select>
@@ -126,7 +134,7 @@ export default function SettingsPopover({ onClose }: { onClose: () => void }) {
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <label className={labelClass}>Rules</label>
-                    <RulesSelect value={selectedRuleSetId} onChange={setSelectedRuleSetId} options={generationRules} showVersion />
+                    <RulesSelect value={selectedRuleSetId} onChange={setSelectedRuleSetId} options={generationRules} />
                   </div>
                 </div>
               </div>

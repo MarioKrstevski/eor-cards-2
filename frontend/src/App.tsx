@@ -17,7 +17,7 @@ function AppInner() {
   const [showUsage, setShowUsage] = useState(false);
   const [displayedCost, setDisplayedCost] = useState<number | null>(null);
   const prevCostRef = useRef(0);
-  const { selectedRuleSetId, setSelectedRuleSetId, curriculumVersion, setCurriculumVersion, activeTagSet, setActiveTagSet, activeCardVersion, setActiveCardVersion } = useSettings();
+  const { selectedRuleSetId, setSelectedRuleSetId, curriculumVersion, setCurriculumVersion, activeTagSet, setActiveTagSet, activeCardVersion, setActiveCardVersion, simpleView, setSimpleView } = useSettings();
 
   function refreshUsage() {
     const prev = prevCostRef.current;
@@ -168,6 +168,15 @@ function AppInner() {
         </div>
 
         <span className="text-[10px] text-gray-300 font-mono mr-2">v{APP_VERSION}</span>
+
+        <button
+          onClick={() => setSimpleView(!simpleView)}
+          title={`Currently in ${simpleView ? 'Simple' : 'Complex'} view — click to switch to ${simpleView ? 'Complex' : 'Simple'} view`}
+          className="flex flex-col items-start leading-tight border border-gray-200 rounded-lg px-2 py-1 mr-2 hover:bg-gray-50 transition-colors duration-150"
+        >
+          <span className="text-[10px] text-gray-400">In {simpleView ? 'Simple' : 'Complex'} view,</span>
+          <span className="text-xs font-bold text-gray-700">switch to {simpleView ? 'Complex' : 'Simple'} view</span>
+        </button>
 
         {displayedCost != null && (
           <button

@@ -491,6 +491,18 @@ export async function rejectCard(id: number): Promise<Card> {
   return res.data;
 }
 
+// Rephrase a highlighted snippet of a card's front. `text` is the full plain
+// card text (for context); `snippet` is the substring to reword. Returns the
+// reworded snippet as plain text.
+export async function rewordSnippet(
+  text: string,
+  snippet: string,
+  model?: string
+): Promise<{ reworded: string }> {
+  const res = await http.post<{ reworded: string }>('/cards/reword', { text, snippet, model });
+  return res.data;
+}
+
 export async function regenerateCardPreview(
   id: number,
   params: { model: string; prompt?: string; card_version?: string }
@@ -594,9 +606,13 @@ export async function startGeneration(params: {
   topic_path?: string;
   rule_set_id: number;
   model: string;
+  card_version?: string;
   replace_existing?: boolean;
 }): Promise<{ job_id: number }> {
-  const res = await http.post<{ job_id: number }>('/generate/start', params);
+  const res = await http.post<{ job_id: number }>('/generate/start', {
+    card_version: 'base',
+    ...params,
+  });
   return res.data;
 }
 
@@ -659,6 +675,11 @@ export async function deleteRuleSet(id: number): Promise<void> {
 
 export async function setDefaultRuleSet(id: number): Promise<RuleSet> {
   const res = await http.post<RuleSet>(`/rules/${id}/set-default`);
+  return res.data;
+}
+
+export async function setRuleShown(id: number, is_shown: boolean): Promise<RuleSet> {
+  const res = await http.patch<RuleSet>(`/rules/${id}/set-shown`, { is_shown });
   return res.data;
 }
 

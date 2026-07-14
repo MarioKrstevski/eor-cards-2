@@ -16,6 +16,7 @@ import {
   updateRuleSet,
   deleteRuleSet,
   setDefaultRuleSet,
+  setRuleShown,
   getTopicTrees,
   getTopicTree,
   deleteTopicTree,
@@ -571,6 +572,16 @@ export default function LibraryPage() {
     } catch { /* ignore */ }
   }, [loadRuleSets]);
 
+  const handleToggleRuleShown = useCallback(async (id: number, isShown: boolean) => {
+    // Optimistic: flip local state, roll back on failure.
+    setRuleSets((prev) => prev.map((r) => (r.id === id ? { ...r, is_shown: isShown } : r)));
+    try {
+      await setRuleShown(id, isShown);
+    } catch {
+      setRuleSets((prev) => prev.map((r) => (r.id === id ? { ...r, is_shown: !isShown } : r)));
+    }
+  }, []);
+
   const handleCreateMark = async () => {
     if (!newMarkName.trim()) return;
     try {
@@ -1042,6 +1053,18 @@ export default function LibraryPage() {
                         <p className="text-xs text-gray-400 mt-0.5 truncate">{rule.content.slice(0, 100)}...</p>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
+                        <label
+                          className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 cursor-pointer select-none"
+                          title="Show this rule set in the Settings + Generate dropdowns. Hidden rules are kept for history but not offered."
+                        >
+                          <input
+                            type="checkbox"
+                            checked={rule.is_shown}
+                            onChange={(e) => handleToggleRuleShown(rule.id, e.target.checked)}
+                            className="h-3.5 w-3.5 rounded border-gray-300 text-blue-700 focus:ring-blue-600"
+                          />
+                          Show
+                        </label>
                         {!rule.is_default && (
                           <button onClick={() => handleSetDefaultRule(rule.id)} className="px-2 py-1 text-xs text-green-600 hover:bg-green-50 rounded-lg transition-colors duration-150">
                             Set Default

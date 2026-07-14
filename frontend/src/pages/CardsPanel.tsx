@@ -53,12 +53,14 @@ import {
 import type { Card, CardStatus, CostEstimate, ReviewMarkType, SectionImage, FixProposal, Model, RuleSet } from '../types';
 import { loadRegenHistory, pushSnapshots, rollbackToIndex, type RegenHistory } from '../regenHistory';
 import ConfirmModal from '../components/ConfirmModal';
+import GenerateModal from '../components/GenerateModal';
 import SbsGenerateModal from '../components/SbsGenerateModal';
 import VerifyModal from '../components/VerifyModal';
 import AlertModal from '../components/AlertModal';
 import AnkifyModal from '../components/AnkifyModal';
 import CompareVersionsModal from '../components/CompareVersionsModal';
 import CreatePresentationModal from '../components/CreatePresentationModal';
+import CardEditPopup from '../components/CardEditPopup';
 import SectionViewer from './SectionViewer';
 import { useSettings } from '../context/SettingsContext';
 
@@ -90,7 +92,7 @@ const splitTags = (s: string) => s.split(TAG_SEP).map(t => t.trim()).filter(Bool
 const MARK_COLORS = ['#6b7280', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'];
 
 // ── Cloze rendering utility ────────────────────────────────────────────────────
-function renderClozeHtml(html: string): string {
+export function renderClozeHtml(html: string): string {
   let result = html.replace(
     /(?:<b>)?<span[^>]*>\{\{c\d+::([^}]+)\}\}<\/span>(?:<\/b>)?/g,
     '<span style="color:#1f77b4;font-weight:700">$1</span>'
@@ -1108,7 +1110,7 @@ export default function CardsPanel({
   refreshUsage,
   onReviewChange,
 }: CardsPanelProps) {
-  const { selectedModel, selectedRuleSetId, activeTagSet, activeCardVersion } = useSettings();
+  const { selectedModel, selectedRuleSetId, activeTagSet, activeCardVersion, simpleView } = useSettings();
 
   // ── Generation controls ──────────────────────────────────────────────────
   const [estimate, setEstimate] = useState<CostEstimate | null>(null);
@@ -1205,15 +1207,15 @@ export default function CardsPanel({
   // ── Create presentation modal ─────────────────────────────────────────────
   const [showCreatePresentation, setShowCreatePresentation] = useState(false);
 
-  // ── Generate confirm ─────────────────────────────────────────────────────
-  const [showGenerateConfirm, setShowGenerateConfirm] = useState(false);
+  // ── Generate modal ───────────────────────────────────────────────────────
+  const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [showSbs, setShowSbs] = useState(false);  // step-by-step generation modal
   const [showVerify, setShowVerify] = useState(false);  // generate & verify modal
-  // Generation rule sets, so we can show which card version a run will target.
+  // Generation rule sets + models, used by the Generate modal dropdowns.
   const [genRuleSets, setGenRuleSets] = useState<RuleSet[]>([]);
+  const [genModels, setGenModels] = useState<Model[]>([]);
   useEffect(() => { getRuleSets('generation').then(setGenRuleSets).catch(() => {}); }, []);
-  const targetVersion = genRuleSets.find(r => r.id === selectedRuleSetId)?.card_version ?? 'base';
-  const targetVersionLabel = targetVersion === 'base' ? 'Base' : targetVersion.toUpperCase();
+  useEffect(() => { getModels().then(setGenModels).catch(() => {}); }, []);
 
   // ── Inspect prompt (debug single section's generation, dry-run) ───────────
   const [inspectLoading, setInspectLoading] = useState(false);
@@ -1888,16 +1890,18 @@ export default function CardsPanel({
     }
   }, [selectedRuleSetId, selectedModel, sectionId, sectionIds, topicPath, topicTreeId]);
 
-  const handleGenerate = useCallback(async () => {
-    if (!selectedRuleSetId || !selectedModel) return;
-    setShowGenerateConfirm(false);
+  const handleGenerate = useCallback(async (opts: { model: string; rule_set_id: number; card_version: string; replace_existing: boolean }) => {
+    if (!opts.rule_set_id || !opts.model) return;
+    setShowGenerateModal(false);
     setJobRunning(true);
     setJobProgress(null);
     setJobError(null);
     try {
-      const params: { rule_set_id: number; model: string; section_ids?: number[]; topic_path?: string; topic_tree_id?: number; replace_existing?: boolean } = {
-        rule_set_id: selectedRuleSetId,
-        model: selectedModel,
+      const params: { rule_set_id: number; model: string; card_version: string; section_ids?: number[]; topic_path?: string; topic_tree_id?: number; replace_existing?: boolean } = {
+        rule_set_id: opts.rule_set_id,
+        model: opts.model,
+        card_version: opts.card_version,
+        replace_existing: opts.replace_existing,
       };
       if (sectionId) params.section_ids = [sectionId];
       else if (sectionIds && sectionIds.length > 0) params.section_ids = sectionIds;
@@ -1933,7 +1937,7 @@ export default function CardsPanel({
       setJobRunning(false);
       setJobError(err instanceof Error ? err.message : 'Start failed');
     }
-  }, [selectedRuleSetId, selectedModel, sectionId, sectionIds, topicTreeId, topicPath, fetchCards, onReviewChange, refreshUsage]);
+  }, [sectionId, sectionIds, topicTreeId, topicPath, fetchCards, onReviewChange, refreshUsage]);
 
   // Step 1: instantly pull the exact prompt (no API call, no cost).
   const handleInspectPrompt = useCallback(async () => {
@@ -2671,6 +2675,7 @@ export default function CardsPanel({
         </button>
 
         {/* Validator-changed filter */}
+        {!simpleView && (
         <button
           onClick={() => setValidatorOnly(v => !v)}
           className={`text-xs rounded-lg px-2 py-1.5 border transition-colors duration-150 ${validatorOnly ? 'bg-violet-100 text-violet-700 border-violet-300' : 'text-gray-600 border-gray-200 hover:bg-gray-50'}`}
@@ -2678,8 +2683,10 @@ export default function CardsPanel({
         >
           ✎ Changed
         </button>
+        )}
 
         {/* Status filter */}
+        {!simpleView && (
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as 'all' | CardStatus)}
@@ -2689,9 +2696,10 @@ export default function CardsPanel({
           <option value="active">Active</option>
           <option value="rejected">Rejected</option>
         </select>
+        )}
 
         {/* Mark type filter */}
-        {markTypes.length > 0 && (
+        {!simpleView && markTypes.length > 0 && (
           <div className="relative">
             <select
               value={markFilterId ?? ''}
@@ -2711,6 +2719,7 @@ export default function CardsPanel({
         )}
 
         {/* Global search */}
+        {!simpleView && (
         <div className="relative">
           <svg className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 pointer-events-none" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -2730,9 +2739,10 @@ export default function CardsPanel({
             </button>
           )}
         </div>
+        )}
 
         {/* Column visibility (table mode) */}
-        {viewMode === 'table' && (
+        {!simpleView && viewMode === 'table' && (
           <div className="relative">
             <button
               onClick={() => setColVisPopover((v) => !v)}
@@ -2762,7 +2772,7 @@ export default function CardsPanel({
         )}
 
         {/* Anki / Text toggle (table mode) */}
-        {viewMode === 'table' && (
+        {!simpleView && viewMode === 'table' && (
           <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden" title="Toggle cloze rendering">
             <button
               onClick={() => setShowAnkiFormat(false)}
@@ -2795,7 +2805,7 @@ export default function CardsPanel({
           <div className="w-px h-4 bg-blue-200" />
 
           {/* Mark Reviewed / Unmark */}
-          {(() => {
+          {!simpleView && (() => {
             const selectedCards = cards.filter(c => selectedIds.has(c.id));
             const allReviewed = selectedCards.length > 0 && selectedCards.every(c => c.is_reviewed);
             return (
@@ -2824,9 +2834,13 @@ export default function CardsPanel({
                 <button onClick={() => { setShowActionsMenu(false); setCompareOpen(true); }} className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50">
                   Compare versions
                 </button>
+                {!simpleView && (
                 <button onClick={() => { setShowActionsMenu(false); setShowCreatePresentation(true); }} className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50">
                   Save Presentation
                 </button>
+                )}
+                {!simpleView && (
+                <>
                 <div className="border-t border-gray-100 my-1" />
                 {/* AI actions — left column acts on the selected rows, right column on everything in the section/topic */}
                 <div className="px-2 pb-1">
@@ -2862,11 +2876,14 @@ export default function CardsPanel({
                     ⓘ What does Validate &amp; fix check?
                   </button>
                 </div>
+                </>
+                )}
               </div>
             )}
           </div>
 
           {/* Marking actions dropdown — bulk-mark rows, manage marks, AI fix batch */}
+          {!simpleView && (
           <div className="relative">
             <button
               onClick={() => setShowMarksMenu(v => !v)}
@@ -2935,6 +2952,7 @@ export default function CardsPanel({
               </div>
             )}
           </div>
+          )}
 
           {/* Export CSV dropdown */}
           <div className="relative">
@@ -3030,6 +3048,7 @@ export default function CardsPanel({
               <span>{bulkRegenProgress ? `Regen ${bulkRegenProgress.done}/${bulkRegenProgress.total}` : validating ? 'Validating...' : scoring ? 'Scoring...' : 'Generating...'}</span>
             </div>
           )}
+          {!simpleView && (
           <button
             onClick={() => setSelectedIds(new Set())}
             className="ml-auto p-1 text-blue-400 hover:text-blue-700 rounded"
@@ -3039,6 +3058,7 @@ export default function CardsPanel({
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
+          )}
         </div>
       )}
 
@@ -3059,6 +3079,7 @@ export default function CardsPanel({
       {/* Generation controls */}
       {hasContext && (
         <div className="shrink-0 bg-gray-50 border-b border-gray-200 px-4 py-2 flex items-center gap-2">
+          {!simpleView && (
           <button
             onClick={handleEstimate}
             disabled={estimating || jobRunning || !selectedRuleSetId}
@@ -3066,21 +3087,22 @@ export default function CardsPanel({
           >
             {estimating ? 'Estimating...' : 'Estimate Cost'}
           </button>
-          {estimate && (
+          )}
+          {!simpleView && estimate && (
             <span className="text-xs text-gray-500">
               ~${estimate.estimated_cost_usd.toFixed(3)} ({estimate.estimated_input_tokens.toLocaleString()} in / {estimate.estimated_output_tokens.toLocaleString()} out)
             </span>
           )}
           <button
-            onClick={() => setShowGenerateConfirm(true)}
-            disabled={jobRunning || !selectedRuleSetId}
+            onClick={() => setShowGenerateModal(true)}
+            disabled={jobRunning}
             className="px-3 py-1.5 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 disabled:opacity-50 transition-colors duration-150"
           >
             {jobRunning
               ? `Generating… ${jobProgress ? `${jobProgress.processed}/${jobProgress.total}` : ''}`
               : 'Generate Cards'}
           </button>
-          {effectiveSectionId && (
+          {!simpleView && effectiveSectionId && (
             <button
               onClick={() => setShowSbs(true)}
               disabled={jobRunning}
@@ -3090,7 +3112,7 @@ export default function CardsPanel({
               Generate — Step by Step
             </button>
           )}
-          {effectiveSectionId && (
+          {!simpleView && effectiveSectionId && (
             <button
               onClick={() => setShowVerify(true)}
               disabled={jobRunning}
@@ -3100,7 +3122,7 @@ export default function CardsPanel({
               Generate &amp; Verify
             </button>
           )}
-          {effectiveSectionId && (
+          {!simpleView && effectiveSectionId && (
             <button
               onClick={handleInspectPrompt}
               disabled={inspectLoading || jobRunning}
@@ -3120,7 +3142,7 @@ export default function CardsPanel({
               + Add card(s)
             </button>
           )}
-          {inspectError && <span className="text-xs text-red-600">{inspectError}</span>}
+          {!simpleView && inspectError && <span className="text-xs text-red-600">{inspectError}</span>}
           {jobRunning && activeJobId && (
             <button
               onClick={async () => {
@@ -3298,13 +3320,13 @@ export default function CardsPanel({
         />
       )}
 
-      {showGenerateConfirm && (
-        <ConfirmModal
-          title="Generate Cards"
-          message={`Generate cards using ${selectedModel}, into version: ${targetVersionLabel}${targetVersion !== 'base' ? ' (fills that version on existing base cards)' : ''}.${estimate ? ` Estimated cost: $${estimate.estimated_cost_usd.toFixed(3)}.` : ''}`}
-          confirmLabel="Generate"
-          onConfirm={handleGenerate}
-          onCancel={() => setShowGenerateConfirm(false)}
+      {showGenerateModal && (
+        <GenerateModal
+          models={genModels}
+          ruleSets={genRuleSets}
+          estimateLabel={estimate ? `~$${estimate.estimated_cost_usd.toFixed(3)}` : null}
+          onGenerate={handleGenerate}
+          onClose={() => setShowGenerateModal(false)}
         />
       )}
 
@@ -3640,6 +3662,22 @@ export default function CardsPanel({
           </div>
         </div>
       )}
+
+      {/* Per-card edit popup — only when EXACTLY one card is selected. Docks to
+          the right of the viewport; represents that single card. */}
+      {selectedIds.size === 1 && (() => {
+        const only = [...selectedIds][0];
+        const card = filteredCards.find(c => c.id === only) ?? cards.find(c => c.id === only);
+        if (!card) return null;
+        return (
+          <CardEditPopup
+            card={card}
+            onSave={handleCellSave}
+            onRegenerate={() => doRegen('selected')}
+            onClose={() => setSelectedIds(new Set())}
+          />
+        );
+      })()}
 
       {bigEdit && (
         <BigEditModal

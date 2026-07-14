@@ -193,6 +193,7 @@ export interface RuleSet {
   card_version: 'base' | 'v1' | 'v2' | 'v3';
   content: string;
   is_default: boolean;
+  is_shown: boolean;
   created_at?: string;
 }
 
