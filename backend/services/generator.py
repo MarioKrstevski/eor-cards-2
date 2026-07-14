@@ -385,6 +385,21 @@ def parse_card_output(raw: str) -> tuple[list[dict], bool]:
     return cards, needs_review
 
 
+# Scoping instruction for reviewer-guided single-card regenerates: make ONLY the
+# requested change instead of rewriting the whole card. Only applied when a
+# guiding prompt is present AND the caller opts in (guided=True) — the bulk
+# validate/auto-fix loop passes fix_guidance() as extra_prompt and must keep
+# its current full-rewrite behavior.
+_GUIDED_EDIT_INSTRUCTION = (
+    "You are making a TARGETED edit to an existing flashcard. Apply ONLY the change "
+    "described in the guidance below. Preserve everything else EXACTLY — same facts, "
+    "same cloze deletions and c1 indices, same wording, same bold/anchor formatting, "
+    "same footer. Do not rewrite, re-cloze, rephrase, re-split, or reformat anything "
+    "the guidance does not explicitly ask you to change. Output the same card with "
+    "only the requested change applied."
+)
+
+
 def regenerate_single_card(
     client: anthropic.Anthropic,
     section_data: dict,
@@ -392,6 +407,7 @@ def regenerate_single_card(
     rules_text: str,
     extra_prompt: str | None = None,
     model: str = DEFAULT_MODEL,
+    guided: bool = False,
 ) -> tuple[list[dict], bool, dict]:
     """Regenerate one card from the same section, optionally guided by extra_prompt."""
     topic = section_data.get('curriculum_topic_path') or ''
@@ -409,16 +425,21 @@ def regenerate_single_card(
         chunk_prompt += f"\nAdditional guidance: {extra_prompt}\n"
     chunk_prompt += "\nGenerate ONE improved replacement card. Output exactly:\n1|cloze card text|additional context (optional)"
 
+    system_blocks = [{
+        "type": "text",
+        "text": rules_text,  # ANCHOR_INSTRUCTION no longer prepended (rules live in the rule set)
+        "cache_control": {"type": "ephemeral"},
+    }]
+    if guided and extra_prompt:
+        # Appended AFTER the cached rules block so the cache prefix is unchanged.
+        system_blocks.append({"type": "text", "text": _GUIDED_EDIT_INSTRUCTION})
+
     response = client.messages.create(
         model=resolve_model(model)[0],
         **effort_kwargs(model),
         max_tokens=1024,
         temperature=0,
-        system=[{
-            "type": "text",
-            "text": rules_text,  # ANCHOR_INSTRUCTION no longer prepended (rules live in the rule set)
-            "cache_control": {"type": "ephemeral"},
-        }],
+        system=system_blocks,
         messages=[{
             "role": "user",
             "content": chunk_prompt,

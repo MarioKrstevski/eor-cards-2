@@ -149,6 +149,47 @@ def reword_snippet(body: RewordRequest):
     return {"reworded": reworded}
 
 
+# ── Tighten (condense) a card front ──────────────────────────────────────────
+_TIGHTEN_SYSTEM = (
+    "You condense the front of a medical cloze flashcard. CONDENSE and shorten the "
+    "given flashcard front to remove verbosity and redundant framing, while:\n"
+    "- preserving EVERY clinical fact, number, qualifier, and term — no information "
+    "may be dropped;\n"
+    "- preserving ALL markup EXACTLY: every cloze {{c1::...}} must remain intact and "
+    "unchanged (same terms clozed, same c1 index), and every <b>...</b> and "
+    '<span style="color:#1f77b4">...</span> wrapper must be kept;\n'
+    "- returning ONLY the tightened front_html string — no quotes, no explanation, "
+    "no markdown fences."
+)
+
+
+class TightenRequest(BaseModel):
+    front_html: str
+    model: Optional[str] = None
+
+
+@router.post("/tighten")
+def tighten_card(body: TightenRequest):
+    """Stateless: condense a card front while preserving clozes and markup.
+    Does not read or write the DB (no usage logged — no session here)."""
+    front = (body.front_html or "").strip()
+    if not front:
+        raise HTTPException(400, "No front_html provided to tighten")
+    # Haiku by default; coerce any Gemini selection to Anthropic (this path is Claude-only).
+    model = anthropic_model(body.model or DEFAULT_PROCESSING_MODEL)
+    text, _usage, _stop = complete_text(
+        model, _TIGHTEN_SYSTEM, front, temperature=0, max_tokens=2048,
+    )
+    tightened = _strip_wrapping_quotes(text or "")
+    # Safety check: a bad tighten must never destroy clozes. If the output is
+    # empty or its {{c1:: count differs from the input's, discard it.
+    if not tightened or tightened.count("{{c1::") != front.count("{{c1::"):
+        return {"front_html": body.front_html, "changed": False}
+    if tightened == front:
+        return {"front_html": body.front_html, "changed": False}
+    return {"front_html": tightened, "changed": True}
+
+
 def _write_correctness(card: "Card", card_version: str, passed, corr) -> None:
     fs, fc = _correctness_fields(card_version)
     setattr(card, fs, passed)
@@ -407,6 +448,7 @@ def regenerate_card(card_id: int, body: RegenerateCardRequest, db: Session = Dep
         rules_text=rules,
         extra_prompt=body.prompt or None,
         model=model,
+        guided=bool((body.prompt or "").strip()),  # targeted edit only when the reviewer gave guidance
     )
     if cards_data:
         _write_front(card, body.card_version, cards_data[0]["front_html"])
@@ -573,6 +615,7 @@ def regenerate_card_preview(card_id: int, body: RegenerateCardRequest, db: Sessi
         rules_text=rules,
         extra_prompt=body.prompt or None,
         model=model,
+        guided=bool((body.prompt or "").strip()),  # targeted edit only when the reviewer gave guidance
     )
     if usage:
         db.add(AIUsageLog(
