@@ -42,6 +42,7 @@ class StartRequest(BaseModel):
     rule_set_id: int
     model: str = DEFAULT_MODEL
     replace_existing: bool = True
+    card_version: str = "base"   # base/v1/v2/v3 — where generated front+extra are written
 
 
 class SupplementalEstimateRequest(BaseModel):
@@ -258,7 +259,7 @@ def start_generation(
         rs.content,
         body.model,
         body.replace_existing,
-        rs.card_version,
+        body.card_version,
     )
     return {
         "job_id": job.id,

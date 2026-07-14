@@ -22,12 +22,17 @@ class RuleSetUpdate(BaseModel):
     card_version: Optional[str] = None
 
 
+class SetShownRequest(BaseModel):
+    is_shown: bool
+
+
 def ruleset_to_dict(rs: RuleSet) -> dict:
     return {
         "id": rs.id,
         "name": rs.name,
         "content": rs.content,
         "is_default": rs.is_default,
+        "is_shown": rs.is_shown,
         "rule_type": rs.rule_type,
         "card_version": rs.card_version,
         "created_at": rs.created_at.isoformat() if rs.created_at else None,
@@ -85,6 +90,17 @@ def set_default(rs_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404)
     db.query(RuleSet).filter(RuleSet.rule_type == rs.rule_type, RuleSet.is_default == True).update({"is_default": False})
     rs.is_default = True
+    db.commit()
+    db.refresh(rs)
+    return ruleset_to_dict(rs)
+
+
+@router.patch("/{rs_id}/set-shown")
+def set_shown(rs_id: int, body: SetShownRequest, db: Session = Depends(get_db)):
+    rs = db.get(RuleSet, rs_id)
+    if not rs:
+        raise HTTPException(404)
+    rs.is_shown = body.is_shown
     db.commit()
     db.refresh(rs)
     return ruleset_to_dict(rs)

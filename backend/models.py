@@ -49,6 +49,7 @@ class RuleSet(Base):
     rule_type: Mapped[str] = mapped_column(String(20), default="generation")
     card_version: Mapped[str] = mapped_column(String(10), default="base")  # base/v1/v2/v3
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_shown: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

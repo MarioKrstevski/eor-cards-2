@@ -15,7 +15,11 @@ from backend.services.generator import strip_card_html, regenerate_single_card, 
 from backend.services.ai_utils import response_text
 from backend.services.card_ops import assign_note_ids, score_new_cards
 from backend.services.manual_card_parser import parse_pasted_cards
-from backend.config import ANTHROPIC_API_KEY, DEFAULT_MODEL, compute_cost, resolve_model, effort_kwargs, anthropic_model
+from backend.services.llm import complete_text
+from backend.config import (
+    ANTHROPIC_API_KEY, DEFAULT_MODEL, DEFAULT_PROCESSING_MODEL,
+    compute_cost, resolve_model, effort_kwargs, anthropic_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +99,54 @@ _CORRECTNESS_FIELDS = {
 
 def _correctness_fields(card_version: str):
     return _CORRECTNESS_FIELDS.get(card_version, ("correctness_score", "correctness"))
+
+
+# ── Reword a highlighted snippet ──────────────────────────────────────────────
+_REWORD_SYSTEM = (
+    "You rephrase a highlighted snippet from a medical flashcard. Rewrite ONLY the "
+    "given snippet into clean, neutral clinical language. Preserve the exact medical "
+    "meaning and every number, dose, unit, and technical term. Do NOT add or remove "
+    "information. Return ONLY the reworded snippet as plain text — no quotes, no "
+    "markup, no explanation, and no leading or trailing whitespace."
+)
+
+
+class RewordRequest(BaseModel):
+    text: str            # full plain card text, for context
+    snippet: str         # exact substring to rephrase
+    model: Optional[str] = None
+
+
+def _strip_wrapping_quotes(s: str) -> str:
+    s = s.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"', "“", "”"):
+        s = s[1:-1].strip()
+    return s
+
+
+@router.post("/reword")
+def reword_snippet(body: RewordRequest):
+    """Stateless: rephrase a highlighted snippet using its full card text as context.
+    Does not read or write the DB (no usage logged — no session here)."""
+    snippet = (body.snippet or "").strip()
+    if not snippet:
+        raise HTTPException(400, "No snippet provided to reword")
+    # Haiku by default; coerce any Gemini selection to Anthropic (this path is Claude-only).
+    model = anthropic_model(body.model or DEFAULT_PROCESSING_MODEL)
+    user = (
+        "Full card text (context, do not rewrite this whole thing):\n"
+        f"{body.text}\n\n"
+        "Rephrase ONLY this snippet:\n"
+        f"{snippet}"
+    )
+    text, _usage, _stop = complete_text(
+        model, _REWORD_SYSTEM, user, temperature=0, max_tokens=1024,
+    )
+    reworded = _strip_wrapping_quotes(text or "")
+    if not reworded:
+        # Model returned nothing usable — fall back to the original snippet.
+        reworded = snippet
+    return {"reworded": reworded}
 
 
 def _write_correctness(card: "Card", card_version: str, passed, corr) -> None:
