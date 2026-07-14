@@ -122,6 +122,7 @@ def _migrate_db():
             "ALTER TABLE cards ADD COLUMN correctness_v2 TEXT",
             "ALTER TABLE cards ADD COLUMN correctness_v3 TEXT",
             "ALTER TABLE rule_sets ADD COLUMN card_version VARCHAR(10) NOT NULL DEFAULT 'base'",
+            "ALTER TABLE rule_sets ADD COLUMN is_shown BOOLEAN NOT NULL DEFAULT 1",
             "ALTER TABLE section_images ADD COLUMN intended_position VARCHAR(10)",
             "ALTER TABLE sections ADD COLUMN section_status VARCHAR(20) DEFAULT 'normal'",
             "ALTER TABLE sections ADD COLUMN is_done BOOLEAN NOT NULL DEFAULT 0",
