@@ -503,6 +503,19 @@ export async function rewordSnippet(
   return res.data;
 }
 
+// Condense a card's front (Haiku), preserving clozes and bold. Returns the
+// original with changed=false when tightening was unsafe or a no-op.
+export async function tightenCard(
+  front_html: string,
+  model?: string
+): Promise<{ front_html: string; changed: boolean }> {
+  const res = await http.post<{ front_html: string; changed: boolean }>('/cards/tighten', {
+    front_html,
+    model,
+  });
+  return res.data;
+}
+
 export async function regenerateCardPreview(
   id: number,
   params: { model: string; prompt?: string; card_version?: string }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Card } from '../types';
 import { useSettings } from '../context/SettingsContext';
-import { rewordSnippet } from '../api';
+import { rewordSnippet, tightenCard } from '../api';
 
 type CardVersion = 'base' | 'v1' | 'v2' | 'v3';
 
@@ -14,15 +14,89 @@ function frontFor(card: Card, ver: CardVersion): string {
   return card.front_html ?? '';
 }
 
+// Read the extra (footer) for the active version — same independence rule.
+function extraFor(card: Card, ver: CardVersion): string {
+  if (ver === 'v1') return card.extra_v1 ?? '';
+  if (ver === 'v2') return card.extra_v2 ?? '';
+  if (ver === 'v3') return card.extra_v3 ?? '';
+  return card.extra ?? '';
+}
+
 // Move a trailing unit OUTSIDE the cloze: `{{c1::20 years}}` → `{{c1::20}} years`.
-// Only fires when the value ends in a digit and is followed by a known unit.
-const UNIT = '(?:weeks?|days?|hours?|months?|years?|minutes?|mins?|mg|mcg|kg|mL|L|mmHg|bpm|%|cm|mm|units?)';
-const UNITS_OUT_RE = new RegExp(
-  `\\{\\{c(\\d+)::([^}]*?\\d)\\s+(${UNIT})\\}\\}`,
-  'gi'
-);
-export function unitsOut(text: string): string {
-  return text.replace(UNITS_OUT_RE, (_m, c: string, value: string, unit: string) => `{{c${c}::${value}}} ${unit}`);
+// Move a unit that sits INSIDE a cloze to just outside it — no unit list needed.
+// Rule: keep the leading numeric value clozed, push everything from the first
+// letter onward OUT of the cloze span entirely (not just out of the {{ }}).
+//   {{c1::20 weeks}}    -> {{c1::20}} weeks
+//   {{c1::120/80 mmHg}} -> {{c1::120/80}} mmHg
+//   {{c1::20years}}     -> {{c1::20}}years
+// No-ops when the cloze has no leading number (e.g. "first trimester", "Rh status").
+const CLOZE_SPAN_RE =
+  /<span style="color:#1f77b4"><b>\{\{c\d+::([\s\S]*?)\}\}<\/b><\/span>|\{\{c\d+::([\s\S]*?)\}\}/g;
+
+function splitLeadingValue(body: string): { value: string; rest: string } | null {
+  const letter = body.match(/[A-Za-z]/);
+  if (!letter || letter.index === undefined) return null; // nothing to push out
+  const prefix = body.slice(0, letter.index);
+  if (!/\d/.test(prefix)) return null;                    // no number → not a value+unit cloze
+  const value = prefix.replace(/\s+$/, '');               // keep the number, drop its trailing space
+  return { value, rest: body.slice(value.length) };       // rest keeps the space + unit
+}
+
+// Operates on the serialized front_html, moving the unit fully outside the
+// styled cloze span so it renders as plain text (fixes the markup-mangling bug).
+export function unitsOut(frontHtml: string): string {
+  return frontHtml.replace(CLOZE_SPAN_RE, (whole, styledBody?: string, bareBody?: string) => {
+    const styled = styledBody !== undefined;
+    const body = styled ? styledBody : (bareBody as string);
+    const split = splitLeadingValue(body);
+    if (!split) return whole;
+    const cloze = styled
+      ? `<span style="color:#1f77b4"><b>{{c1::${split.value}}}</b></span>`
+      : `{{c1::${split.value}}}`;
+    return cloze + split.rest;
+  });
+}
+
+// ── Clean (deterministic artifact fixes) ──────────────────────────────────────
+// Fixes generation artifacts in a stored front/extra HTML string:
+//   **markdown bold**      → <b>HTML bold</b>
+//   em-dashes / `--`       → plain hyphen (` — ` → ` - `)
+//   lone `|` sentinels     → removed (leading/trailing/own-line footer artifact)
+//   `* ` bullet markers    → `• `
+//   bare {{c1::..}} clozes → the styled span form
+// Conservative: mid-sentence pipes and unpaired `**` are left untouched.
+
+const STYLED_CLOZE_RE = /<span style="color:#1f77b4"><b>\{\{c\d+::[\s\S]*?\}\}<\/b><\/span>/g;
+
+export function cleanFront(html: string): string {
+  let out = html;
+  // Markdown bold → HTML bold.
+  out = out.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  // Em-dashes and double hyphens → plain hyphen (spaced form keeps its spaces).
+  out = out.replace(/ — /g, ' - ');
+  out = out.replace(/—|--/g, '-');
+  // Lone pipe sentinels: leading, trailing, or on a line of their own.
+  out = out.replace(/^\s*\|\s*/, '');
+  out = out.replace(/\s*\|\s*$/, '');
+  out = out.replace(/\n[ \t]*\|[ \t]*\n/g, '\n');
+  // `* ` bullet markers → `• ` (at start of string / line / after <br>).
+  out = out.replace(/(^|\n|<br\s*\/?>)[ \t]*\*[ \t]+/g, '$1• ');
+  // Bare clozes → styled span form (already-wrapped ones pass through).
+  out = out.replace(CLOZE_SPAN_RE, (whole, styledBody?: string, bareBody?: string) =>
+    styledBody !== undefined
+      ? whole
+      : `<span style="color:#1f77b4"><b>{{c1::${bareBody}}}</b></span>`
+  );
+  return out;
+}
+
+// True when cleanFront would change anything — gates the Clean button.
+export function needsClean(html: string): boolean {
+  if (/\*\*[^*]+\*\*/.test(html)) return true; // markdown bold
+  if (/—|--/.test(html)) return true; // em-dash / double hyphen
+  if (/^\s*\|/.test(html) || /\|\s*$/.test(html) || /\n[ \t]*\|[ \t]*\n/.test(html)) return true; // lone pipes
+  if (/(^|\n|<br\s*\/?>)[ \t]*\*[ \t]+/.test(html)) return true; // * bullets
+  return /\{\{c\d+::/.test(html.replace(STYLED_CLOZE_RE, '')); // bare unwrapped cloze
 }
 
 // ── Editor <-> stored-HTML conversion ─────────────────────────────────────────
@@ -130,6 +204,11 @@ function frontPatchKey(ver: CardVersion): string {
   return ver === 'v1' ? 'front_html_v1' : ver === 'v2' ? 'front_html_v2' : ver === 'v3' ? 'front_html_v3' : 'front_html';
 }
 
+// The correct patch key for the active version's extra column.
+function extraPatchKey(ver: CardVersion): string {
+  return ver === 'v1' ? 'extra_v1' : ver === 'v2' ? 'extra_v2' : ver === 'v3' ? 'extra_v3' : 'extra';
+}
+
 // ── Selection / DOM helpers ───────────────────────────────────────────────────
 
 // The nearest ancestor <b> (that is NOT a cloze span) of a node, bounded by the
@@ -189,27 +268,40 @@ function rangeHasCloze(range: Range, root: HTMLElement): HTMLElement | null {
 
 type BoldMode = 'bold' | 'unbold';
 type ClozeMode = 'cloze' | 'uncloze';
+type EditorTab = 'front' | 'extra';
 
 export default function CardEditPopup({ card, onSave, onRegenerate, onClose }: CardEditPopupProps) {
-  const { activeCardVersion } = useSettings();
+  const { activeCardVersion, selectedModel } = useSettings();
   const ver = activeCardVersion as CardVersion;
+  const [tab, setTab] = useState<EditorTab>('front');
   const [hasSelection, setHasSelection] = useState(false);
   const [rewording, setRewording] = useState(false);
+  const [tightening, setTightening] = useState(false);
+  const [tightenNoChange, setTightenNoChange] = useState(false);
   const [saved, setSaved] = useState(false);
   const [boldMode, setBoldMode] = useState<BoldMode>('bold');
   const [clozeMode, setClozeMode] = useState<ClozeMode>('cloze');
   const [boldEnabled, setBoldEnabled] = useState(false);
-  const editorRef = useRef<HTMLDivElement>(null);
+  const [frontCleanable, setFrontCleanable] = useState(false);
+  const [extraCleanable, setExtraCleanable] = useState(false);
+  const [anchored, setAnchored] = useState(false);
+  const editorRef = useRef<HTMLDivElement>(null); // front editor
+  const extraRef = useRef<HTMLDivElement>(null);  // extra (footer) editor
 
-  // Load the draft into the editor when the target card or active version
+  // Load the draft into the editors when the target card or active version
   // changes (never on background refresh mid-edit — id/version are stable).
   useEffect(() => {
     const el = editorRef.current;
     if (el) el.innerHTML = toEditorHtml(frontFor(card, ver));
+    const ex = extraRef.current;
+    if (ex) ex.innerHTML = toEditorHtml(extraFor(card, ver));
+    setTab('front');
     setHasSelection(false);
     setBoldMode('bold');
     setClozeMode('cloze');
     setBoldEnabled(false);
+    setTightenNoChange(false);
+    refreshContentState();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card.id, ver]);
 
@@ -219,14 +311,25 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onClose }: C
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // Which of the two editors (front/extra) contains a node, if either. Lets the
+  // selection plumbing work regardless of the active tab (no stale-closure risk
+  // in the document-level selectionchange listener).
+  function editorRootFor(node: Node): HTMLElement | null {
+    const fr = editorRef.current;
+    if (fr && fr.contains(node)) return fr;
+    const ex = extraRef.current;
+    if (ex && ex.contains(node)) return ex;
+    return null;
+  }
+
   // Recompute button labels/state from the live selection, but only when the
-  // selection is inside our editor.
+  // selection is inside one of our editors.
   function refreshSelectionState() {
-    const root = editorRef.current;
     const sel = window.getSelection();
-    if (!root || !sel || sel.rangeCount === 0) { setHasSelection(false); return; }
+    if (!sel || sel.rangeCount === 0) { setHasSelection(false); return; }
     const range = sel.getRangeAt(0);
-    if (!root.contains(range.commonAncestorContainer)) return; // selection elsewhere
+    const root = editorRootFor(range.commonAncestorContainer);
+    if (!root) return; // selection elsewhere
 
     const collapsed = range.collapsed;
     setHasSelection(!collapsed);
@@ -253,21 +356,34 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onClose }: C
     return editorRef.current?.textContent ?? '';
   }
 
-  // Get the active range if it lives inside the editor.
-  function editorRange(): Range | null {
-    const root = editorRef.current;
+  // Get the active range if it lives inside one of the editors (with its root).
+  function editorRange(): { root: HTMLElement; range: Range } | null {
     const sel = window.getSelection();
-    if (!root || !sel || sel.rangeCount === 0) return null;
+    if (!sel || sel.rangeCount === 0) return null;
     const range = sel.getRangeAt(0);
-    if (!root.contains(range.commonAncestorContainer)) return null;
-    return range;
+    const root = editorRootFor(range.commonAncestorContainer);
+    if (!root) return null;
+    return { root, range };
+  }
+
+  // Recompute content-derived button state: Clean gating per editor + whether
+  // the front already carries the section-heading anchor.
+  function refreshContentState() {
+    const fr = editorRef.current;
+    if (fr) {
+      setFrontCleanable(needsClean(fromEditorHtml(fr)));
+      const heading = (card.section_heading ?? '').trim();
+      setAnchored(!!heading && (fr.textContent ?? '').toLowerCase().includes(heading.toLowerCase()));
+    }
+    const ex = extraRef.current;
+    if (ex) setExtraCleanable(needsClean(fromEditorHtml(ex)));
   }
 
   // ── Bold / Unbold ───────────────────────────────────────────────────────────
   function handleBold() {
-    const root = editorRef.current;
-    const range = editorRange();
-    if (!root || !range || range.collapsed) return;
+    const er = editorRange();
+    if (!er || er.range.collapsed) return;
+    const { root, range } = er;
     if (rangeHasBold(range, root)) unboldRange(range, root);
     else boldRange(range, root);
     refreshSelectionState();
@@ -367,9 +483,9 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onClose }: C
 
   // ── Cloze / Uncloze ───────────────────────────────────────────────────────────
   function handleCloze() {
-    const root = editorRef.current;
-    const range = editorRange();
-    if (!root || !range) return;
+    const er = editorRange();
+    if (!er) return;
+    const { root, range } = er;
 
     const existing = rangeHasCloze(range, root);
     if (existing) {
@@ -398,8 +514,9 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onClose }: C
 
   // ── Reword ────────────────────────────────────────────────────────────────────
   async function handleReword() {
-    const range = editorRange();
-    if (!range || range.collapsed) return;
+    const er = editorRange();
+    if (!er || er.range.collapsed) return;
+    const { root, range } = er;
     const snippet = range.toString();
     if (!snippet.trim()) return;
     setRewording(true);
@@ -407,12 +524,13 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onClose }: C
       const { reworded } = await rewordSnippet(editorText(), snippet);
       range.deleteContents();
       range.insertNode(document.createTextNode(reworded));
-      normalize(editorRef.current!);
+      normalize(root);
     } catch {
       /* leave the text untouched on failure */
     } finally {
       setRewording(false);
       refreshSelectionState();
+      refreshContentState();
     }
   }
 
@@ -424,15 +542,73 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onClose }: C
     const stored = fromEditorHtml(root);
     root.innerHTML = toEditorHtml(unitsOut(stored));
     refreshSelectionState();
+    refreshContentState();
+  }
+
+  // ── Add anchor ────────────────────────────────────────────────────────────────
+  // Deterministic: prepend a bold "<Section heading>: " label to the front unless
+  // the heading already appears in the card text (case-insensitive). No AI.
+  function handleAddAnchor() {
+    const root = editorRef.current;
+    const heading = (card.section_heading ?? '').trim();
+    if (!root || !heading) return;
+    if ((root.textContent ?? '').toLowerCase().includes(heading.toLowerCase())) return;
+    const stored = fromEditorHtml(root);
+    root.innerHTML = toEditorHtml(`<b>${escapeHtml(heading)}:</b> ${stored}`);
+    refreshSelectionState();
+    refreshContentState();
+  }
+
+  // ── Clean ─────────────────────────────────────────────────────────────────────
+  // Deterministic artifact fixes on the active tab's editor (see cleanFront).
+  function handleClean() {
+    const root = tab === 'extra' ? extraRef.current : editorRef.current;
+    if (!root) return;
+    root.innerHTML = toEditorHtml(cleanFront(fromEditorHtml(root)));
+    refreshSelectionState();
+    refreshContentState();
+  }
+
+  // ── Tighten ───────────────────────────────────────────────────────────────────
+  // Haiku condenses the whole front (clozes/bold preserved). No selection needed.
+  async function handleTighten() {
+    const root = editorRef.current;
+    if (!root || tightening) return;
+    setTightening(true);
+    try {
+      const res = await tightenCard(fromEditorHtml(root), selectedModel);
+      if (res.changed) {
+        root.innerHTML = toEditorHtml(res.front_html);
+      } else {
+        setTightenNoChange(true);
+        setTimeout(() => setTightenNoChange(false), 1500);
+      }
+    } catch {
+      /* leave the text untouched on failure */
+    } finally {
+      setTightening(false);
+      refreshSelectionState();
+      refreshContentState();
+    }
   }
 
   // ── Save ──────────────────────────────────────────────────────────────────────
+  // Both editors stay mounted (the inactive tab is just hidden), so we always
+  // persist both current serialized values for the active version.
   async function handleSave() {
     const root = editorRef.current;
-    if (!root) return;
-    await onSave(card.id, { [frontPatchKey(ver)]: fromEditorHtml(root) });
+    const ex = extraRef.current;
+    if (!root || !ex) return;
+    const extraVal = fromEditorHtml(ex);
+    await onSave(card.id, {
+      [frontPatchKey(ver)]: fromEditorHtml(root),
+      [extraPatchKey(ver)]: extraVal.trim() ? extraVal : null,
+    });
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
+    // Persist first, then close (deselects + hides the popup). Only reached on
+    // a successful save — a throw above skips this.
+    onClose();
   }
 
   // ── Small DOM utilities ─────────────────────────────────────────────────────
@@ -469,17 +645,40 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onClose }: C
       </div>
 
       <div className="p-3 flex flex-col gap-2.5 overflow-auto">
-        {/* WYSIWYG editor: bold shows bold, clozes show as blue-bold terms. */}
+        {/* WYSIWYG editors: bold shows bold, clozes show as blue-bold terms.
+            Both stay mounted; the tab switch just hides the inactive one so
+            drafts survive tab flips and Save can serialize both. */}
         <div>
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Front</p>
+          <div className="flex items-center gap-1 mb-1">
+            {(['front', 'extra'] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => { setTab(t); refreshContentState(); }}
+                className={`px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide rounded transition-colors duration-150 ${
+                  tab === t ? 'bg-gray-900 text-white' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {t === 'front' ? 'Front' : 'Extra'}
+              </button>
+            ))}
+          </div>
           <div
             ref={editorRef}
             contentEditable
             suppressContentEditableWarning
             spellCheck={false}
-            onMouseUp={refreshSelectionState}
-            onKeyUp={refreshSelectionState}
-            className="w-full min-h-[120px] text-sm leading-relaxed text-gray-800 border border-gray-200 rounded-lg px-2.5 py-2 whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
+            onMouseUp={() => { refreshSelectionState(); refreshContentState(); }}
+            onKeyUp={() => { refreshSelectionState(); refreshContentState(); }}
+            className={`${tab === 'front' ? '' : 'hidden '}w-full min-h-[120px] text-sm leading-relaxed text-gray-800 border border-gray-200 rounded-lg px-2.5 py-2 whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent`}
+          />
+          <div
+            ref={extraRef}
+            contentEditable
+            suppressContentEditableWarning
+            spellCheck={false}
+            onMouseUp={() => { refreshSelectionState(); refreshContentState(); }}
+            onKeyUp={() => { refreshSelectionState(); refreshContentState(); }}
+            className={`${tab === 'extra' ? '' : 'hidden '}w-full min-h-[120px] text-sm leading-relaxed text-gray-800 border border-gray-200 rounded-lg px-2.5 py-2 whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent`}
           />
         </div>
 
@@ -492,37 +691,74 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onClose }: C
           >
             {boldMode === 'unbold' ? 'Unbold' : 'Bold'}
           </button>
+          {tab === 'front' && (
+            <>
+              <button
+                onClick={handleCloze}
+                disabled={clozeMode === 'cloze' && !hasSelection}
+                title={clozeMode === 'uncloze' ? 'Remove the cloze from the selection' : 'Cloze the selection'}
+                className="px-2.5 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+              >
+                {clozeMode === 'uncloze' ? 'Uncloze' : 'Cloze'}
+              </button>
+              <button
+                onClick={handleReword}
+                disabled={!hasSelection || rewording}
+                title={hasSelection ? 'Rephrase the selected text' : 'Select text to reword'}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+              >
+                {rewording && <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                Reword
+              </button>
+              <button
+                onClick={handleUnitsOut}
+                title="Move a trailing unit outside the cloze, e.g. {{c1::20 years}} → {{c1::20}} years."
+                className="px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+              >
+                Units out
+              </button>
+              <button
+                onClick={handleAddAnchor}
+                disabled={!(card.section_heading ?? '').trim() || anchored}
+                title={
+                  anchored
+                    ? 'The section heading is already in the card'
+                    : `Prepend "${(card.section_heading ?? '').trim()}:" as a bold anchor`
+                }
+                className="px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+              >
+                Add anchor
+              </button>
+            </>
+          )}
           <button
-            onClick={handleCloze}
-            disabled={clozeMode === 'cloze' && !hasSelection}
-            title={clozeMode === 'uncloze' ? 'Remove the cloze from the selection' : 'Cloze the selection'}
-            className="px-2.5 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+            onClick={handleClean}
+            disabled={!(tab === 'extra' ? extraCleanable : frontCleanable)}
+            title="Fix **markdown bold**, em-dashes/--, stray | markers, * bullets, and bare {{c1::..}} clozes"
+            className="px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
           >
-            {clozeMode === 'uncloze' ? 'Uncloze' : 'Cloze'}
+            Clean
           </button>
-          <button
-            onClick={handleReword}
-            disabled={!hasSelection || rewording}
-            title={hasSelection ? 'Rephrase the selected text' : 'Select text to reword'}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
-          >
-            {rewording && <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-            Reword
-          </button>
-          <button
-            onClick={handleUnitsOut}
-            title="Move a trailing unit outside the cloze, e.g. {{c1::20 years}} → {{c1::20}} years."
-            className="px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
-          >
-            Units out
-          </button>
-          <button
-            onClick={() => onRegenerate(card)}
-            title="Regenerate this card with a prompt"
-            className="px-2.5 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
-          >
-            Regenerate
-          </button>
+          {tab === 'front' && (
+            <>
+              <button
+                onClick={handleTighten}
+                disabled={tightening}
+                title="Condense the whole front with AI (clozes and bold preserved)"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+              >
+                {tightening && <span className="inline-block w-3 h-3 border-2 border-blue-700 border-t-transparent rounded-full animate-spin" />}
+                {tightenNoChange ? 'No change' : 'Tighten'}
+              </button>
+              <button
+                onClick={() => onRegenerate(card)}
+                title="Regenerate this card with a prompt"
+                className="px-2.5 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
+              >
+                Regenerate
+              </button>
+            </>
+          )}
           <button
             onClick={handleSave}
             className="ml-auto px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors duration-150"

@@ -117,9 +117,12 @@ interface EditableCellProps {
   onNavigate: (dir: 'up' | 'down' | 'left' | 'right') => void;
   multiline?: boolean;
   renderDisplay?: (val: string) => React.ReactNode;
+  // When set, double-click calls this instead of entering the inline textarea
+  // edit (used by the front column to open the right-side edit popup).
+  onDoubleClickOverride?: () => void;
 }
 
-function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, renderDisplay }: EditableCellProps) {
+function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, renderDisplay, onDoubleClickOverride }: EditableCellProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [localVal, setLocalVal] = useState(value);
   // Anchor (viewport coords) for the floating multiline edit box, captured when
@@ -198,7 +201,7 @@ function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, 
       tabIndex={0}
       className="cursor-default outline-none w-full h-full min-h-[1.5em]"
       onClick={() => onSelect(cellId)}
-      onDoubleClick={startEdit}
+      onDoubleClick={onDoubleClickOverride ?? startEdit}
       onKeyDown={(e) => {
         if (e.key === 'Enter') { e.preventDefault(); startEdit(); }
         if (e.key === 'ArrowUp') { e.preventDefault(); onNavigate('up'); }
@@ -1163,6 +1166,8 @@ export default function CardsPanel({
 
   // ── Action error ─────────────────────────────────────────────────────────
   const [actionError, setActionError] = useState<string | null>(null);
+  // Brief success confirmation (e.g. after rebuilding footers).
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   // ── View mode ────────────────────────────────────────────────────────────
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
@@ -1633,6 +1638,9 @@ export default function CardsPanel({
               onSelect={handleCellSelect}
               onNavigate={(dir) => handleCellNavigate(row.index, 'front_html', dir)}
               multiline
+              // Double-click the front cell opens the right-side edit popup by
+              // selecting only this card (selectedIds.size === 1 renders it).
+              onDoubleClickOverride={() => setSelectedIds(new Set([card.id]))}
               renderDisplay={(v) => {
                 const histCount = regenHistory[card.id]?.length ?? 0;
                 return (
@@ -2196,7 +2204,16 @@ export default function CardsPanel({
   const [splitCards, setSplitCards] = useState<Array<{ front_html: string; extra: string | null; tags: string[] }>>([]);
   const splitPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => () => { if (splitPollRef.current) clearInterval(splitPollRef.current); }, []);
-  useEffect(() => { if (showBulkRegenModal) setRegenMode('recreate'); }, [showBulkRegenModal]);
+  // Mode to apply on the next modal open. Direct Split/Combine buttons set this
+  // to pre-select the mode; a plain open (Actions → Regenerate) leaves it null
+  // and falls back to 'recreate'.
+  const pendingRegenModeRef = useRef<'recreate' | 'split' | 'combine' | null>(null);
+  useEffect(() => {
+    if (showBulkRegenModal) {
+      setRegenMode(pendingRegenModeRef.current ?? 'recreate');
+      pendingRegenModeRef.current = null;
+    }
+  }, [showBulkRegenModal]);
 
   // Kick off a split as an unmarked, in-place fix batch on the single selected card.
   const handleSplitStart = useCallback(async () => {
@@ -2577,6 +2594,77 @@ export default function CardsPanel({
     setShowBulkRegenModal(true);
   }, []);
 
+  // Thin entry points that open the SAME bulk-regenerate modal with a mode
+  // pre-selected. The reset effect reads pendingRegenModeRef on open, so we set
+  // it before flipping the modal on. Split needs exactly 1 selected card; combine
+  // needs 2+ — the modal's own mode buttons enforce this too.
+  const doRegenWithMode = useCallback((mode: 'split' | 'combine') => {
+    setBulkRegenScope('selected');
+    pendingRegenModeRef.current = mode;
+    setShowBulkRegenModal(true);
+  }, []);
+
+  // ── Rebuild sibling footers (deterministic, no AI) ───────────────────────
+  // Reduce a card's front_html to readable plain text: clozes (styled span form
+  // or bare {{c1::term}}) collapse to just their term, then all HTML is stripped.
+  const cleanedFrontText = useCallback((front: string): string => {
+    const deClozed = front
+      // styled cloze: <span ...><b>{{c1::term}}</b></span> (b optional) → term
+      .replace(/(?:<b>)?<span[^>]*>\{\{c\d+::([^}]+)\}\}<\/span>(?:<\/b>)?/g, '$1')
+      // bare cloze {{c1::term::hint}} → term (drop optional hint)
+      .replace(/\{\{c\d+::([^}:]+)(?:::[^}]*)?\}\}/g, '$1');
+    return stripHtml(deClozed).replace(/\s+/g, ' ').trim();
+  }, []);
+
+  // If every selected card's front opens with the same bold label (e.g.
+  // "<b>Risk factor:</b> …"), build an "Other risk factors:" style label from it.
+  // Otherwise fall back to a generic label.
+  const deriveFooterLabel = useCallback((fronts: string[]): string => {
+    const GENERIC = 'Other items in this set:';
+    if (fronts.length === 0) return GENERIC;
+    const labelOf = (front: string): string | null => {
+      const m = front.match(/^\s*<b>\s*([^<:]+?)\s*:?\s*<\/b>/i);
+      return m ? m[1].trim().toLowerCase() : null;
+    };
+    const first = labelOf(fronts[0]);
+    if (!first || !fronts.every(f => labelOf(f) === first)) return GENERIC;
+    // Reasonable pluralization: "risk factor" → "risk factors", "diagnosis" → "diagnoses".
+    let plural = first;
+    if (/(s|x|z|ch|sh)$/i.test(plural)) plural = `${plural}es`;
+    else if (/[^aeiou]y$/i.test(plural)) plural = `${plural.slice(0, -1)}ies`;
+    else if (!/s$/i.test(plural)) plural = `${plural}s`;
+    const cap = plural.charAt(0).toUpperCase() + plural.slice(1);
+    return `Other ${cap}:`;
+  }, []);
+
+  const handleRebuildFooters = useCallback(async () => {
+    // Selected cards in current display order (by card_number).
+    const selected = cards.filter(c => selectedIds.has(c.id));
+    if (selected.length < 2) return;
+    const label = deriveFooterLabel(
+      selected.map(c => getFieldValue(c, 'front_html', activeCardVersion) || c.front_html || '')
+    );
+    // Pre-compute each card's one-line cleaned front for the active version.
+    const lines = selected.map(c => ({
+      id: c.id,
+      text: cleanedFrontText(getFieldValue(c, 'front_html', activeCardVersion) || c.front_html || ''),
+    }));
+    try {
+      await Promise.all(selected.map((c) => {
+        const others = lines.filter(l => l.id !== c.id && l.text);
+        const bullets = others.map(l => `• ${l.text}`).join('<br>');
+        const footer = `<b>${label}</b> ${bullets ? `<br>${bullets}` : ''}`.trim();
+        const patch = fieldPatch('extra', footer, activeCardVersion);
+        return updateCard(c.id, patch).then(() => {
+          setCards(prev => prev.map(pc => pc.id === c.id ? { ...pc, ...patch } as Card : pc));
+        });
+      }));
+      setActionNotice(`Rebuilt footers on ${selected.length} cards`);
+    } catch {
+      setActionError('Could not rebuild footers');
+    }
+  }, [cards, selectedIds, activeCardVersion, cleanedFrontText, deriveFooterLabel]);
+
   // ── Empty state ──────────────────────────────────────────────────────────
 
   const hasContext = sectionId != null || topicPath != null || (sectionIds != null && sectionIds.length > 0);
@@ -2817,6 +2905,39 @@ export default function CardsPanel({
               </button>
             );
           })()}
+
+          {/* Split / Combine — direct entry points into the bulk-regenerate modal,
+              count-aware: Split for exactly one card, Combine for two or more. */}
+          {selectedIds.size === 1 && (
+            <button
+              onClick={() => doRegenWithMode('split')}
+              className="px-2.5 py-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
+              title="Split this card into multiple focused cards"
+            >
+              Split
+            </button>
+          )}
+          {selectedIds.size > 1 && (
+            <button
+              onClick={() => doRegenWithMode('combine')}
+              className="px-2.5 py-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
+              title="Combine the selected cards into one"
+            >
+              Combine
+            </button>
+          )}
+
+          {/* Rebuild sibling footers — deterministic, no AI. Writes each selected
+              card an Extra listing the OTHER selected cards' fronts. */}
+          {selectedIds.size > 1 && (
+            <button
+              onClick={handleRebuildFooters}
+              className="px-2.5 py-1 text-xs font-medium text-sky-700 bg-sky-50 border border-sky-200 rounded-lg hover:bg-sky-100 transition-colors duration-150"
+              title="Set each selected card's Extra to a bulleted list of the other selected cards"
+            >
+              Rebuild footers
+            </button>
+          )}
 
           {/* Actions dropdown — groups less common actions */}
           <div className="relative">
@@ -3317,6 +3438,14 @@ export default function CardsPanel({
           title="Error"
           message={actionError}
           onClose={() => setActionError(null)}
+        />
+      )}
+
+      {actionNotice && (
+        <AlertModal
+          title="Done"
+          message={actionNotice}
+          onClose={() => setActionNotice(null)}
         />
       )}
 
