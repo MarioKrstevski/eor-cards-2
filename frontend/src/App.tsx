@@ -108,9 +108,11 @@ function AppInner() {
         <NavLink to="/library" className={navLinkClass}>
           Library
         </NavLink>
-        <NavLink to="/proposals" className={navLinkClass}>
-          Proposals
-        </NavLink>
+        {!simpleView && (
+          <NavLink to="/proposals" className={navLinkClass}>
+            Proposals
+          </NavLink>
+        )}
         <div className="flex-1" />
 
         {/* Card version toggle */}

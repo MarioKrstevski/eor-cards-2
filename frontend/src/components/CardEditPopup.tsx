@@ -196,6 +196,7 @@ interface CardEditPopupProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onSave: (id: number, patch: any) => void | Promise<void>;
   onRegenerate: (card: Card) => void;
+  onSplit?: () => void;
   onClose: () => void;
 }
 
@@ -270,7 +271,7 @@ type BoldMode = 'bold' | 'unbold';
 type ClozeMode = 'cloze' | 'uncloze';
 type EditorTab = 'front' | 'extra';
 
-export default function CardEditPopup({ card, onSave, onRegenerate, onClose }: CardEditPopupProps) {
+export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onClose }: CardEditPopupProps) {
   const { activeCardVersion, selectedModel } = useSettings();
   const ver = activeCardVersion as CardVersion;
   const [tab, setTab] = useState<EditorTab>('front');
@@ -757,6 +758,15 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onClose }: C
               >
                 Regenerate
               </button>
+              {onSplit && (
+                <button
+                  onClick={onSplit}
+                  title="Split this card into multiple focused cards"
+                  className="px-2.5 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
+                >
+                  Split
+                </button>
+              )}
             </>
           )}
           <button

@@ -237,7 +237,7 @@ function TopicNode({ node, depth, cardCounts, editMode, onRefresh, onDeleteReque
 // ─── Main Library Page ───────────────────────────────────────────────────────
 
 export default function LibraryPage() {
-  const { curriculumVersion, activeCardVersion } = useSettings();
+  const { curriculumVersion, activeCardVersion, simpleView } = useSettings();
   const [activeTab, setActiveTab] = useState<'topics' | 'documents' | 'rules' | 'sbs' | 'marks' | 'mapping' | 'presentations'>('topics');
 
   // Curriculum
@@ -611,12 +611,24 @@ export default function LibraryPage() {
 
   const sortedCurriculum = useMemo(() => sortTree(curriculum, topicSort), [curriculum, topicSort]);
 
+  // Tabs hidden in Simple view (advanced-only): Step-by-Step, Marks, Mapping, Presentations.
+  const visibleTabs = useMemo(() => {
+    const all = ['topics', 'documents', 'rules', 'sbs', 'marks', 'mapping', 'presentations'] as const;
+    const hidden = ['sbs', 'marks', 'mapping', 'presentations'];
+    return all.filter((tab) => !simpleView || !hidden.includes(tab));
+  }, [simpleView]);
+
+  // If the active tab gets hidden (Simple view toggled on), fall back to the first visible tab.
+  useEffect(() => {
+    if (!visibleTabs.includes(activeTab)) setActiveTab(visibleTabs[0]);
+  }, [visibleTabs, activeTab]);
+
   return (
     <div className="flex-1 overflow-auto bg-gray-50">
       <div className="max-w-6xl mx-auto px-6 py-6">
         {/* Tab bar */}
         <div className="flex items-center gap-1 mb-6 bg-white rounded-xl p-1 shadow-sm border border-gray-200 w-fit">
-          {(['topics', 'documents', 'rules', 'sbs', 'marks', 'mapping', 'presentations'] as const).map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}

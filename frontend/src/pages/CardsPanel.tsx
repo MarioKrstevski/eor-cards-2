@@ -61,6 +61,7 @@ import AnkifyModal from '../components/AnkifyModal';
 import CompareVersionsModal from '../components/CompareVersionsModal';
 import CreatePresentationModal from '../components/CreatePresentationModal';
 import CardEditPopup from '../components/CardEditPopup';
+import MultiCardEditPopup from '../components/MultiCardEditPopup';
 import SectionViewer from './SectionViewer';
 import { useSettings } from '../context/SettingsContext';
 
@@ -2737,6 +2738,7 @@ export default function CardsPanel({
       {/* Toolbar */}
       <div className="shrink-0 bg-white border-b border-gray-200 px-4 py-2 flex items-center gap-2 flex-wrap">
         {/* View toggle */}
+        {!simpleView && (
         <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden">
           <button
             onClick={() => setViewMode('table')}
@@ -2751,6 +2753,7 @@ export default function CardsPanel({
             Cards
           </button>
         </div>
+        )}
 
         {/* Refresh cards from DB (no full page reload) */}
         <button
@@ -2906,38 +2909,9 @@ export default function CardsPanel({
             );
           })()}
 
-          {/* Split / Combine — direct entry points into the bulk-regenerate modal,
-              count-aware: Split for exactly one card, Combine for two or more. */}
-          {selectedIds.size === 1 && (
-            <button
-              onClick={() => doRegenWithMode('split')}
-              className="px-2.5 py-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
-              title="Split this card into multiple focused cards"
-            >
-              Split
-            </button>
-          )}
-          {selectedIds.size > 1 && (
-            <button
-              onClick={() => doRegenWithMode('combine')}
-              className="px-2.5 py-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
-              title="Combine the selected cards into one"
-            >
-              Combine
-            </button>
-          )}
-
-          {/* Rebuild sibling footers — deterministic, no AI. Writes each selected
-              card an Extra listing the OTHER selected cards' fronts. */}
-          {selectedIds.size > 1 && (
-            <button
-              onClick={handleRebuildFooters}
-              className="px-2.5 py-1 text-xs font-medium text-sky-700 bg-sky-50 border border-sky-200 rounded-lg hover:bg-sky-100 transition-colors duration-150"
-              title="Set each selected card's Extra to a bulleted list of the other selected cards"
-            >
-              Rebuild footers
-            </button>
-          )}
+          {/* Split / Combine / Rebuild footers now live in the docked edit popups
+              (single-card vs multi-card), not the action bar. Handlers retained:
+              doRegenWithMode('split'|'combine') and handleRebuildFooters. */}
 
           {/* Actions dropdown — groups less common actions */}
           <div className="relative">
@@ -3184,7 +3158,7 @@ export default function CardsPanel({
       )}
 
       {/* Topic-level presentation button — shown whenever a topic is selected */}
-      {topicTreeId != null && selectedIds.size === 0 && (
+      {!simpleView && topicTreeId != null && selectedIds.size === 0 && (
         <div className="shrink-0 bg-gray-50 border-b border-gray-200 px-4 py-1.5 flex items-center gap-2">
           <span className="text-[10px] text-gray-400">Topic</span>
           <button
@@ -3792,8 +3766,9 @@ export default function CardsPanel({
         </div>
       )}
 
-      {/* Per-card edit popup — only when EXACTLY one card is selected. Docks to
-          the right of the viewport; represents that single card. */}
+      {/* Docked edit popup — right of the viewport. Its content follows the
+          selection count: single-card tools when exactly one is selected, the
+          multi-card panel (Combine / Rebuild footers) when two or more are. */}
       {selectedIds.size === 1 && (() => {
         const only = [...selectedIds][0];
         const card = filteredCards.find(c => c.id === only) ?? cards.find(c => c.id === only);
@@ -3803,10 +3778,19 @@ export default function CardsPanel({
             card={card}
             onSave={handleCellSave}
             onRegenerate={() => doRegen('selected')}
+            onSplit={() => doRegenWithMode('split')}
             onClose={() => setSelectedIds(new Set())}
           />
         );
       })()}
+      {selectedIds.size >= 2 && (
+        <MultiCardEditPopup
+          count={selectedIds.size}
+          onCombine={() => doRegenWithMode('combine')}
+          onRebuildFooters={handleRebuildFooters}
+          onClose={() => setSelectedIds(new Set())}
+        />
+      )}
 
       {bigEdit && (
         <BigEditModal
