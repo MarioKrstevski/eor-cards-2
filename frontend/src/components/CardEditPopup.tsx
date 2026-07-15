@@ -720,7 +720,7 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
               onClick={handleBold}
               disabled={!boldEnabled}
               title={boldMode === 'unbold' ? 'Remove bold from the selection' : 'Bold the selection'}
-              className="px-3 py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+              className="min-w-[84px] text-center px-3 py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
             >
               {boldMode === 'unbold' ? 'Unbold' : 'Bold'}
             </button>
@@ -730,7 +730,7 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
                   onClick={handleCloze}
                   disabled={clozeMode === 'cloze' && !hasSelection}
                   title={clozeMode === 'uncloze' ? 'Remove the cloze from the selection' : 'Cloze the selection'}
-                  className="px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+                  className="min-w-[84px] text-center px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
                 >
                   {clozeMode === 'uncloze' ? 'Uncloze' : 'Cloze'}
                 </button>
