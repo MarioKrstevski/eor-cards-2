@@ -737,7 +737,7 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
                 <button
                   onClick={handleUnitsOut}
                   title="Move a trailing unit outside the cloze, e.g. {{c1::20 years}} → {{c1::20}} years."
-                  className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+                  className="ml-4 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
                 >
                   Units out
                 </button>
@@ -747,7 +747,7 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
               onClick={handleClean}
               disabled={!(tab === 'extra' ? extraCleanable : frontCleanable)}
               title="Fix **markdown bold**, em-dashes/--, stray | markers, * bullets, and bare {{c1::..}} clozes"
-              className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+              className={`${tab === 'front' ? '' : 'ml-4 '}px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150`}
             >
               Clean
             </button>
