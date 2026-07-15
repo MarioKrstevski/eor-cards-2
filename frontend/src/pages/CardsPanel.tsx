@@ -3836,7 +3836,6 @@ export default function CardsPanel({
           <CardEditPopup
             card={card}
             onSave={handleCellSave}
-            onRegenerate={() => doRegen('selected')}
             onSplit={() => doRegenWithMode('split')}
             onDelete={() => setConfirmDeleteCardId(card.id)}
             onClose={() => setSelectedIds(new Set())}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Card } from '../types';
 import { useSettings } from '../context/SettingsContext';
-import { rewordSnippet } from '../api';
+import { rewordSnippet, regenerateCardPreview } from '../api';
 
 type CardVersion = 'base' | 'v1' | 'v2' | 'v3';
 
@@ -201,7 +201,6 @@ interface CardEditPopupProps {
   card: Card;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onSave: (id: number, patch: any) => void | Promise<void>;
-  onRegenerate: (card: Card) => void;
   onSplit?: () => void;
   onDelete?: () => void;
   onClose: () => void;
@@ -278,8 +277,8 @@ type BoldMode = 'bold' | 'unbold';
 type ClozeMode = 'cloze' | 'uncloze';
 type EditorTab = 'front' | 'extra';
 
-export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onDelete, onClose }: CardEditPopupProps) {
-  const { activeCardVersion } = useSettings();
+export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose }: CardEditPopupProps) {
+  const { activeCardVersion, selectedModel } = useSettings();
   const ver = activeCardVersion as CardVersion;
   const [tab, setTab] = useState<EditorTab>('front');
   const [hasSelection, setHasSelection] = useState(false);
@@ -290,6 +289,11 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
   const [guidedText, setGuidedText] = useState('');
   const capturedRangeRef = useRef<Range | null>(null);
   const guidedInputRef = useRef<HTMLInputElement>(null);
+  const [regenOpen, setRegenOpen] = useState(false);
+  const [regenPrompt, setRegenPrompt] = useState('');
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenError, setRegenError] = useState(false);
+  const regenInputRef = useRef<HTMLInputElement>(null);
   const [boldMode, setBoldMode] = useState<BoldMode>('bold');
   const [clozeMode, setClozeMode] = useState<ClozeMode>('cloze');
   const [boldEnabled, setBoldEnabled] = useState(false);
@@ -320,6 +324,9 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
     setGuidedOpen(false);
     setGuidedText('');
     capturedRangeRef.current = null;
+    setRegenOpen(false);
+    setRegenPrompt('');
+    setRegenError(false);
     undoStacks.current = { front: [], extra: [] };
     setUndoDepth({ front: 0, extra: 0 });
     refreshContentState();
@@ -635,6 +642,60 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
     capturedRangeRef.current = null;
   }
 
+  // ── Regenerate (inline, unsaved) ──────────────────────────────────────────────
+  // Clicking "Regenerate" in the Card group toggles an inline prompt row. On Go,
+  // the preview result is loaded into the editors with pushUndo so Undo works.
+  // Nothing is saved; the user reviews the result in the editor and hits Save.
+
+  function handleRegenOpen() {
+    setRegenError(false);
+    setRegenPrompt('');
+    setRegenOpen(true);
+    setTimeout(() => regenInputRef.current?.focus(), 0);
+  }
+
+  function handleRegenCancel() {
+    setRegenOpen(false);
+    setRegenPrompt('');
+    setRegenError(false);
+  }
+
+  async function handleRegenGo() {
+    setRegenerating(true);
+    setRegenError(false);
+    try {
+      const { front_html, extra } = await regenerateCardPreview(card.id, {
+        model: selectedModel,
+        prompt: regenPrompt.trim() || undefined,
+        card_version: ver,
+      });
+      // Load front into the front editor with undo support.
+      const frontEl = editorRef.current;
+      if (frontEl) {
+        pushUndo('front');
+        frontEl.innerHTML = toEditorHtml(front_html);
+      }
+      // Load extra only when the API returned a non-null value.
+      if (extra !== null) {
+        const extraEl = extraRef.current;
+        if (extraEl) {
+          pushUndo('extra');
+          extraEl.innerHTML = toEditorHtml(extra || '');
+        }
+      }
+      refreshSelectionState();
+      refreshContentState();
+      // Close the inline row and clear the prompt — result is now in the editor.
+      setRegenOpen(false);
+      setRegenPrompt('');
+    } catch {
+      setRegenError(true);
+      setTimeout(() => setRegenError(false), 3000);
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
   // ── Units out ─────────────────────────────────────────────────────────────────
   // Operate on the canonical stored string, then re-render into the editor.
   function handleUnitsOut() {
@@ -863,9 +924,10 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
             <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Card</span>
             <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={() => onRegenerate(card)}
-                title="Regenerate this card with a prompt"
-                className="px-3 py-2 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
+                onClick={handleRegenOpen}
+                disabled={regenOpen || regenerating}
+                title="Regenerate this card — result lands in the editor unsaved so you can review and Undo"
+                className="px-3 py-2 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
               >
                 Regenerate
               </button>
@@ -879,6 +941,41 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
                 </button>
               )}
             </div>
+            {regenOpen && (
+              <div className="flex items-center gap-2 mt-1">
+                <input
+                  ref={regenInputRef}
+                  type="text"
+                  value={regenPrompt}
+                  onChange={(e) => setRegenPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); handleRegenGo(); }
+                    if (e.key === 'Escape') { e.preventDefault(); handleRegenCancel(); }
+                  }}
+                  placeholder="How to regenerate? (optional guidance)"
+                  className="flex-1 min-w-0 px-3 py-1.5 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                />
+                <button
+                  onClick={handleRegenGo}
+                  disabled={regenerating}
+                  title="Run regenerate"
+                  className="relative inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+                >
+                  {regenerating && <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  Regenerate
+                </button>
+                <button
+                  onClick={handleRegenCancel}
+                  title="Cancel"
+                  className="px-2 py-1.5 text-sm font-medium text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+                >
+                  ×
+                </button>
+                {regenError && (
+                  <span className="text-xs text-red-600">Regenerate failed</span>
+                )}
+              </div>
+            )}
           </div>
         )}
 
