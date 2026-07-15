@@ -108,7 +108,10 @@ _REWORD_SYSTEM = (
     "Do NOT change, add, remove, or re-order any cloze deletion {{c1::...}} or any "
     "<b>...</b> / colored cloze span — keep every clozed term and bold term verbatim "
     "and in place. Preserve all clinical meaning, every number, dose, unit, and "
-    "technical term. Return ONLY the reworded snippet with its markup, no "
+    "technical term. Keep the rephrasing similar in LENGTH and SCOPE to the input — "
+    "do NOT expand a short phrase into a longer description, add new information, or "
+    "turn a single term into a definition; just say the same thing differently. "
+    "Return ONLY the reworded snippet with its markup, no "
     "quotes, no explanation, and no leading or trailing whitespace."
 )
 

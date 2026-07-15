@@ -267,6 +267,23 @@ export function clozeAncestor(node: Node | null, root: HTMLElement): HTMLElement
   return null;
 }
 
+// True only when the selection has prose to rephrase — some plain text OUTSIDE
+// any bold or cloze. If it's entirely one bold word, one cloze, or only
+// bold/cloze content, there's nothing to reword and Reword must skip (bold and
+// cloze terms are preserved, never rephrased).
+export function hasRewordableProse(range: Range, root: HTMLElement): boolean {
+  const sB = boldAncestor(range.startContainer, root);
+  const eB = boldAncestor(range.endContainer, root);
+  if (sB && sB === eB) return false; // entirely inside one bold
+  const sC = clozeAncestor(range.startContainer, root);
+  const eC = clozeAncestor(range.endContainer, root);
+  if (sC && sC === eC) return false; // entirely inside one cloze
+  const holder = document.createElement('div');
+  holder.appendChild(range.cloneContents());
+  holder.querySelectorAll('.cz, b, strong').forEach((el) => el.remove());
+  return (holder.textContent ?? '').trim().length > 0;
+}
+
 // Does [range] touch any bold (non-cloze) content? Used for BOLD/UNBOLD mode.
 export function rangeHasBold(range: Range, root: HTMLElement): boolean {
   // Endpoints inside a bold.
@@ -470,7 +487,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
   const [tab, setTab] = useState<EditorTab>('front');
   const [hasSelection, setHasSelection] = useState(false);
   const [rewording, setRewording] = useState(false);
-  const [rewordHint, setRewordHint] = useState(false);
+  const [rewordHint, setRewordHint] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [guidedOpen, setGuidedOpen] = useState(false);
   const [guidedText, setGuidedText] = useState('');
@@ -507,7 +524,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     setBoldMode('bold');
     setClozeMode('cloze');
     setBoldEnabled(false);
-    setRewordHint(false);
+    setRewordHint(null);
     setGuidedOpen(false);
     setGuidedText('');
     capturedRangeRef.current = null;
@@ -668,6 +685,13 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
   async function executeReword(range: Range, guidance?: string) {
     const root = editorRootFor(range.commonAncestorContainer);
     if (!root || range.collapsed || !range.toString().trim()) return;
+    // Bold and cloze terms are never reworded. If the selection is only a bold
+    // word or a cloze (no surrounding prose), there's nothing to rephrase — skip.
+    if (!hasRewordableProse(range, root)) {
+      setRewordHint('That selection is a bold/cloze term — nothing to reword.');
+      setTimeout(() => setRewordHint(null), 2500);
+      return;
+    }
 
     // Selection → stored HTML (clozes/bold intact).
     const holder = document.createElement('div');
@@ -679,14 +703,14 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     const leadWS = selText.match(/^\s*/)?.[0] ?? '';
     const trailWS = selText.match(/\s*$/)?.[0] ?? '';
 
-    setRewordHint(false);
+    setRewordHint(null);
     setRewording(true);
     try {
       const { reworded } = await rewordSnippet(editorText(), snippetHtml, undefined, guidance || undefined);
       // Safety: refuse a result that dropped or added a cloze.
       if (countClozes(reworded) !== countClozes(snippetHtml)) {
-        setRewordHint(true);
-        setTimeout(() => setRewordHint(false), 2000);
+        setRewordHint('Reword changed the clozes — left as-is.');
+        setTimeout(() => setRewordHint(null), 2000);
         return;
       }
       pushUndo('front');
@@ -720,6 +744,11 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
   function handleGuidedRewordOpen() {
     const er = editorRange();
     if (!er || er.range.collapsed) return;
+    if (!hasRewordableProse(er.range, er.root)) {
+      setRewordHint('That selection is a bold/cloze term — nothing to reword.');
+      setTimeout(() => setRewordHint(null), 2500);
+      return;
+    }
     capturedRangeRef.current = er.range.cloneRange();
     setGuidedText('');
     setGuidedOpen(true);
@@ -959,7 +988,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
                 <span className="absolute -top-1.5 -right-1.5 px-1 text-[9px] font-bold leading-tight rounded-full bg-violet-600 text-white shadow-sm">AI</span>
               </div>
               {rewordHint && (
-                <span className="text-xs text-amber-600">Reword changed the clozes — left as-is.</span>
+                <span className="text-xs text-amber-600">{rewordHint}</span>
               )}
             </div>
             {guidedOpen && (
