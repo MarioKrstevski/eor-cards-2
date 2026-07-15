@@ -126,7 +126,7 @@ export default function ClozeMiniEditor({ value, onChange, placeholder }: ClozeM
           onClick={handleCloze}
           disabled={!clozeEnabled}
           title={clozeMode === 'uncloze' ? 'Remove the cloze from the selection' : 'Cloze the selection'}
-          className="min-w-[64px] text-center px-2 py-1 text-[11px] font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+          className="min-w-[64px] text-center px-2 py-1 text-[11px] font-medium text-gray-700 bg-white border border-gray-200 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
         >
           {clozeMode === 'uncloze' ? 'Uncloze' : 'Cloze'}
         </button>

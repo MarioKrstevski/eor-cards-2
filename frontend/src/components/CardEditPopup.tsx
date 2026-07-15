@@ -855,7 +855,7 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
                   onClick={handleCloze}
                   disabled={clozeMode === 'cloze' && !hasSelection}
                   title={clozeMode === 'uncloze' ? 'Remove the cloze from the selection' : 'Cloze the selection'}
-                  className="min-w-[84px] text-center px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+                  className="min-w-[84px] text-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
                 >
                   {clozeMode === 'uncloze' ? 'Uncloze' : 'Cloze'}
                 </button>
@@ -889,16 +889,16 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
                   onClick={handleReword}
                   disabled={!hasSelection || rewording || guidedOpen}
                   title={hasSelection ? 'Rephrase the selected prose (clozes and bold preserved)' : 'Select text to reword'}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-l-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-r-0 border-gray-200 rounded-l-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
                 >
-                  {rewording && !guidedOpen && <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  {rewording && !guidedOpen && <span className="inline-block w-3.5 h-3.5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />}
                   Reword
                 </button>
                 <button
                   onClick={handleGuidedRewordOpen}
                   disabled={!hasSelection || rewording || guidedOpen}
                   title={hasSelection ? 'Guided reword — add an instruction for how to rephrase' : 'Select text to guided-reword'}
-                  className="px-2.5 py-2 text-sm font-bold italic text-white bg-blue-600 rounded-r-lg border-l border-blue-500 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+                  className="px-2.5 py-2 text-sm font-bold italic text-gray-700 bg-white border border-gray-200 rounded-r-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
                 >
                   g
                 </button>
@@ -920,15 +920,15 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
                     if (e.key === 'Escape') { e.preventDefault(); handleGuidedRewordCancel(); }
                   }}
                   placeholder="How should it be reworded? e.g. don't use a semicolon, make it flow"
-                  className="flex-1 min-w-0 px-3 py-1.5 text-sm border border-indigo-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  className="flex-1 min-w-0 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent"
                 />
                 <button
                   onClick={handleGuidedRewordGo}
                   disabled={rewording}
                   title="Apply guided reword"
-                  className="relative inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+                  className="relative inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
                 >
-                  {rewording && <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  {rewording && <span className="inline-block w-3.5 h-3.5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />}
                   Reword
                 </button>
                 <button
@@ -952,7 +952,7 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
                 onClick={handleRegenOpen}
                 disabled={regenOpen || regenerating}
                 title="Regenerate this card — result lands in the editor unsaved so you can review and Undo"
-                className="px-3 py-2 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
               >
                 Regenerate
               </button>
@@ -960,7 +960,7 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
                 <button
                   onClick={onSplit}
                   title="Split this card into multiple focused cards"
-                  className="px-3 py-2 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
+                  className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
                 >
                   Split
                 </button>
@@ -978,15 +978,15 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
                     if (e.key === 'Escape') { e.preventDefault(); handleRegenCancel(); }
                   }}
                   placeholder="How to regenerate? (optional guidance)"
-                  className="flex-1 min-w-0 px-3 py-1.5 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                  className="flex-1 min-w-0 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent"
                 />
                 <button
                   onClick={handleRegenGo}
                   disabled={regenerating}
                   title="Run regenerate"
-                  className="relative inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+                  className="relative inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
                 >
-                  {regenerating && <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  {regenerating && <span className="inline-block w-3.5 h-3.5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />}
                   Regenerate
                 </button>
                 <button
