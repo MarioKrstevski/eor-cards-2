@@ -240,6 +240,7 @@ function AppInner() {
 
 function AppRouter() {
   const location = useLocation();
+  const { simpleView } = useSettings();
   const isAnkiRoute = location.pathname.startsWith('/anki/');
   if (isAnkiRoute) {
     return <Routes><Route path="/anki/:slug" element={<AnkiPlayerPage />} /></Routes>;
@@ -247,7 +248,7 @@ function AppRouter() {
   return (
     <>
       <AppInner />
-      <HelpChat />
+      {!simpleView && <HelpChat />}
     </>
   );
 }
