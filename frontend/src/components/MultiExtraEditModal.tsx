@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Card } from '../types';
 import { renderClozeHtml } from '../pages/CardsPanel';
+import { toEditorHtml } from './CardEditPopup';
 
 interface MultiExtraEditModalProps {
   cards: Card[];
@@ -12,6 +13,71 @@ interface MultiExtraEditModalProps {
 
 type DisplayMode = 'extra-only' | 'front-and-extra';
 
+// Walk the editor DOM and return stored HTML, PRESERVING <br> literals.
+// Unlike fromEditorHtml (CardEditPopup), we do NOT convert <br> to \n, since
+// extra footers rely on literal <br> for line-breaks.
+//
+// Rules:
+//   .cz span      → <span style="color:#1f77b4"><b>{{c1::TERM[::HINT]}}</b></span>
+//   <b>/<strong>  → <b>…</b>
+//   <br>          → <br>  (PRESERVED — NOT converted to newline)
+//   <div>/<p>     → prefix <br> (except the very first block child, to avoid
+//                   a spurious leading <br>) + recurse inner content
+//   text node     → textContent
+//   other tags    → drop tag, keep inner text
+function serializeExtraNode(node: ChildNode, isFirstBlock?: boolean): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.textContent ?? '';
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) return '';
+
+  const el = node as HTMLElement;
+  const tag = el.tagName.toLowerCase();
+
+  // Cloze span → stored cloze markup.
+  if (el.classList.contains('cz')) {
+    const term = el.textContent ?? '';
+    const hint = el.getAttribute('data-hint') ?? '';
+    const body = hint ? `${term}::${hint}` : term;
+    return `<span style="color:#1f77b4"><b>{{c1::${body}}}</b></span>`;
+  }
+
+  // Recurse for inner content.
+  let inner = '';
+  el.childNodes.forEach((c) => { inner += serializeExtraNode(c); });
+
+  // Non-cloze bold.
+  if (tag === 'b' || tag === 'strong') {
+    return `<b>${inner}</b>`;
+  }
+
+  // Hard line-break — PRESERVE as <br>.
+  if (tag === 'br') return '<br>';
+
+  // Block elements the browser inserts when the user presses Enter.
+  // Prefix with <br> for all but the very first block child.
+  if (tag === 'div' || tag === 'p') {
+    const prefix = isFirstBlock ? '' : '<br>';
+    return prefix + inner;
+  }
+
+  // Any other tag: drop the wrapper, keep inner content.
+  return inner;
+}
+
+function serializeExtra(node: HTMLElement): string {
+  let out = '';
+  let blockIndex = 0;
+  node.childNodes.forEach((child) => {
+    const isBlock =
+      child.nodeType === Node.ELEMENT_NODE &&
+      ['div', 'p'].includes((child as HTMLElement).tagName.toLowerCase());
+    out += serializeExtraNode(child, isBlock && blockIndex === 0);
+    if (isBlock) blockIndex++;
+  });
+  return out;
+}
+
 export default function MultiExtraEditModal({
   cards,
   activeVersion,
@@ -20,7 +86,9 @@ export default function MultiExtraEditModal({
   onClose,
 }: MultiExtraEditModalProps) {
   const [displayMode, setDisplayMode] = useState<DisplayMode>('extra-only');
-  const [extras, setExtras] = useState<Record<number, string>>(() => ({ ...initialExtras }));
+
+  // Per-card editor refs — DOM is the source of truth, no extras state needed.
+  const editorRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   // Esc to close
   useEffect(() => {
@@ -37,7 +105,12 @@ export default function MultiExtraEditModal({
   }
 
   async function handleSaveAll() {
-    await onSaveAll(extras);
+    const map: Record<number, string> = {};
+    for (const card of cards) {
+      const el = editorRefs.current[card.id];
+      map[card.id] = el ? serializeExtra(el) : (initialExtras[card.id] ?? '');
+    }
+    await onSaveAll(map);
     onClose();
   }
 
@@ -105,14 +178,22 @@ export default function MultiExtraEditModal({
                 />
               )}
 
-              {/* Extra textarea */}
+              {/* Rendered Anki extra editor — contentEditable replaces the old textarea */}
               <div className="p-2 bg-white">
-                <textarea
-                  value={extras[card.id] ?? ''}
-                  onChange={(e) => setExtras((prev) => ({ ...prev, [card.id]: e.target.value }))}
-                  rows={5}
-                  className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 resize-y focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono leading-relaxed text-gray-700"
-                  placeholder="Extra / additional context…"
+                <div
+                  ref={(el) => {
+                    editorRefs.current[card.id] = el;
+                    // Initialize innerHTML on first mount. The check for innerHTML === ''
+                    // prevents re-initializing while the user is typing (React may call
+                    // the ref callback again on re-renders if displayMode changes).
+                    if (el && el.innerHTML === '') {
+                      el.innerHTML = toEditorHtml(initialExtras[card.id] ?? '');
+                    }
+                  }}
+                  contentEditable
+                  suppressContentEditableWarning
+                  spellCheck={false}
+                  className="w-full min-h-[120px] text-base leading-relaxed text-gray-800 border border-gray-200 rounded-lg px-3.5 py-3 whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
             </div>

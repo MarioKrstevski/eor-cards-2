@@ -1079,6 +1079,7 @@ class AddManualCardsRequest(BaseModel):
     include_supplementals: bool = True             # import vignette + teaching case (shared, not versioned)
     model: str = DEFAULT_MODEL                      # only used to parse raw_text (haiku)
     format: Optional[str] = None                   # 'pipe' → parse with the real card parser; else Haiku
+    after_card_id: Optional[int] = None            # if set, insert new cards after this card (by card_number)
 
 
 def _delete_fix_proposals_for(db: Session, card_ids: list[int]) -> None:
@@ -1193,11 +1194,27 @@ def add_manual_cards(body: AddManualCardsRequest, db: Session = Depends(get_db))
     if not to_create:
         raise HTTPException(422, "No cards to add (provide cards and/or raw_text)")
 
-    start_num = (
-        db.query(func.coalesce(func.max(Card.card_number), 0))
-        .filter(Card.section_id == section.id)
-        .scalar()
-    ) or 0
+    n_new = len(to_create)
+
+    # Determine insertion point.
+    if body.after_card_id is not None:
+        ref_card = db.get(Card, body.after_card_id)
+        if ref_card is None or ref_card.section_id != section.id:
+            raise HTTPException(400, "after_card_id does not belong to this section")
+        ref_num = ref_card.card_number
+        # Shift every existing card whose card_number > ref_num up by n_new to
+        # make room. No uniqueness constraint on card_number, so order doesn't matter.
+        db.query(Card).filter(
+            Card.section_id == section.id,
+            Card.card_number > ref_num,
+        ).update({"card_number": Card.card_number + n_new}, synchronize_session="fetch")
+        start_num = ref_num
+    else:
+        start_num = (
+            db.query(func.coalesce(func.max(Card.card_number), 0))
+            .filter(Card.section_id == section.id)
+            .scalar()
+        ) or 0
 
     # Which card version the new cards' front/extra land in (base or v1/v2/v3).
     target_version = body.card_version if body.card_version in ("v1", "v2", "v3") else "base"

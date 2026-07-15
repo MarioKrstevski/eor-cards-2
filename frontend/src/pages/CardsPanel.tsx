@@ -2039,11 +2039,15 @@ export default function CardsPanel({
     setAddLoading(true);
     setAddError(null);
     try {
+      // If cards are selected, insert after the last-selected card (Set preserves
+      // insertion order, so .at(-1) is the most recently clicked card).
+      const afterCardId = selectedIds.size >= 1 ? [...selectedIds].at(-1) : undefined;
       const payload: Parameters<typeof addManualCards>[0] = {
         section_id: effectiveSectionId,
         model: selectedModel,
         card_version: addVersion,
         include_supplementals: addIncludeSupp,
+        after_card_id: afterCardId,
       };
       if (addMode === 'single') {
         if (!addFront.trim()) { setAddError('Card front is required'); setAddLoading(false); return; }
@@ -2071,7 +2075,7 @@ export default function CardsPanel({
     } finally {
       setAddLoading(false);
     }
-  }, [effectiveSectionId, sectionId, selectedModel, addMode, addFront, addExtra, addTags, addPaste, addCsv, addVersion, addIncludeSupp, fetchCards, topicPath, sectionIds, onReviewChange, refreshUsage]);
+  }, [effectiveSectionId, sectionId, selectedModel, addMode, addFront, addExtra, addTags, addPaste, addCsv, addVersion, addIncludeSupp, selectedIds, fetchCards, topicPath, sectionIds, onReviewChange, refreshUsage]);
 
   // Resume polling for active jobs on mount and when topic/section context changes (handles page refresh)
   useEffect(() => {
@@ -3763,6 +3767,15 @@ export default function CardsPanel({
               {addVersion !== 'base' && (
                 <p className="text-[11px] text-amber-600">
                   Heads up: these cards go into <b>{addVersion.toUpperCase()}</b> only — their base front stays empty, so they show as version-only cards.
+                </p>
+              )}
+              {selectedIds.size >= 1 ? (
+                <p className="text-[11px] text-violet-600">
+                  Will insert after card #{cards.find(c => c.id === [...selectedIds].at(-1))?.card_number ?? '?'} (last selected).
+                </p>
+              ) : (
+                <p className="text-[11px] text-gray-400">
+                  No selection — will append at the end of the section.
                 </p>
               )}
               {addError && <div className="text-xs text-red-600">{addError}</div>}

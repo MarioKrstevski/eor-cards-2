@@ -555,6 +555,7 @@ export async function addManualCards(params: {
   include_supplementals?: boolean;
   model: string;
   format?: 'pipe';
+  after_card_id?: number;
 }): Promise<{ created: Card[] }> {
   const res = await http.post<{ created: Card[] }>('/cards/manual', params);
   return res.data;
