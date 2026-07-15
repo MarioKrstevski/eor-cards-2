@@ -62,6 +62,7 @@ import CompareVersionsModal from '../components/CompareVersionsModal';
 import CreatePresentationModal from '../components/CreatePresentationModal';
 import CardEditPopup from '../components/CardEditPopup';
 import MultiCardEditPopup from '../components/MultiCardEditPopup';
+import MultiExtraEditModal from '../components/MultiExtraEditModal';
 import SectionViewer from './SectionViewer';
 import { useSettings } from '../context/SettingsContext';
 
@@ -1205,6 +1206,12 @@ export default function CardsPanel({
 
   // ── Section viewer ───────────────────────────────────────────────────────
   const [viewSectionId, setViewSectionId] = useState<number | null>(null);
+
+  // ── Multi-extra edit modal ────────────────────────────────────────────────
+  const [multiExtraEditModal, setMultiExtraEditModal] = useState<{
+    initialExtras: Record<number, string>;
+    mode: 'rebuild' | 'edit';
+  } | null>(null);
 
   // ── Ankify modal ─────────────────────────────────────────────────────────
   const [ankifyOpen, setAnkifyOpen] = useState(false);
@@ -2638,7 +2645,7 @@ export default function CardsPanel({
     return `Other ${cap}:`;
   }, []);
 
-  const handleRebuildFooters = useCallback(async () => {
+  const handleRebuildFooters = useCallback(() => {
     // Selected cards in current display order (by card_number).
     const selected = cards.filter(c => selectedIds.has(c.id));
     if (selected.length < 2) return;
@@ -2650,21 +2657,43 @@ export default function CardsPanel({
       id: c.id,
       text: cleanedFrontText(getFieldValue(c, 'front_html', activeCardVersion) || c.front_html || ''),
     }));
-    try {
-      await Promise.all(selected.map((c) => {
-        const others = lines.filter(l => l.id !== c.id && l.text);
-        const bullets = others.map(l => `• ${l.text}`).join('<br>');
-        const footer = `<b>${label}</b> ${bullets ? `<br>${bullets}` : ''}`.trim();
-        const patch = fieldPatch('extra', footer, activeCardVersion);
-        return updateCard(c.id, patch).then(() => {
-          setCards(prev => prev.map(pc => pc.id === c.id ? { ...pc, ...patch } as Card : pc));
-        });
-      }));
-      setActionNotice(`Rebuilt footers on ${selected.length} cards`);
-    } catch {
-      setActionError('Could not rebuild footers');
-    }
+    // Build the suggested footer for each card and open the modal pre-filled.
+    const suggestedExtras: Record<number, string> = {};
+    selected.forEach((c) => {
+      const others = lines.filter(l => l.id !== c.id && l.text);
+      const bullets = others.map(l => `• ${l.text}`).join('<br>');
+      suggestedExtras[c.id] = `<b>${label}</b> ${bullets ? `<br>${bullets}` : ''}`.trim();
+    });
+    setMultiExtraEditModal({ initialExtras: suggestedExtras, mode: 'rebuild' });
   }, [cards, selectedIds, activeCardVersion, cleanedFrontText, deriveFooterLabel]);
+
+  const handleEditExtras = useCallback(() => {
+    const selected = cards.filter(c => selectedIds.has(c.id));
+    if (selected.length === 0) return;
+    const currentExtras: Record<number, string> = {};
+    selected.forEach((c) => {
+      currentExtras[c.id] = getFieldValue(c, 'extra', activeCardVersion) ?? '';
+    });
+    setMultiExtraEditModal({ initialExtras: currentExtras, mode: 'edit' });
+  }, [cards, selectedIds, activeCardVersion]);
+
+  const handleSaveAllExtras = useCallback(async (extras: Record<number, string>) => {
+    const extraCol = extraFieldFor(activeCardVersion);
+    try {
+      await Promise.all(
+        Object.entries(extras).map(([idStr, value]) => {
+          const id = Number(idStr);
+          const patch = { [extraCol]: value || null };
+          return updateCard(id, patch).then(() => {
+            setCards(prev => prev.map(c => c.id === id ? { ...c, ...patch } as Card : c));
+          });
+        })
+      );
+      setActionNotice(`Updated ${Object.keys(extras).length} cards`);
+    } catch {
+      setActionError('Could not save extras');
+    }
+  }, [activeCardVersion]);
 
   // ── Empty state ──────────────────────────────────────────────────────────
 
@@ -3788,9 +3817,23 @@ export default function CardsPanel({
           count={selectedIds.size}
           onCombine={() => doRegenWithMode('combine')}
           onRebuildFooters={handleRebuildFooters}
+          onEditExtras={handleEditExtras}
           onClose={() => setSelectedIds(new Set())}
         />
       )}
+
+      {multiExtraEditModal && (() => {
+        const selectedCards = cards.filter(c => selectedIds.has(c.id));
+        return (
+          <MultiExtraEditModal
+            cards={selectedCards}
+            activeVersion={activeCardVersion}
+            initialExtras={multiExtraEditModal.initialExtras}
+            onSaveAll={handleSaveAllExtras}
+            onClose={() => setMultiExtraEditModal(null)}
+          />
+        );
+      })()}
 
       {bigEdit && (
         <BigEditModal

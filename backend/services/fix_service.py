@@ -38,6 +38,21 @@ Output ONLY valid JSON, no other text. Schema:
 - action "split": provide the array of new cards that replace this one
 """
 
+# Appended to SYSTEM_PROMPT only for split operations (when the reviewer prompt
+# indicates a split) to prevent prose rewriting during content redistribution.
+_SPLIT_SCOPE = (
+    "\nThe guidance below describes ONLY how to split the card content — which facts "
+    "go where. Do NOT rewrite, rephrase, re-cloze, or reformat the underlying content; "
+    "preserve the existing wording, cloze deletions (and c1 indices), and bold/anchor "
+    "formatting exactly. Only redistribute the existing content as the guidance directs."
+)
+
+
+def _is_split_prompt(prompt: str) -> bool:
+    """True when the reviewer prompt is a split-type instruction (not a plain edit)."""
+    p = prompt.strip().lower()
+    return p.startswith("split this") or p.startswith("split the")
+
 
 def _fix_one_card(card_id: int, mark_type_name: str, prompt: str, model: str, batch_id: int) -> dict:
     """Fix one card and save proposal. Returns result dict."""
@@ -66,12 +81,15 @@ Section: {section_heading}
 
 Respond with JSON only."""
 
+        # For split-type prompts, append the scoping instruction so the model
+        # redistributes existing content instead of rewriting it.
+        system = SYSTEM_PROMPT + (_SPLIT_SCOPE if _is_split_prompt(prompt) else "")
         response = client.messages.create(
             model=resolve_model(model)[0],
             **effort_kwargs(model),
             max_tokens=1500,
             temperature=0,
-            system=SYSTEM_PROMPT,
+            system=system,
             messages=[{"role": "user", "content": user_msg}],
         )
         raw = response.content[0].text.strip()

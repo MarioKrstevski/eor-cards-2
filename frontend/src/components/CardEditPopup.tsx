@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Card } from '../types';
 import { useSettings } from '../context/SettingsContext';
-import { rewordSnippet, tightenCard } from '../api';
+import { rewordSnippet } from '../api';
 
 type CardVersion = 'base' | 'v1' | 'v2' | 'v3';
 
@@ -97,6 +97,12 @@ export function needsClean(html: string): boolean {
   if (/^\s*\|/.test(html) || /\|\s*$/.test(html) || /\n[ \t]*\|[ \t]*\n/.test(html)) return true; // lone pipes
   if (/(^|\n|<br\s*\/?>)[ \t]*\*[ \t]+/.test(html)) return true; // * bullets
   return /\{\{c\d+::/.test(html.replace(STYLED_CLOZE_RE, '')); // bare unwrapped cloze
+}
+
+// Count `{{c1::..}}` cloze markers in a stored-HTML string. Used to reject a
+// Reword result that dropped or invented a cloze.
+export function countClozes(html: string): number {
+  return (html.match(/\{\{c\d+::/g) ?? []).length;
 }
 
 // ── Editor <-> stored-HTML conversion ─────────────────────────────────────────
@@ -272,22 +278,26 @@ type ClozeMode = 'cloze' | 'uncloze';
 type EditorTab = 'front' | 'extra';
 
 export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onClose }: CardEditPopupProps) {
-  const { activeCardVersion, selectedModel } = useSettings();
+  const { activeCardVersion } = useSettings();
   const ver = activeCardVersion as CardVersion;
   const [tab, setTab] = useState<EditorTab>('front');
   const [hasSelection, setHasSelection] = useState(false);
   const [rewording, setRewording] = useState(false);
-  const [tightening, setTightening] = useState(false);
-  const [tightenNoChange, setTightenNoChange] = useState(false);
+  const [rewordHint, setRewordHint] = useState(false);
   const [saved, setSaved] = useState(false);
   const [boldMode, setBoldMode] = useState<BoldMode>('bold');
   const [clozeMode, setClozeMode] = useState<ClozeMode>('cloze');
   const [boldEnabled, setBoldEnabled] = useState(false);
   const [frontCleanable, setFrontCleanable] = useState(false);
   const [extraCleanable, setExtraCleanable] = useState(false);
-  const [anchored, setAnchored] = useState(false);
   const editorRef = useRef<HTMLDivElement>(null); // front editor
   const extraRef = useRef<HTMLDivElement>(null);  // extra (footer) editor
+
+  // Per-editor undo stacks: each mutating button/AI op pushes the target
+  // editor's innerHTML before it runs; Undo pops and restores. Native
+  // contentEditable undo covers plain typing. Reset when the card changes.
+  const undoStacks = useRef<{ front: string[]; extra: string[] }>({ front: [], extra: [] });
+  const [undoDepth, setUndoDepth] = useState({ front: 0, extra: 0 });
 
   // Load the draft into the editors when the target card or active version
   // changes (never on background refresh mid-edit — id/version are stable).
@@ -301,7 +311,9 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onC
     setBoldMode('bold');
     setClozeMode('cloze');
     setBoldEnabled(false);
-    setTightenNoChange(false);
+    setRewordHint(false);
+    undoStacks.current = { front: [], extra: [] };
+    setUndoDepth({ front: 0, extra: 0 });
     refreshContentState();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card.id, ver]);
@@ -367,17 +379,34 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onC
     return { root, range };
   }
 
-  // Recompute content-derived button state: Clean gating per editor + whether
-  // the front already carries the section-heading anchor.
+  // Recompute content-derived button state: Clean gating per editor.
   function refreshContentState() {
     const fr = editorRef.current;
-    if (fr) {
-      setFrontCleanable(needsClean(fromEditorHtml(fr)));
-      const heading = (card.section_heading ?? '').trim();
-      setAnchored(!!heading && (fr.textContent ?? '').toLowerCase().includes(heading.toLowerCase()));
-    }
+    if (fr) setFrontCleanable(needsClean(fromEditorHtml(fr)));
     const ex = extraRef.current;
     if (ex) setExtraCleanable(needsClean(fromEditorHtml(ex)));
+  }
+
+  // ── Undo ──────────────────────────────────────────────────────────────────────
+  // Snapshot an editor's innerHTML before a mutating op so Undo can restore it.
+  function pushUndo(which: EditorTab) {
+    const root = which === 'extra' ? extraRef.current : editorRef.current;
+    if (!root) return;
+    undoStacks.current[which].push(root.innerHTML);
+    setUndoDepth((d) => ({ ...d, [which]: undoStacks.current[which].length }));
+  }
+
+  // Restore the active editor's most recent snapshot.
+  function handleUndo() {
+    const which = tab;
+    const stack = undoStacks.current[which];
+    if (stack.length === 0) return;
+    const root = which === 'extra' ? extraRef.current : editorRef.current;
+    if (!root) return;
+    root.innerHTML = stack.pop() as string;
+    setUndoDepth((d) => ({ ...d, [which]: stack.length }));
+    refreshSelectionState();
+    refreshContentState();
   }
 
   // ── Bold / Unbold ───────────────────────────────────────────────────────────
@@ -385,6 +414,7 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onC
     const er = editorRange();
     if (!er || er.range.collapsed) return;
     const { root, range } = er;
+    pushUndo(root === extraRef.current ? 'extra' : 'front');
     if (rangeHasBold(range, root)) unboldRange(range, root);
     else boldRange(range, root);
     refreshSelectionState();
@@ -491,6 +521,7 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onC
     const existing = rangeHasCloze(range, root);
     if (existing) {
       // UNCLOZE: replace the span with its plain text.
+      pushUndo(root === extraRef.current ? 'extra' : 'front');
       const text = document.createTextNode(existing.textContent ?? '');
       existing.parentNode?.replaceChild(text, existing);
       normalize(root);
@@ -499,8 +530,14 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onC
       // CLOZE: guard against empty + nested.
       if (range.collapsed) return;
       if (clozeAncestor(range.startContainer, root) || clozeAncestor(range.endContainer, root)) return;
+      pushUndo(root === extraRef.current ? 'extra' : 'front');
       const contents = range.extractContents();
-      if (!contents.textContent) return;
+      if (!contents.textContent) {
+        // Nothing selected after all — drop the snapshot we just pushed.
+        undoStacks.current.front.pop();
+        setUndoDepth((d) => ({ ...d, front: undoStacks.current.front.length }));
+        return;
+      }
       const span = document.createElement('span');
       span.className = 'cz';
       span.setAttribute('data-hint', '');
@@ -514,17 +551,40 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onC
   }
 
   // ── Reword ────────────────────────────────────────────────────────────────────
+  // Rephrase the selected prose while preserving its clozes and bold. We
+  // serialize the selection to stored HTML (fromEditorHtml over a clone), send
+  // that HTML to the backend, and re-render the marked-up result back into the
+  // range via toEditorHtml. If the cloze count changed, we treat the result as
+  // unsafe and leave the card untouched.
   async function handleReword() {
     const er = editorRange();
     if (!er || er.range.collapsed) return;
     const { root, range } = er;
-    const snippet = range.toString();
-    if (!snippet.trim()) return;
+    if (!range.toString().trim()) return;
+
+    // Selection → stored HTML (clozes/bold intact).
+    const holder = document.createElement('div');
+    holder.appendChild(range.cloneContents());
+    const snippetHtml = fromEditorHtml(holder);
+
+    setRewordHint(false);
     setRewording(true);
     try {
-      const { reworded } = await rewordSnippet(editorText(), snippet);
+      const { reworded } = await rewordSnippet(editorText(), snippetHtml);
+      // Safety: refuse a result that dropped or added a cloze.
+      if (countClozes(reworded) !== countClozes(snippetHtml)) {
+        setRewordHint(true);
+        setTimeout(() => setRewordHint(false), 2000);
+        return;
+      }
+      pushUndo('front');
+      // Parse the marked-up result into editor nodes and swap it in.
+      const parsed = document.createElement('div');
+      parsed.innerHTML = toEditorHtml(reworded);
+      const frag = document.createDocumentFragment();
+      while (parsed.firstChild) frag.appendChild(parsed.firstChild);
       range.deleteContents();
-      range.insertNode(document.createTextNode(reworded));
+      range.insertNode(frag);
       normalize(root);
     } catch {
       /* leave the text untouched on failure */
@@ -540,22 +600,9 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onC
   function handleUnitsOut() {
     const root = editorRef.current;
     if (!root) return;
+    pushUndo('front');
     const stored = fromEditorHtml(root);
     root.innerHTML = toEditorHtml(unitsOut(stored));
-    refreshSelectionState();
-    refreshContentState();
-  }
-
-  // ── Add anchor ────────────────────────────────────────────────────────────────
-  // Deterministic: prepend a bold "<Section heading>: " label to the front unless
-  // the heading already appears in the card text (case-insensitive). No AI.
-  function handleAddAnchor() {
-    const root = editorRef.current;
-    const heading = (card.section_heading ?? '').trim();
-    if (!root || !heading) return;
-    if ((root.textContent ?? '').toLowerCase().includes(heading.toLowerCase())) return;
-    const stored = fromEditorHtml(root);
-    root.innerHTML = toEditorHtml(`<b>${escapeHtml(heading)}:</b> ${stored}`);
     refreshSelectionState();
     refreshContentState();
   }
@@ -563,34 +610,13 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onC
   // ── Clean ─────────────────────────────────────────────────────────────────────
   // Deterministic artifact fixes on the active tab's editor (see cleanFront).
   function handleClean() {
-    const root = tab === 'extra' ? extraRef.current : editorRef.current;
+    const which = tab;
+    const root = which === 'extra' ? extraRef.current : editorRef.current;
     if (!root) return;
+    pushUndo(which);
     root.innerHTML = toEditorHtml(cleanFront(fromEditorHtml(root)));
     refreshSelectionState();
     refreshContentState();
-  }
-
-  // ── Tighten ───────────────────────────────────────────────────────────────────
-  // Haiku condenses the whole front (clozes/bold preserved). No selection needed.
-  async function handleTighten() {
-    const root = editorRef.current;
-    if (!root || tightening) return;
-    setTightening(true);
-    try {
-      const res = await tightenCard(fromEditorHtml(root), selectedModel);
-      if (res.changed) {
-        root.innerHTML = toEditorHtml(res.front_html);
-      } else {
-        setTightenNoChange(true);
-        setTimeout(() => setTightenNoChange(false), 1500);
-      }
-    } catch {
-      /* leave the text untouched on failure */
-    } finally {
-      setTightening(false);
-      refreshSelectionState();
-      refreshContentState();
-    }
   }
 
   // ── Save ──────────────────────────────────────────────────────────────────────
@@ -633,29 +659,31 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onC
     sel.addRange(r);
   }
 
+  const canUndo = undoDepth[tab] > 0;
+
   return (
-    <div className="fixed right-4 top-24 w-80 z-40 bg-white rounded-xl border border-gray-200 shadow-2xl flex flex-col max-h-[calc(100vh-8rem)]">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
-        <span className="text-xs font-semibold text-gray-900">
+    <div className="fixed right-4 top-24 w-[640px] max-w-[calc(100vw-2rem)] z-40 bg-white rounded-xl border border-gray-200 shadow-2xl flex flex-col max-h-[85vh]">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+        <span className="text-base font-semibold text-gray-900">
           Edit card #{card.card_number}
           {ver !== 'base' && (
-            <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-violet-50 text-violet-600 font-semibold uppercase">{ver}</span>
+            <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-violet-50 text-violet-600 font-semibold uppercase">{ver}</span>
           )}
         </span>
-        <button onClick={onClose} className="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-50" title="Close (Esc)">✕</button>
+        <button onClick={onClose} className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-50 text-lg leading-none" title="Close (Esc)">✕</button>
       </div>
 
-      <div className="p-3 flex flex-col gap-2.5 overflow-auto">
+      <div className="p-4 flex flex-col gap-4 overflow-auto">
         {/* WYSIWYG editors: bold shows bold, clozes show as blue-bold terms.
             Both stay mounted; the tab switch just hides the inactive one so
             drafts survive tab flips and Save can serialize both. */}
         <div>
-          <div className="flex items-center gap-1 mb-1">
+          <div className="flex items-center gap-1.5 mb-2">
             {(['front', 'extra'] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => { setTab(t); refreshContentState(); }}
-                className={`px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide rounded transition-colors duration-150 ${
+                className={`px-3 py-1 text-[11px] font-semibold uppercase tracking-wide rounded transition-colors duration-150 ${
                   tab === t ? 'bg-gray-900 text-white' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
                 }`}
               >
@@ -670,7 +698,7 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onC
             spellCheck={false}
             onMouseUp={() => { refreshSelectionState(); refreshContentState(); }}
             onKeyUp={() => { refreshSelectionState(); refreshContentState(); }}
-            className={`${tab === 'front' ? '' : 'hidden '}w-full min-h-[120px] text-sm leading-relaxed text-gray-800 border border-gray-200 rounded-lg px-2.5 py-2 whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent`}
+            className={`${tab === 'front' ? '' : 'hidden '}w-full min-h-[220px] text-base leading-relaxed text-gray-800 border border-gray-200 rounded-lg px-3.5 py-3 whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent`}
           />
           <div
             ref={extraRef}
@@ -679,82 +707,83 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onC
             spellCheck={false}
             onMouseUp={() => { refreshSelectionState(); refreshContentState(); }}
             onKeyUp={() => { refreshSelectionState(); refreshContentState(); }}
-            className={`${tab === 'extra' ? '' : 'hidden '}w-full min-h-[120px] text-sm leading-relaxed text-gray-800 border border-gray-200 rounded-lg px-2.5 py-2 whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent`}
+            className={`${tab === 'extra' ? '' : 'hidden '}w-full min-h-[220px] text-base leading-relaxed text-gray-800 border border-gray-200 rounded-lg px-3.5 py-3 whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent`}
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            onClick={handleBold}
-            disabled={!boldEnabled}
-            title={boldMode === 'unbold' ? 'Remove bold from the selection' : 'Bold the selection'}
-            className="px-2.5 py-1.5 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
-          >
-            {boldMode === 'unbold' ? 'Unbold' : 'Bold'}
-          </button>
-          {tab === 'front' && (
-            <>
-              <button
-                onClick={handleCloze}
-                disabled={clozeMode === 'cloze' && !hasSelection}
-                title={clozeMode === 'uncloze' ? 'Remove the cloze from the selection' : 'Cloze the selection'}
-                className="px-2.5 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
-              >
-                {clozeMode === 'uncloze' ? 'Uncloze' : 'Cloze'}
-              </button>
+        {/* ── Format (deterministic) ── */}
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Format</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleBold}
+              disabled={!boldEnabled}
+              title={boldMode === 'unbold' ? 'Remove bold from the selection' : 'Bold the selection'}
+              className="px-3 py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+            >
+              {boldMode === 'unbold' ? 'Unbold' : 'Bold'}
+            </button>
+            {tab === 'front' && (
+              <>
+                <button
+                  onClick={handleCloze}
+                  disabled={clozeMode === 'cloze' && !hasSelection}
+                  title={clozeMode === 'uncloze' ? 'Remove the cloze from the selection' : 'Cloze the selection'}
+                  className="px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+                >
+                  {clozeMode === 'uncloze' ? 'Uncloze' : 'Cloze'}
+                </button>
+                <button
+                  onClick={handleUnitsOut}
+                  title="Move a trailing unit outside the cloze, e.g. {{c1::20 years}} → {{c1::20}} years."
+                  className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+                >
+                  Units out
+                </button>
+              </>
+            )}
+            <button
+              onClick={handleClean}
+              disabled={!(tab === 'extra' ? extraCleanable : frontCleanable)}
+              title="Fix **markdown bold**, em-dashes/--, stray | markers, * bullets, and bare {{c1::..}} clozes"
+              className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+            >
+              Clean
+            </button>
+          </div>
+        </div>
+
+        {/* ── AI ── */}
+        {tab === 'front' && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">AI</span>
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={handleReword}
                 disabled={!hasSelection || rewording}
-                title={hasSelection ? 'Rephrase the selected text' : 'Select text to reword'}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+                title={hasSelection ? 'Rephrase the selected prose (clozes and bold preserved)' : 'Select text to reword'}
+                className="relative inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
               >
-                {rewording && <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                {rewording && <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                 Reword
+                <span className="absolute -top-1.5 -right-1.5 px-1 text-[9px] font-bold leading-tight rounded-full bg-violet-600 text-white shadow-sm">AI</span>
               </button>
-              <button
-                onClick={handleUnitsOut}
-                title="Move a trailing unit outside the cloze, e.g. {{c1::20 years}} → {{c1::20}} years."
-                className="px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
-              >
-                Units out
-              </button>
-              <button
-                onClick={handleAddAnchor}
-                disabled={!(card.section_heading ?? '').trim() || anchored}
-                title={
-                  anchored
-                    ? 'The section heading is already in the card'
-                    : `Prepend "${(card.section_heading ?? '').trim()}:" as a bold anchor`
-                }
-                className="px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
-              >
-                Add anchor
-              </button>
-            </>
-          )}
-          <button
-            onClick={handleClean}
-            disabled={!(tab === 'extra' ? extraCleanable : frontCleanable)}
-            title="Fix **markdown bold**, em-dashes/--, stray | markers, * bullets, and bare {{c1::..}} clozes"
-            className="px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
-          >
-            Clean
-          </button>
-          {tab === 'front' && (
-            <>
-              <button
-                onClick={handleTighten}
-                disabled={tightening}
-                title="Condense the whole front with AI (clozes and bold preserved)"
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
-              >
-                {tightening && <span className="inline-block w-3 h-3 border-2 border-blue-700 border-t-transparent rounded-full animate-spin" />}
-                {tightenNoChange ? 'No change' : 'Tighten'}
-              </button>
+              {rewordHint && (
+                <span className="text-xs text-amber-600">Reword changed the clozes — left as-is.</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Card ── */}
+        {tab === 'front' && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Card</span>
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => onRegenerate(card)}
                 title="Regenerate this card with a prompt"
-                className="px-2.5 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
+                className="px-3 py-2 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
               >
                 Regenerate
               </button>
@@ -762,16 +791,34 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onC
                 <button
                   onClick={onSplit}
                   title="Split this card into multiple focused cards"
-                  className="px-2.5 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
+                  className="px-3 py-2 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
                 >
                   Split
                 </button>
               )}
-            </>
-          )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Undo + Save / Close ── */}
+        <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
+          <button
+            onClick={handleUndo}
+            disabled={!canUndo}
+            title={canUndo ? 'Undo the last button/AI change' : 'Nothing to undo'}
+            className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+          >
+            Undo
+          </button>
+          <button
+            onClick={onClose}
+            className="ml-auto px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+          >
+            Close
+          </button>
           <button
             onClick={handleSave}
-            className="ml-auto px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors duration-150"
+            className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors duration-150"
           >
             {saved ? 'Saved ✓' : 'Save'}
           </button>

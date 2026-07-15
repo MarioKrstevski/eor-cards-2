@@ -103,11 +103,13 @@ def _correctness_fields(card_version: str):
 
 # ── Reword a highlighted snippet ──────────────────────────────────────────────
 _REWORD_SYSTEM = (
-    "You rephrase a highlighted snippet from a medical flashcard. Rewrite ONLY the "
-    "given snippet into clean, neutral clinical language. Preserve the exact medical "
-    "meaning and every number, dose, unit, and technical term. Do NOT add or remove "
-    "information. Return ONLY the reworded snippet as plain text — no quotes, no "
-    "markup, no explanation, and no leading or trailing whitespace."
+    "You rephrase a highlighted snippet from a medical flashcard. "
+    "Rephrase the connecting prose into clean neutral clinical language. "
+    "Do NOT change, add, remove, or re-order any cloze deletion {{c1::...}} or any "
+    "<b>...</b> / colored cloze span — keep every clozed term and bold term verbatim "
+    "and in place. Preserve all clinical meaning, every number, dose, unit, and "
+    "technical term. Return ONLY the reworded snippet with its markup, no "
+    "quotes, no explanation, and no leading or trailing whitespace."
 )
 
 
@@ -127,6 +129,8 @@ def _strip_wrapping_quotes(s: str) -> str:
 @router.post("/reword")
 def reword_snippet(body: RewordRequest):
     """Stateless: rephrase a highlighted snippet using its full card text as context.
+    Preserves cloze markers and bold/span markup. Falls back to the original snippet
+    if the model removes or adds any cloze deletions.
     Does not read or write the DB (no usage logged — no session here)."""
     snippet = (body.snippet or "").strip()
     if not snippet:
@@ -134,60 +138,19 @@ def reword_snippet(body: RewordRequest):
     # Haiku by default; coerce any Gemini selection to Anthropic (this path is Claude-only).
     model = anthropic_model(body.model or DEFAULT_PROCESSING_MODEL)
     user = (
-        "Full card text (context, do not rewrite this whole thing):\n"
+        "Full card text (context only — do not rewrite the whole card):\n"
         f"{body.text}\n\n"
-        "Rephrase ONLY this snippet:\n"
+        "Rephrase ONLY this snippet (preserve every cloze and bold exactly):\n"
         f"{snippet}"
     )
     text, _usage, _stop = complete_text(
         model, _REWORD_SYSTEM, user, temperature=0, max_tokens=1024,
     )
     reworded = _strip_wrapping_quotes(text or "")
-    if not reworded:
-        # Model returned nothing usable — fall back to the original snippet.
+    # Safety: if cloze count changed OR the result is empty, return the original unchanged.
+    if not reworded or reworded.count("{{c1::") != snippet.count("{{c1::"):
         reworded = snippet
     return {"reworded": reworded}
-
-
-# ── Tighten (condense) a card front ──────────────────────────────────────────
-_TIGHTEN_SYSTEM = (
-    "You condense the front of a medical cloze flashcard. CONDENSE and shorten the "
-    "given flashcard front to remove verbosity and redundant framing, while:\n"
-    "- preserving EVERY clinical fact, number, qualifier, and term — no information "
-    "may be dropped;\n"
-    "- preserving ALL markup EXACTLY: every cloze {{c1::...}} must remain intact and "
-    "unchanged (same terms clozed, same c1 index), and every <b>...</b> and "
-    '<span style="color:#1f77b4">...</span> wrapper must be kept;\n'
-    "- returning ONLY the tightened front_html string — no quotes, no explanation, "
-    "no markdown fences."
-)
-
-
-class TightenRequest(BaseModel):
-    front_html: str
-    model: Optional[str] = None
-
-
-@router.post("/tighten")
-def tighten_card(body: TightenRequest):
-    """Stateless: condense a card front while preserving clozes and markup.
-    Does not read or write the DB (no usage logged — no session here)."""
-    front = (body.front_html or "").strip()
-    if not front:
-        raise HTTPException(400, "No front_html provided to tighten")
-    # Haiku by default; coerce any Gemini selection to Anthropic (this path is Claude-only).
-    model = anthropic_model(body.model or DEFAULT_PROCESSING_MODEL)
-    text, _usage, _stop = complete_text(
-        model, _TIGHTEN_SYSTEM, front, temperature=0, max_tokens=2048,
-    )
-    tightened = _strip_wrapping_quotes(text or "")
-    # Safety check: a bad tighten must never destroy clozes. If the output is
-    # empty or its {{c1:: count differs from the input's, discard it.
-    if not tightened or tightened.count("{{c1::") != front.count("{{c1::"):
-        return {"front_html": body.front_html, "changed": False}
-    if tightened == front:
-        return {"front_html": body.front_html, "changed": False}
-    return {"front_html": tightened, "changed": True}
 
 
 def _write_correctness(card: "Card", card_version: str, passed, corr) -> None:
@@ -494,6 +457,16 @@ _COMBINE_SYSTEM = (
     'Return ONLY JSON: {"front_html": "...", "extra": "... or null", "tags": ["..."]}.'
 )
 
+# Appended to _COMBINE_SYSTEM (and to the fix-service SYSTEM_PROMPT for split)
+# only when a guiding prompt is present, to prevent prose rewriting.
+_SPLIT_COMBINE_SCOPE = (
+    "\n\nThe guidance below describes ONLY how to combine (or split) the card content — "
+    "which facts go where. Do NOT rewrite, rephrase, re-cloze, or reformat the underlying "
+    "content; preserve the existing wording, cloze deletions (and c1 indices), and "
+    "bold/anchor formatting exactly. Only redistribute or merge the existing content as "
+    "the guidance directs."
+)
+
 
 @router.post("/combine-preview")
 def combine_preview(body: CombinePreviewRequest, db: Session = Depends(get_db)):
@@ -511,6 +484,9 @@ def combine_preview(body: CombinePreviewRequest, db: Session = Depends(get_db)):
         f"Goal/guidance: {guidance}\n\n" + "\n\n".join(lines) +
         "\n\nReturn the combined card as JSON only."
     )
+    # When the reviewer supplied explicit guidance, scope the system prompt so the
+    # model redistributes content rather than rewriting it.
+    system = _COMBINE_SYSTEM + (_SPLIT_COMBINE_SCOPE if (body.prompt or "").strip() else "")
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     model = anthropic_model(body.model)
     resp = client.messages.create(
@@ -518,7 +494,7 @@ def combine_preview(body: CombinePreviewRequest, db: Session = Depends(get_db)):
         **effort_kwargs(model),
         max_tokens=2048,
         temperature=0,
-        system=_COMBINE_SYSTEM,
+        system=system,
         messages=[{"role": "user", "content": user}],
     )
     raw = response_text(resp)

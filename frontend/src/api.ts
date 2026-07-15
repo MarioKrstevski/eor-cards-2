@@ -492,27 +492,15 @@ export async function rejectCard(id: number): Promise<Card> {
 }
 
 // Rephrase a highlighted snippet of a card's front. `text` is the full plain
-// card text (for context); `snippet` is the substring to reword. Returns the
-// reworded snippet as plain text.
+// card text (for context); `snippet` is the stored HTML of the selection —
+// clozes/bold included. The backend preserves that markup and returns the
+// reworded snippet in the same stored HTML form.
 export async function rewordSnippet(
   text: string,
   snippet: string,
   model?: string
 ): Promise<{ reworded: string }> {
   const res = await http.post<{ reworded: string }>('/cards/reword', { text, snippet, model });
-  return res.data;
-}
-
-// Condense a card's front (Haiku), preserving clozes and bold. Returns the
-// original with changed=false when tightening was unsafe or a no-op.
-export async function tightenCard(
-  front_html: string,
-  model?: string
-): Promise<{ front_html: string; changed: boolean }> {
-  const res = await http.post<{ front_html: string; changed: boolean }>('/cards/tighten', {
-    front_html,
-    model,
-  });
   return res.data;
 }
 

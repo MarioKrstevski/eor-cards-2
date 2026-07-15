@@ -4,6 +4,7 @@ interface MultiCardEditPopupProps {
   count: number;
   onCombine: () => void;
   onRebuildFooters: () => void;
+  onEditExtras: () => void;
   onClose: () => void;
 }
 
@@ -11,7 +12,7 @@ interface MultiCardEditPopupProps {
 // counterpart to CardEditPopup. Same chrome (fixed right-4 top-24 w-80 z-40,
 // white/rounded/border/shadow, Esc-to-close). Buttons call handlers that live in
 // CardsPanel: doRegenWithMode('combine') and handleRebuildFooters.
-export default function MultiCardEditPopup({ count, onCombine, onRebuildFooters, onClose }: MultiCardEditPopupProps) {
+export default function MultiCardEditPopup({ count, onCombine, onRebuildFooters, onEditExtras, onClose }: MultiCardEditPopupProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -43,6 +44,15 @@ export default function MultiCardEditPopup({ count, onCombine, onRebuildFooters,
         >
           <span>Rebuild sibling footers</span>
           <span className="text-[10px] font-normal text-sky-600">Fill each card's footer with the others</span>
+        </button>
+
+        <button
+          onClick={onEditExtras}
+          title="Edit the Extra field for each selected card in one place"
+          className="flex flex-col items-start gap-0.5 px-2.5 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors duration-150"
+        >
+          <span>Edit extras</span>
+          <span className="text-[10px] font-normal text-emerald-600">Edit all selected cards' extra fields</span>
         </button>
       </div>
     </div>
