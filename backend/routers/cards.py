@@ -117,6 +117,7 @@ class RewordRequest(BaseModel):
     text: str            # full plain card text, for context
     snippet: str         # exact substring to rephrase
     model: Optional[str] = None
+    guidance: Optional[str] = None  # optional instruction for how to rephrase
 
 
 def _strip_wrapping_quotes(s: str) -> str:
@@ -143,6 +144,9 @@ def reword_snippet(body: RewordRequest):
         "Rephrase ONLY this snippet (preserve every cloze and bold exactly):\n"
         f"{snippet}"
     )
+    guidance = (body.guidance or "").strip()
+    if guidance:
+        user += f"\n\nFollow this instruction for how to rephrase: {guidance}"
     text, _usage, _stop = complete_text(
         model, _REWORD_SYSTEM, user, temperature=0, max_tokens=1024,
     )

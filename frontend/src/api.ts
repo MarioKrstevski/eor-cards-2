@@ -498,9 +498,10 @@ export async function rejectCard(id: number): Promise<Card> {
 export async function rewordSnippet(
   text: string,
   snippet: string,
-  model?: string
+  model?: string,
+  guidance?: string
 ): Promise<{ reworded: string }> {
-  const res = await http.post<{ reworded: string }>('/cards/reword', { text, snippet, model });
+  const res = await http.post<{ reworded: string }>('/cards/reword', { text, snippet, model, guidance });
   return res.data;
 }
 

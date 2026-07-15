@@ -286,6 +286,10 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
   const [rewording, setRewording] = useState(false);
   const [rewordHint, setRewordHint] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [guidedOpen, setGuidedOpen] = useState(false);
+  const [guidedText, setGuidedText] = useState('');
+  const capturedRangeRef = useRef<Range | null>(null);
+  const guidedInputRef = useRef<HTMLInputElement>(null);
   const [boldMode, setBoldMode] = useState<BoldMode>('bold');
   const [clozeMode, setClozeMode] = useState<ClozeMode>('cloze');
   const [boldEnabled, setBoldEnabled] = useState(false);
@@ -313,6 +317,9 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
     setClozeMode('cloze');
     setBoldEnabled(false);
     setRewordHint(false);
+    setGuidedOpen(false);
+    setGuidedText('');
+    capturedRangeRef.current = null;
     undoStacks.current = { front: [], extra: [] };
     setUndoDepth({ front: 0, extra: 0 });
     refreshContentState();
@@ -552,16 +559,13 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
   }
 
   // ── Reword ────────────────────────────────────────────────────────────────────
-  // Rephrase the selected prose while preserving its clozes and bold. We
-  // serialize the selection to stored HTML (fromEditorHtml over a clone), send
-  // that HTML to the backend, and re-render the marked-up result back into the
-  // range via toEditorHtml. If the cloze count changed, we treat the result as
-  // unsafe and leave the card untouched.
-  async function handleReword() {
-    const er = editorRange();
-    if (!er || er.range.collapsed) return;
-    const { root, range } = er;
-    if (!range.toString().trim()) return;
+  // Shared core: rephrase the prose in [range] while preserving clozes/bold.
+  // Serializes the range to stored HTML, calls the backend (with optional
+  // guidance), runs the cloze-count safety check, and re-inserts the result.
+  // Plain Reword passes no guidance; Guided Reword passes the typed instruction.
+  async function executeReword(range: Range, guidance?: string) {
+    const root = editorRootFor(range.commonAncestorContainer);
+    if (!root || range.collapsed || !range.toString().trim()) return;
 
     // Selection → stored HTML (clozes/bold intact).
     const holder = document.createElement('div');
@@ -571,7 +575,7 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
     setRewordHint(false);
     setRewording(true);
     try {
-      const { reworded } = await rewordSnippet(editorText(), snippetHtml);
+      const { reworded } = await rewordSnippet(editorText(), snippetHtml, undefined, guidance || undefined);
       // Safety: refuse a result that dropped or added a cloze.
       if (countClozes(reworded) !== countClozes(snippetHtml)) {
         setRewordHint(true);
@@ -594,6 +598,41 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
       refreshSelectionState();
       refreshContentState();
     }
+  }
+
+  // Plain Reword — operates on the live selection.
+  async function handleReword() {
+    const er = editorRange();
+    if (!er || er.range.collapsed) return;
+    await executeReword(er.range);
+  }
+
+  // Guided Reword — capture the current selection Range BEFORE the input steals
+  // focus, then reveal the inline instruction row. The DOM is not mutated while
+  // the user types, so the captured Range stays valid.
+  function handleGuidedRewordOpen() {
+    const er = editorRange();
+    if (!er || er.range.collapsed) return;
+    capturedRangeRef.current = er.range.cloneRange();
+    setGuidedText('');
+    setGuidedOpen(true);
+    // Focus the input after the state update renders it.
+    setTimeout(() => guidedInputRef.current?.focus(), 0);
+  }
+
+  function handleGuidedRewordCancel() {
+    setGuidedOpen(false);
+    setGuidedText('');
+    capturedRangeRef.current = null;
+  }
+
+  async function handleGuidedRewordGo() {
+    const range = capturedRangeRef.current;
+    if (!range) return;
+    await executeReword(range, guidedText.trim());
+    setGuidedOpen(false);
+    setGuidedText('');
+    capturedRangeRef.current = null;
   }
 
   // ── Units out ─────────────────────────────────────────────────────────────────
@@ -759,20 +798,62 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
           <div className="flex flex-col gap-1.5">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">AI</span>
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={handleReword}
-                disabled={!hasSelection || rewording}
-                title={hasSelection ? 'Rephrase the selected prose (clozes and bold preserved)' : 'Select text to reword'}
-                className="relative inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
-              >
-                {rewording && <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-                Reword
+              <div className="relative inline-flex">
+                <button
+                  onClick={handleReword}
+                  disabled={!hasSelection || rewording || guidedOpen}
+                  title={hasSelection ? 'Rephrase the selected prose (clozes and bold preserved)' : 'Select text to reword'}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-l-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+                >
+                  {rewording && !guidedOpen && <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  Reword
+                </button>
+                <button
+                  onClick={handleGuidedRewordOpen}
+                  disabled={!hasSelection || rewording || guidedOpen}
+                  title={hasSelection ? 'Guided reword — add an instruction for how to rephrase' : 'Select text to guided-reword'}
+                  className="px-2.5 py-2 text-sm font-bold italic text-white bg-blue-600 rounded-r-lg border-l border-blue-500 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+                >
+                  g
+                </button>
                 <span className="absolute -top-1.5 -right-1.5 px-1 text-[9px] font-bold leading-tight rounded-full bg-violet-600 text-white shadow-sm">AI</span>
-              </button>
+              </div>
               {rewordHint && (
                 <span className="text-xs text-amber-600">Reword changed the clozes — left as-is.</span>
               )}
             </div>
+            {guidedOpen && (
+              <div className="flex items-center gap-2 mt-1">
+                <input
+                  ref={guidedInputRef}
+                  type="text"
+                  value={guidedText}
+                  onChange={(e) => setGuidedText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); handleGuidedRewordGo(); }
+                    if (e.key === 'Escape') { e.preventDefault(); handleGuidedRewordCancel(); }
+                  }}
+                  placeholder="How should it be reworded? e.g. don't use a semicolon, make it flow"
+                  className="flex-1 min-w-0 px-3 py-1.5 text-sm border border-indigo-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                />
+                <button
+                  onClick={handleGuidedRewordGo}
+                  disabled={rewording}
+                  title="Apply guided reword"
+                  className="relative inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+                >
+                  {rewording && <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  Reword
+                </button>
+                <button
+                  onClick={handleGuidedRewordCancel}
+                  title="Cancel"
+                  className="px-2 py-1.5 text-sm font-medium text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+                >
+                  ×
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -807,7 +888,7 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
             onClick={handleUndo}
             disabled={!canUndo}
             title={canUndo ? 'Undo the last button/AI change' : 'Nothing to undo'}
-            className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+            className="px-2 py-1 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
           >
             Undo
           </button>
@@ -815,7 +896,7 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
             <button
               onClick={onDelete}
               title="Delete this card"
-              className="px-3 py-2 text-sm font-medium text-red-600 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition-colors duration-150"
+              className="px-2 py-1 text-xs font-medium text-red-600 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition-colors duration-150"
             >
               Delete
             </button>
