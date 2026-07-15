@@ -1088,7 +1088,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
         )}
 
         {/* ── Undo + Save / Close ── */}
-        <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
+        <div className="flex items-end gap-2 pt-1 border-t border-gray-100">
           <button
             onClick={handleUndo}
             disabled={!canUndo}
