@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Card } from '../types';
 import { renderClozeHtml } from '../pages/CardsPanel';
-import { toEditorHtml } from './CardEditPopup';
+import { toEditorHtml, applyBoldToRange } from './CardEditPopup';
 
 interface MultiExtraEditModalProps {
   cards: Card[];
@@ -114,6 +114,17 @@ export default function MultiExtraEditModal({
     onClose();
   }
 
+  // Bold the current selection inside a specific card's editor (reuses the
+  // popup's tested bold core). Save-all serializes the mutated DOM.
+  function handleBold(cardId: number) {
+    const el = editorRefs.current[cardId];
+    const sel = window.getSelection();
+    if (!el || !sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    if (range.collapsed || !el.contains(range.commonAncestorContainer)) return;
+    applyBoldToRange(el, range);
+  }
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center" role="dialog" aria-modal="true">
       {/* Overlay */}
@@ -180,6 +191,16 @@ export default function MultiExtraEditModal({
 
               {/* Rendered Anki extra editor — contentEditable replaces the old textarea */}
               <div className="p-2 bg-white">
+                <div className="mb-1.5">
+                  <button
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => handleBold(card.id)}
+                    title="Bold the selected text"
+                    className="px-2.5 py-1 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+                  >
+                    Bold
+                  </button>
+                </div>
                 <div
                   ref={(el) => {
                     editorRefs.current[card.id] = el;
@@ -210,7 +231,7 @@ export default function MultiExtraEditModal({
           </button>
           <button
             onClick={handleSaveAll}
-            className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+            className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700"
           >
             Save all
           </button>

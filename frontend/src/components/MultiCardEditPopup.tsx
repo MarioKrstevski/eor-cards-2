@@ -33,7 +33,7 @@ export default function MultiCardEditPopup({ count, onCombine, onRebuildFooters,
         <button
           onClick={onCombine}
           title="Combine the selected cards into one"
-          className="px-2.5 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-150"
+          className="px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
         >
           Combine into one
         </button>
@@ -41,26 +41,26 @@ export default function MultiCardEditPopup({ count, onCombine, onRebuildFooters,
         <button
           onClick={onRebuildFooters}
           title="Set each selected card's Extra to a bulleted list of the other selected cards"
-          className="flex flex-col items-start gap-0.5 px-2.5 py-1.5 text-xs font-medium text-sky-700 bg-sky-50 border border-sky-200 rounded-lg hover:bg-sky-100 transition-colors duration-150"
+          className="flex flex-col items-start gap-0.5 px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
         >
           <span>Rebuild sibling footers</span>
-          <span className="text-[10px] font-normal text-sky-600">Fill each card's footer with the others</span>
+          <span className="text-[10px] font-normal text-gray-500">Fill each card's footer with the others</span>
         </button>
 
         <button
           onClick={onEditExtras}
           title="Edit the Extra field for each selected card in one place"
-          className="flex flex-col items-start gap-0.5 px-2.5 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors duration-150"
+          className="flex flex-col items-start gap-0.5 px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
         >
           <span>Edit extras</span>
-          <span className="text-[10px] font-normal text-emerald-600">Edit all selected cards' extra fields</span>
+          <span className="text-[10px] font-normal text-gray-500">Edit all selected cards' extra fields</span>
         </button>
 
         {onDelete && (
           <button
             onClick={onDelete}
             title={`Delete ${count} selected cards`}
-            className="px-2.5 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors duration-150"
+            className="px-2.5 py-1.5 text-xs font-medium text-red-600 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition-colors duration-150"
           >
             Delete {count} cards
           </button>
