@@ -624,6 +624,11 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
     const holder = document.createElement('div');
     holder.appendChild(range.cloneContents());
     const snippetHtml = fromEditorHtml(holder);
+    // Preserve the selection's leading/trailing whitespace — the model trims it,
+    // which would otherwise glue the reworded text to its neighbouring words.
+    const selText = range.toString();
+    const leadWS = selText.match(/^\s*/)?.[0] ?? '';
+    const trailWS = selText.match(/\s*$/)?.[0] ?? '';
 
     setRewordHint(false);
     setRewording(true);
@@ -638,7 +643,7 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
       pushUndo('front');
       // Parse the marked-up result into editor nodes and swap it in.
       const parsed = document.createElement('div');
-      parsed.innerHTML = toEditorHtml(reworded);
+      parsed.innerHTML = toEditorHtml(leadWS + reworded.trim() + trailWS);
       const frag = document.createDocumentFragment();
       while (parsed.firstChild) frag.appendChild(parsed.firstChild);
       range.deleteContents();
