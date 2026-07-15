@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Card } from '../types';
 import { renderClozeHtml } from '../pages/CardsPanel';
-import { toEditorHtml, applyBoldToRange } from './CardEditPopup';
+import { toEditorHtml, applyBoldToRange, clozeBodyFromSpan } from './CardEditPopup';
 
 interface MultiExtraEditModalProps {
   cards: Card[];
   activeVersion: 'base' | 'v1' | 'v2' | 'v3';
   initialExtras: Record<number, string>;
+  ankiMode: boolean; // true = rendered TERM, false = {{c1::..}}
   onSaveAll: (extras: Record<number, string>) => void | Promise<void>;
   onClose: () => void;
 }
@@ -34,12 +35,10 @@ function serializeExtraNode(node: ChildNode, isFirstBlock?: boolean): string {
   const el = node as HTMLElement;
   const tag = el.tagName.toLowerCase();
 
-  // Cloze span → stored cloze markup.
+  // Cloze span → stored cloze markup. AUTO-DETECT the display mode (TEXT vs
+  // ANKI) from the span's text so save is identical in both modes.
   if (el.classList.contains('cz')) {
-    const term = el.textContent ?? '';
-    const hint = el.getAttribute('data-hint') ?? '';
-    const body = hint ? `${term}::${hint}` : term;
-    return `<span style="color:#1f77b4"><b>{{c1::${body}}}</b></span>`;
+    return `<span style="color:#1f77b4"><b>{{c1::${clozeBodyFromSpan(el)}}}</b></span>`;
   }
 
   // Recurse for inner content.
@@ -82,6 +81,7 @@ export default function MultiExtraEditModal({
   cards,
   activeVersion,
   initialExtras,
+  ankiMode,
   onSaveAll,
   onClose,
 }: MultiExtraEditModalProps) {
@@ -208,7 +208,7 @@ export default function MultiExtraEditModal({
                     // prevents re-initializing while the user is typing (React may call
                     // the ref callback again on re-renders if displayMode changes).
                     if (el && el.innerHTML === '') {
-                      el.innerHTML = toEditorHtml(initialExtras[card.id] ?? '');
+                      el.innerHTML = toEditorHtml(initialExtras[card.id] ?? '', ankiMode);
                     }
                   }}
                   contentEditable

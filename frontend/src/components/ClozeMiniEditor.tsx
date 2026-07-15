@@ -13,6 +13,7 @@ import {
 interface ClozeMiniEditorProps {
   value: string;                        // stored front/extra HTML
   onChange: (frontHtml: string) => void; // called with serialized stored HTML after every change
+  ankiMode: boolean;                    // true = rendered TERM, false = {{c1::..}}
   placeholder?: string;
 }
 
@@ -21,7 +22,7 @@ interface ClozeMiniEditorProps {
 // combine / recreate review cards. Reuses the popup's TESTED DOM cores; it does
 // NOT re-implement bold/cloze. No undo, no save button: the parent's Accept
 // applies whatever onChange last reported.
-export default function ClozeMiniEditor({ value, onChange, placeholder }: ClozeMiniEditorProps) {
+export default function ClozeMiniEditor({ value, onChange, ankiMode, placeholder }: ClozeMiniEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const [boldMode, setBoldMode] = useState<'bold' | 'unbold'>('bold');
   const [clozeMode, setClozeMode] = useState<'cloze' | 'uncloze'>('cloze');
@@ -33,9 +34,20 @@ export default function ClozeMiniEditor({ value, onChange, placeholder }: ClozeM
   // contentEditable owns its DOM; the parent state is kept in sync via onChange.
   useEffect(() => {
     const el = editorRef.current;
-    if (el) el.innerHTML = toEditorHtml(value);
+    if (el) el.innerHTML = toEditorHtml(value, ankiMode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Flip the rendered view when the global Text/Anki toggle changes, without
+  // data loss: re-serialize (auto-detect) then re-render in the new mode. Skips
+  // the initial mount (the seed effect above already used the right mode).
+  const didMountMode = useRef(false);
+  useEffect(() => {
+    if (!didMountMode.current) { didMountMode.current = true; return; }
+    const el = editorRef.current;
+    if (el) el.innerHTML = toEditorHtml(fromEditorHtml(el), ankiMode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ankiMode]);
 
   // The active range if — and only if — it lives inside THIS editor. Multiple
   // mini-editors mount at once, so every selection query is scoped to our root.
@@ -94,7 +106,7 @@ export default function ClozeMiniEditor({ value, onChange, placeholder }: ClozeM
   function handleCloze() {
     const er = ownRange();
     if (!er) return;
-    toggleClozeOnRange(er.root, er.range);
+    toggleClozeOnRange(er.root, er.range, ankiMode);
     refreshSelectionState();
     emit();
   }
@@ -102,7 +114,7 @@ export default function ClozeMiniEditor({ value, onChange, placeholder }: ClozeM
   function handleUnitsOut() {
     const root = editorRef.current;
     if (!root) return;
-    root.innerHTML = toEditorHtml(unitsOut(fromEditorHtml(root)));
+    root.innerHTML = toEditorHtml(unitsOut(fromEditorHtml(root)), ankiMode);
     refreshSelectionState();
     emit();
   }

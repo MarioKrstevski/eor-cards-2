@@ -130,27 +130,47 @@ function escapeAttr(s: string): string {
 // bare `{{c1::..}}`. Non-cloze <b> is kept as bold; everything else passes
 // through. We work purely on the string here (the input is our own clean stored
 // HTML, not messy contentEditable output).
-export function toEditorHtml(frontHtml: string): string {
+export function toEditorHtml(frontHtml: string, ankiMode = true): string {
   let out = frontHtml;
 
   // 1) Wrapped cloze: <span ...><b>{{c1::..}}</b></span> (optional <b>).
   out = out.replace(
     /<span[^>]*>(?:<b>)?\{\{c\d+::([\s\S]*?)\}\}(?:<\/b>)?<\/span>/g,
-    (_m, body: string) => clozeSpan(body)
+    (_m, body: string) => clozeSpan(body, ankiMode)
   );
 
   // 2) Any remaining bare cloze markers.
-  out = out.replace(/\{\{c\d+::([\s\S]*?)\}\}/g, (_m, body: string) => clozeSpan(body));
+  out = out.replace(/\{\{c\d+::([\s\S]*?)\}\}/g, (_m, body: string) => clozeSpan(body, ankiMode));
 
   return out;
 }
 
 // Build an editor cloze span from a cloze body ("TERM" or "TERM::HINT").
-function clozeSpan(body: string): string {
+//   ANKI mode: visible text is the TERM; the hint rides along in data-hint.
+//   TEXT mode: visible text is the literal `{{c1::BODY}}` (braces carry the
+//     hint, so no data-hint is needed) — round-trips via auto-detect on save.
+function clozeSpan(body: string, ankiMode = true): string {
+  if (!ankiMode) {
+    return `<span class="cz" style="color:#1f77b4;font-weight:700">${escapeHtml(`{{c1::${body}}}`)}</span>`;
+  }
   const sep = body.indexOf('::');
   const term = sep === -1 ? body : body.slice(0, sep);
   const hint = sep === -1 ? '' : body.slice(sep + 2);
   return `<span class="cz" data-hint="${escapeAttr(hint)}" style="color:#1f77b4;font-weight:700">${escapeHtml(term)}</span>`;
+}
+
+// Matches a full `{{cN::BODY}}` string (TEXT-mode span text). Group 1 = BODY.
+const TEXT_CLOZE_RE = /^\s*\{\{c\d+::([\s\S]*)\}\}\s*$/;
+
+// Compute the stored cloze BODY from a `.cz` editor span, auto-detecting which
+// display mode produced it. Shared by fromEditorHtml (CardEditPopup) and
+// serializeExtra (MultiExtraEditModal) so save is mode-agnostic.
+export function clozeBodyFromSpan(el: HTMLElement): string {
+  const text = el.textContent ?? '';
+  const m = text.match(TEXT_CLOZE_RE);
+  if (m) return m[1]; // TEXT-mode form: braces already carry the body (+hint).
+  const hint = el.getAttribute('data-hint') ?? '';
+  return hint ? `${text}::${hint}` : text; // ANKI-mode form.
 }
 
 // editor DOM → stored front_html. Walks childNodes (never regex the messy
@@ -173,12 +193,12 @@ function serializeNode(node: ChildNode): string {
   const el = node as HTMLElement;
   const tag = el.tagName.toLowerCase();
 
-  // Cloze span → stored cloze markup (re-append ::hint if present).
+  // Cloze span → stored cloze markup. AUTO-DETECT the display mode from the
+  // span's own text so save is identical in TEXT and ANKI mode (no mode param):
+  //   TEXT mode span text is `{{c1::BODY}}` → BODY is the captured group.
+  //   ANKI mode span text is the TERM → BODY re-appends ::hint if present.
   if (el.classList.contains('cz')) {
-    const term = el.textContent ?? '';
-    const hint = el.getAttribute('data-hint') ?? '';
-    const body = hint ? `${term}::${hint}` : term;
-    return `<span style="color:#1f77b4"><b>{{c1::${body}}}</b></span>`;
+    return `<span style="color:#1f77b4"><b>{{c1::${clozeBodyFromSpan(el)}}}</b></span>`;
   }
 
   // Recurse for children of container/inline elements.
@@ -201,6 +221,7 @@ interface CardEditPopupProps {
   card: Card;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onSave: (id: number, patch: any) => void | Promise<void>;
+  ankiMode: boolean; // drives cloze display: true = rendered TERM, false = {{c1::..}}
   onSplit?: () => void;
   onDelete?: () => void;
   onClose: () => void;
@@ -402,11 +423,16 @@ export function applyBoldToRange(root: HTMLElement, range: Range): void {
 // Toggle cloze on [range]: uncloze if it touches a cloze span, else cloze the
 // selection (whole-cloze atomic; guards empty + nested). This is the exact DOM
 // core the popup's handleCloze runs, minus its React/undo wrappers.
-export function toggleClozeOnRange(root: HTMLElement, range: Range): void {
+export function toggleClozeOnRange(root: HTMLElement, range: Range, ankiMode = true): void {
   const existing = rangeHasCloze(range, root);
   if (existing) {
-    // UNCLOZE: replace the span with its plain text.
-    const text = document.createTextNode(existing.textContent ?? '');
+    // UNCLOZE: replace the span with its brace-free TERM as plain text. In TEXT
+    // mode the span text is `{{c1::TERM::hint}}`; strip the wrapper + hint so
+    // uncloze leaves `20`, not `{{c1::20}}`.
+    const raw = existing.textContent ?? '';
+    const m = raw.match(/\{\{c\d+::([\s\S]*?)(?:::[^}]*)?\}\}/);
+    const term = m ? m[1] : raw;
+    const text = document.createTextNode(term);
     existing.parentNode?.replaceChild(text, existing);
     normalize(root);
     selectNode(text, root);
@@ -421,7 +447,14 @@ export function toggleClozeOnRange(root: HTMLElement, range: Range): void {
   span.className = 'cz';
   span.setAttribute('data-hint', '');
   span.setAttribute('style', 'color:#1f77b4;font-weight:700');
-  span.appendChild(contents);
+  if (ankiMode) {
+    // ANKI: visible text is the selected TERM.
+    span.appendChild(contents);
+  } else {
+    // TEXT: visible text is the literal `{{c1::TERM}}` to match the surrounding
+    // Text-mode display. Auto-detect on save unwraps it back to the stored form.
+    span.textContent = `{{c1::${contents.textContent ?? ''}}}`;
+  }
   range.insertNode(span);
   normalize(root);
   selectNodeContents(span, root);
@@ -431,7 +464,7 @@ type BoldMode = 'bold' | 'unbold';
 type ClozeMode = 'cloze' | 'uncloze';
 type EditorTab = 'front' | 'extra';
 
-export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose }: CardEditPopupProps) {
+export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelete, onClose }: CardEditPopupProps) {
   const { activeCardVersion, selectedModel } = useSettings();
   const ver = activeCardVersion as CardVersion;
   const [tab, setTab] = useState<EditorTab>('front');
@@ -466,9 +499,9 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
   // changes (never on background refresh mid-edit — id/version are stable).
   useEffect(() => {
     const el = editorRef.current;
-    if (el) el.innerHTML = toEditorHtml(frontFor(card, ver));
+    if (el) el.innerHTML = toEditorHtml(frontFor(card, ver), ankiMode);
     const ex = extraRef.current;
-    if (ex) ex.innerHTML = toEditorHtml(extraFor(card, ver));
+    if (ex) ex.innerHTML = toEditorHtml(extraFor(card, ver), ankiMode);
     setTab('front');
     setHasSelection(false);
     setBoldMode('bold');
@@ -486,6 +519,22 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
     refreshContentState();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card.id, ver]);
+
+  // When the global Text/Anki toggle flips while the popup is open, re-render
+  // both editors in the new mode without data loss: serialize the current DOM
+  // (auto-detect, no mode) then re-render in the new mode. Skips the first run
+  // (the load effect above already rendered in the right mode).
+  const didMountMode = useRef(false);
+  useEffect(() => {
+    if (!didMountMode.current) { didMountMode.current = true; return; }
+    const el = editorRef.current;
+    if (el) el.innerHTML = toEditorHtml(fromEditorHtml(el), ankiMode);
+    const ex = extraRef.current;
+    if (ex) ex.innerHTML = toEditorHtml(fromEditorHtml(ex), ankiMode);
+    refreshSelectionState();
+    refreshContentState();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ankiMode]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -607,7 +656,7 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
       if (clozeAncestor(range.startContainer, root) || clozeAncestor(range.endContainer, root)) return;
     }
     pushUndo(root === extraRef.current ? 'extra' : 'front');
-    toggleClozeOnRange(root, range);
+    toggleClozeOnRange(root, range, ankiMode);
     refreshSelectionState();
   }
 
@@ -643,7 +692,7 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
       pushUndo('front');
       // Parse the marked-up result into editor nodes and swap it in.
       const parsed = document.createElement('div');
-      parsed.innerHTML = toEditorHtml(leadWS + reworded.trim() + trailWS);
+      parsed.innerHTML = toEditorHtml(leadWS + reworded.trim() + trailWS, ankiMode);
       const frag = document.createDocumentFragment();
       while (parsed.firstChild) frag.appendChild(parsed.firstChild);
       range.deleteContents();
@@ -724,14 +773,14 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
       const frontEl = editorRef.current;
       if (frontEl) {
         pushUndo('front');
-        frontEl.innerHTML = toEditorHtml(front_html);
+        frontEl.innerHTML = toEditorHtml(front_html, ankiMode);
       }
       // Load extra only when the API returned a non-null value.
       if (extra !== null) {
         const extraEl = extraRef.current;
         if (extraEl) {
           pushUndo('extra');
-          extraEl.innerHTML = toEditorHtml(extra || '');
+          extraEl.innerHTML = toEditorHtml(extra || '', ankiMode);
         }
       }
       refreshSelectionState();
@@ -754,7 +803,7 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
     if (!root) return;
     pushUndo('front');
     const stored = fromEditorHtml(root);
-    root.innerHTML = toEditorHtml(unitsOut(stored));
+    root.innerHTML = toEditorHtml(unitsOut(stored), ankiMode);
     refreshSelectionState();
     refreshContentState();
   }
@@ -766,7 +815,7 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
     const root = which === 'extra' ? extraRef.current : editorRef.current;
     if (!root) return;
     pushUndo(which);
-    root.innerHTML = toEditorHtml(cleanFront(fromEditorHtml(root)));
+    root.innerHTML = toEditorHtml(cleanFront(fromEditorHtml(root)), ankiMode);
     refreshSelectionState();
     refreshContentState();
   }

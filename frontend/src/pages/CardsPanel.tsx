@@ -3812,6 +3812,7 @@ export default function CardsPanel({
           <CardEditPopup
             card={card}
             onSave={handleCellSave}
+            ankiMode={showAnkiFormat}
             onSplit={() => doRegenWithMode('split')}
             onDelete={() => setConfirmDeleteCardId(card.id)}
             onClose={() => setSelectedIds(new Set())}
@@ -3836,6 +3837,7 @@ export default function CardsPanel({
             cards={selectedCards}
             activeVersion={activeCardVersion}
             initialExtras={multiExtraEditModal.initialExtras}
+            ankiMode={showAnkiFormat}
             onSaveAll={handleSaveAllExtras}
             onClose={() => setMultiExtraEditModal(null)}
           />
@@ -3951,10 +3953,10 @@ export default function CardsPanel({
                       <p className="text-xs text-gray-400">No new cards proposed.</p>
                     ) : splitCards.map((nc, i) => (
                       <div key={i} className="border border-green-200 rounded p-2 bg-green-50/40">
-                        <ClozeMiniEditor value={nc.front_html} onChange={(v) => setSplitCards(prev => prev.map((c, idx) => idx === i ? { ...c, front_html: v } : c))} />
+                        <ClozeMiniEditor ankiMode={showAnkiFormat} value={nc.front_html} onChange={(v) => setSplitCards(prev => prev.map((c, idx) => idx === i ? { ...c, front_html: v } : c))} />
                         <div className="border-t border-green-100 mt-1.5 pt-1.5">
                           <span className="text-[9px] text-gray-400 uppercase">Extra</span>
-                          <ClozeMiniEditor value={nc.extra ?? ''} placeholder="— add extra —" onChange={(v) => setSplitCards(prev => prev.map((c, idx) => idx === i ? { ...c, extra: v || null } : c))} />
+                          <ClozeMiniEditor ankiMode={showAnkiFormat} value={nc.extra ?? ''} placeholder="— add extra —" onChange={(v) => setSplitCards(prev => prev.map((c, idx) => idx === i ? { ...c, extra: v || null } : c))} />
                         </div>
                       </div>
                     ))}
@@ -3998,10 +4000,10 @@ export default function CardsPanel({
                 <div>
                   <p className="text-[10px] font-semibold text-green-600 uppercase mb-1">Combined card · edit inline</p>
                   <div className="border border-green-200 rounded p-2 bg-green-50/40">
-                    <ClozeMiniEditor value={combineProposal.front_html} onChange={(v) => setCombineProposal({ ...combineProposal, front_html: v })} />
+                    <ClozeMiniEditor ankiMode={showAnkiFormat} value={combineProposal.front_html} onChange={(v) => setCombineProposal({ ...combineProposal, front_html: v })} />
                     <div className="border-t border-green-100 mt-1.5 pt-1.5">
                       <span className="text-[9px] text-gray-400 uppercase">Extra</span>
-                      <ClozeMiniEditor value={combineProposal.extra ?? ''} placeholder="— add extra —" onChange={(v) => setCombineProposal({ ...combineProposal, extra: v || null })} />
+                      <ClozeMiniEditor ankiMode={showAnkiFormat} value={combineProposal.extra ?? ''} placeholder="— add extra —" onChange={(v) => setCombineProposal({ ...combineProposal, extra: v || null })} />
                     </div>
                   </div>
                 </div>
@@ -4039,10 +4041,10 @@ export default function CardsPanel({
                 <div>
                   <p className="text-[10px] font-semibold text-green-600 uppercase mb-1">Suggested</p>
                   <div className="border border-green-200 rounded p-2 bg-green-50/40">
-                    <ClozeMiniEditor key={`front-${regenProposal.cardId}-${regenNonce}`} value={regenProposal.front_html} onChange={(v) => setRegenProposal(p => p ? { ...p, front_html: v } : p)} />
+                    <ClozeMiniEditor ankiMode={showAnkiFormat} key={`front-${regenProposal.cardId}-${regenNonce}`} value={regenProposal.front_html} onChange={(v) => setRegenProposal(p => p ? { ...p, front_html: v } : p)} />
                     <div className="border-t border-green-100 mt-1.5 pt-1.5">
                       <span className="text-[9px] text-gray-400 uppercase">Extra</span>
-                      <ClozeMiniEditor key={`extra-${regenProposal.cardId}-${regenNonce}`} value={regenProposal.extra ?? ''} placeholder="— add extra —" onChange={(v) => setRegenProposal(p => p ? { ...p, extra: v || null } : p)} />
+                      <ClozeMiniEditor ankiMode={showAnkiFormat} key={`extra-${regenProposal.cardId}-${regenNonce}`} value={regenProposal.extra ?? ''} placeholder="— add extra —" onChange={(v) => setRegenProposal(p => p ? { ...p, extra: v || null } : p)} />
                     </div>
                   </div>
                 </div>
