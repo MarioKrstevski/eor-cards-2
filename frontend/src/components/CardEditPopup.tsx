@@ -674,7 +674,7 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
         <button onClick={onClose} className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-50 text-lg leading-none" title="Close (Esc)">✕</button>
       </div>
 
-      <div className="p-4 flex flex-col gap-4 overflow-auto">
+      <div className="p-4 flex flex-col gap-2 overflow-auto">
         {/* WYSIWYG editors: bold shows bold, clozes show as blue-bold terms.
             Both stay mounted; the tab switch just hides the inactive one so
             drafts survive tab flips and Save can serialize both. */}
@@ -737,7 +737,7 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onD
                 <button
                   onClick={handleUnitsOut}
                   title="Move a trailing unit outside the cloze, e.g. {{c1::20 years}} → {{c1::20}} years."
-                  className="ml-4 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+                  className="ml-[120px] px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
                 >
                   Units out
                 </button>
