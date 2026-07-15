@@ -203,6 +203,7 @@ interface CardEditPopupProps {
   onSave: (id: number, patch: any) => void | Promise<void>;
   onRegenerate: (card: Card) => void;
   onSplit?: () => void;
+  onDelete?: () => void;
   onClose: () => void;
 }
 
@@ -277,7 +278,7 @@ type BoldMode = 'bold' | 'unbold';
 type ClozeMode = 'cloze' | 'uncloze';
 type EditorTab = 'front' | 'extra';
 
-export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onClose }: CardEditPopupProps) {
+export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onDelete, onClose }: CardEditPopupProps) {
   const { activeCardVersion } = useSettings();
   const ver = activeCardVersion as CardVersion;
   const [tab, setTab] = useState<EditorTab>('front');
@@ -810,6 +811,15 @@ export default function CardEditPopup({ card, onSave, onRegenerate, onSplit, onC
           >
             Undo
           </button>
+          {onDelete && (
+            <button
+              onClick={onDelete}
+              title="Delete this card"
+              className="px-3 py-2 text-sm font-medium text-red-600 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition-colors duration-150"
+            >
+              Delete
+            </button>
+          )}
           <button
             onClick={onClose}
             className="ml-auto px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"

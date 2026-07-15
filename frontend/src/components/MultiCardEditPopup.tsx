@@ -5,6 +5,7 @@ interface MultiCardEditPopupProps {
   onCombine: () => void;
   onRebuildFooters: () => void;
   onEditExtras: () => void;
+  onDelete?: () => void;
   onClose: () => void;
 }
 
@@ -12,7 +13,7 @@ interface MultiCardEditPopupProps {
 // counterpart to CardEditPopup. Same chrome (fixed right-4 top-24 w-80 z-40,
 // white/rounded/border/shadow, Esc-to-close). Buttons call handlers that live in
 // CardsPanel: doRegenWithMode('combine') and handleRebuildFooters.
-export default function MultiCardEditPopup({ count, onCombine, onRebuildFooters, onEditExtras, onClose }: MultiCardEditPopupProps) {
+export default function MultiCardEditPopup({ count, onCombine, onRebuildFooters, onEditExtras, onDelete, onClose }: MultiCardEditPopupProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -54,6 +55,16 @@ export default function MultiCardEditPopup({ count, onCombine, onRebuildFooters,
           <span>Edit extras</span>
           <span className="text-[10px] font-normal text-emerald-600">Edit all selected cards' extra fields</span>
         </button>
+
+        {onDelete && (
+          <button
+            onClick={onDelete}
+            title={`Delete ${count} selected cards`}
+            className="px-2.5 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors duration-150"
+          >
+            Delete {count} cards
+          </button>
+        )}
       </div>
     </div>
   );

@@ -1165,6 +1165,7 @@ export default function CardsPanel({
 
   // ── Delete confirmation ──────────────────────────────────────────────────
   const [confirmDeleteCardId, setConfirmDeleteCardId] = useState<number | null>(null);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState<'selected' | 'all' | null>(null);
 
   // ── Action error ─────────────────────────────────────────────────────────
   const [actionError, setActionError] = useState<string | null>(null);
@@ -2162,6 +2163,7 @@ export default function CardsPanel({
     try {
       await deleteCard(confirmDeleteCardId);
       setConfirmDeleteCardId(null);
+      setSelectedIds(prev => { const next = new Set(prev); next.delete(confirmDeleteCardId); return next; });
       fetchCards(sectionId, topicPath, true);
       onReviewChange?.();
     } catch {
@@ -3139,13 +3141,13 @@ export default function CardsPanel({
                 {showDeleteMenu && (
                   <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 min-w-[190px] py-1">
                     <button
-                      onClick={() => { setShowDeleteMenu(false); handleBulkDelete('selected'); }}
+                      onClick={() => { setShowDeleteMenu(false); setConfirmBulkDelete('selected'); }}
                       className="block w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
                     >
                       Selected only ({selectedIds.size})
                     </button>
                     <button
-                      onClick={() => { setShowDeleteMenu(false); handleBulkDelete('all'); }}
+                      onClick={() => { setShowDeleteMenu(false); setConfirmBulkDelete('all'); }}
                       className="block w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50"
                     >
                       All cards in topic ({totalCards})
@@ -3155,7 +3157,7 @@ export default function CardsPanel({
               </>
             ) : (
               <button
-                onClick={() => handleBulkDelete('selected')}
+                onClick={() => setConfirmBulkDelete('selected')}
                 className="px-2.5 py-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors duration-150"
               >
                 Delete
@@ -3425,6 +3427,21 @@ export default function CardsPanel({
           variant="danger"
           onConfirm={handleDeleteCard}
           onCancel={() => setConfirmDeleteCardId(null)}
+        />
+      )}
+
+      {confirmBulkDelete != null && (
+        <ConfirmModal
+          title="Delete cards?"
+          message={
+            confirmBulkDelete === 'selected'
+              ? `Delete ${selectedIds.size} selected card${selectedIds.size === 1 ? '' : 's'}? This cannot be undone.`
+              : `Delete all ${totalCards} cards in ${effectiveSectionId != null ? 'this section' : 'this topic'}? This cannot be undone.`
+          }
+          confirmLabel="Delete"
+          variant="danger"
+          onConfirm={() => { handleBulkDelete(confirmBulkDelete); setConfirmBulkDelete(null); }}
+          onCancel={() => setConfirmBulkDelete(null)}
         />
       )}
 
@@ -3808,6 +3825,7 @@ export default function CardsPanel({
             onSave={handleCellSave}
             onRegenerate={() => doRegen('selected')}
             onSplit={() => doRegenWithMode('split')}
+            onDelete={() => setConfirmDeleteCardId(card.id)}
             onClose={() => setSelectedIds(new Set())}
           />
         );
@@ -3818,6 +3836,7 @@ export default function CardsPanel({
           onCombine={() => doRegenWithMode('combine')}
           onRebuildFooters={handleRebuildFooters}
           onEditExtras={handleEditExtras}
+          onDelete={() => setConfirmBulkDelete('selected')}
           onClose={() => setSelectedIds(new Set())}
         />
       )}
