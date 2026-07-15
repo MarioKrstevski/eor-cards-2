@@ -220,7 +220,7 @@ function extraPatchKey(ver: CardVersion): string {
 
 // The nearest ancestor <b> (that is NOT a cloze span) of a node, bounded by the
 // editor root. Returns null if none.
-function boldAncestor(node: Node | null, root: HTMLElement): HTMLElement | null {
+export function boldAncestor(node: Node | null, root: HTMLElement): HTMLElement | null {
   let n: Node | null = node;
   while (n && n !== root) {
     if (n.nodeType === Node.ELEMENT_NODE) {
@@ -235,7 +235,7 @@ function boldAncestor(node: Node | null, root: HTMLElement): HTMLElement | null 
 }
 
 // The nearest ancestor cloze span of a node, bounded by the editor root.
-function clozeAncestor(node: Node | null, root: HTMLElement): HTMLElement | null {
+export function clozeAncestor(node: Node | null, root: HTMLElement): HTMLElement | null {
   let n: Node | null = node;
   while (n && n !== root) {
     if (n.nodeType === Node.ELEMENT_NODE && (n as HTMLElement).classList.contains('cz')) {
@@ -247,7 +247,7 @@ function clozeAncestor(node: Node | null, root: HTMLElement): HTMLElement | null
 }
 
 // Does [range] touch any bold (non-cloze) content? Used for BOLD/UNBOLD mode.
-function rangeHasBold(range: Range, root: HTMLElement): boolean {
+export function rangeHasBold(range: Range, root: HTMLElement): boolean {
   // Endpoints inside a bold.
   if (boldAncestor(range.startContainer, root)) return true;
   if (boldAncestor(range.endContainer, root)) return true;
@@ -261,7 +261,7 @@ function rangeHasBold(range: Range, root: HTMLElement): boolean {
 }
 
 // Does [range] touch any cloze span? Used for CLOZE/UNCLOZE mode.
-function rangeHasCloze(range: Range, root: HTMLElement): HTMLElement | null {
+export function rangeHasCloze(range: Range, root: HTMLElement): HTMLElement | null {
   const inStart = clozeAncestor(range.startContainer, root);
   if (inStart) return inStart;
   const inEnd = clozeAncestor(range.endContainer, root);
@@ -271,6 +271,160 @@ function rangeHasCloze(range: Range, root: HTMLElement): HTMLElement | null {
     if (range.intersectsNode(c)) return c as HTMLElement;
   }
   return null;
+}
+
+// ── Small DOM utilities (module-level, root-scoped, no React state) ────────────
+function normalize(root: HTMLElement) {
+  root.normalize();
+}
+function selectNodeContents(node: Node, root: HTMLElement) {
+  const sel = window.getSelection();
+  if (!sel || !root.contains(node)) return;
+  const r = document.createRange();
+  r.selectNodeContents(node);
+  sel.removeAllRanges();
+  sel.addRange(r);
+}
+function selectNode(node: Node, root: HTMLElement) {
+  const sel = window.getSelection();
+  if (!sel || !root.contains(node)) return;
+  const r = document.createRange();
+  r.selectNode(node);
+  sel.removeAllRanges();
+  sel.addRange(r);
+}
+
+// ── Bold / Cloze mutation cores (pure DOM, no React state, no undo) ────────────
+// These are the exact split/unwrap-or-wrap and cloze/uncloze algorithms the
+// popup uses. The popup's handleBold/handleCloze wrap these with pushUndo +
+// refreshSelectionState; the mini-editor calls them directly.
+
+// Wrap the exact selected range in a fresh <b> (skips content already inside a
+// cloze — those are styled separately).
+function boldRange(range: Range, root: HTMLElement) {
+  const contents = range.extractContents();
+  const b = document.createElement('b');
+  b.appendChild(contents);
+  range.insertNode(b);
+  // Restore a selection around the new bold text.
+  selectNodeContents(b, root);
+  normalize(root);
+}
+
+// Given a <b> and the selection range, keep the portions OUTSIDE the range
+// bold and unwrap the portion INSIDE it. Works on the text of the <b>.
+function splitAndUnwrapBold(b: HTMLElement, range: Range, root: HTMLElement) {
+  const bRange = document.createRange();
+  bRange.selectNodeContents(b);
+
+  // Intersection of the selection with this <b>.
+  const startsBefore = range.compareBoundaryPoints(Range.START_TO_START, bRange) <= 0;
+  const endsAfter = range.compareBoundaryPoints(Range.END_TO_END, bRange) >= 0;
+
+  // Portion of b before the selection stays bold.
+  let beforeFrag: DocumentFragment | null = null;
+  if (!startsBefore) {
+    const r = document.createRange();
+    r.setStart(bRange.startContainer, bRange.startOffset);
+    r.setEnd(range.startContainer, range.startOffset);
+    beforeFrag = r.cloneContents();
+  }
+  // Portion after the selection stays bold.
+  let afterFrag: DocumentFragment | null = null;
+  if (!endsAfter) {
+    const r = document.createRange();
+    r.setStart(range.endContainer, range.endOffset);
+    r.setEnd(bRange.endContainer, bRange.endOffset);
+    afterFrag = r.cloneContents();
+  }
+  // Covered portion becomes plain (unwrapped).
+  const coveredRange = document.createRange();
+  coveredRange.setStart(
+    startsBefore ? bRange.startContainer : range.startContainer,
+    startsBefore ? bRange.startOffset : range.startOffset,
+  );
+  coveredRange.setEnd(
+    endsAfter ? bRange.endContainer : range.endContainer,
+    endsAfter ? bRange.endOffset : range.endOffset,
+  );
+  const coveredFrag = coveredRange.cloneContents();
+
+  // Rebuild: [<b>before</b>] plainCovered [<b>after</b>] in place of b.
+  const parent = b.parentNode;
+  if (!parent) return;
+  const frag = document.createDocumentFragment();
+  if (beforeFrag && beforeFrag.textContent) {
+    const nb = document.createElement('b');
+    nb.appendChild(beforeFrag);
+    frag.appendChild(nb);
+  }
+  frag.appendChild(coveredFrag);
+  if (afterFrag && afterFrag.textContent) {
+    const nb = document.createElement('b');
+    nb.appendChild(afterFrag);
+    frag.appendChild(nb);
+  }
+  parent.replaceChild(frag, b);
+  void root;
+}
+
+// Remove bold across the whole selected range. Split any <b> at the range
+// boundaries and unwrap the covered portion.
+function unboldRange(range: Range, root: HTMLElement) {
+  // Collect the <b> elements the range touches (endpoints + intersected).
+  const affected = new Set<HTMLElement>();
+  const startB = boldAncestor(range.startContainer, root);
+  const endB = boldAncestor(range.endContainer, root);
+  if (startB) affected.add(startB);
+  if (endB) affected.add(endB);
+  root.querySelectorAll('b, strong').forEach((b) => {
+    const el = b as HTMLElement;
+    if (el.closest('.cz')) return;
+    if (range.intersectsNode(el)) affected.add(el);
+  });
+
+  // Split each affected <b> so only the covered part is unwrapped.
+  affected.forEach((b) => splitAndUnwrapBold(b, range, root));
+  normalize(root);
+  // Re-select roughly the same text region if possible.
+  const sel = window.getSelection();
+  if (sel) { try { sel.removeAllRanges(); sel.addRange(range); } catch { /* range may be stale */ } }
+}
+
+// Toggle bold on [range]: unbold if it touches bold, else bold it. No-op on a
+// collapsed range. This is the exact DOM core the popup's handleBold runs.
+export function applyBoldToRange(root: HTMLElement, range: Range): void {
+  if (range.collapsed) return;
+  if (rangeHasBold(range, root)) unboldRange(range, root);
+  else boldRange(range, root);
+}
+
+// Toggle cloze on [range]: uncloze if it touches a cloze span, else cloze the
+// selection (whole-cloze atomic; guards empty + nested). This is the exact DOM
+// core the popup's handleCloze runs, minus its React/undo wrappers.
+export function toggleClozeOnRange(root: HTMLElement, range: Range): void {
+  const existing = rangeHasCloze(range, root);
+  if (existing) {
+    // UNCLOZE: replace the span with its plain text.
+    const text = document.createTextNode(existing.textContent ?? '');
+    existing.parentNode?.replaceChild(text, existing);
+    normalize(root);
+    selectNode(text, root);
+    return;
+  }
+  // CLOZE: guard against empty + nested.
+  if (range.collapsed) return;
+  if (clozeAncestor(range.startContainer, root) || clozeAncestor(range.endContainer, root)) return;
+  const contents = range.extractContents();
+  if (!contents.textContent) return;
+  const span = document.createElement('span');
+  span.className = 'cz';
+  span.setAttribute('data-hint', '');
+  span.setAttribute('style', 'color:#1f77b4;font-weight:700');
+  span.appendChild(contents);
+  range.insertNode(span);
+  normalize(root);
+  selectNodeContents(span, root);
 }
 
 type BoldMode = 'bold' | 'unbold';
@@ -425,143 +579,35 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
   }
 
   // ── Bold / Unbold ───────────────────────────────────────────────────────────
+  // Wrapper around the module-level applyBoldToRange DOM core: adds the popup's
+  // undo snapshot + selection-state refresh. The mutation itself is identical.
   function handleBold() {
     const er = editorRange();
     if (!er || er.range.collapsed) return;
     const { root, range } = er;
     pushUndo(root === extraRef.current ? 'extra' : 'front');
-    if (rangeHasBold(range, root)) unboldRange(range, root);
-    else boldRange(range, root);
+    applyBoldToRange(root, range);
     refreshSelectionState();
   }
 
-  // Wrap the exact selected range in a fresh <b> (skips content already inside a
-  // cloze — those are styled separately).
-  function boldRange(range: Range, root: HTMLElement) {
-    const contents = range.extractContents();
-    const b = document.createElement('b');
-    b.appendChild(contents);
-    range.insertNode(b);
-    // Restore a selection around the new bold text.
-    selectNodeContents(b, root);
-    normalize(root);
-  }
-
-  // Remove bold across the whole selected range. Split any <b> at the range
-  // boundaries and unwrap the covered portion.
-  function unboldRange(range: Range, root: HTMLElement) {
-    // Collect the <b> elements the range touches (endpoints + intersected).
-    const affected = new Set<HTMLElement>();
-    const startB = boldAncestor(range.startContainer, root);
-    const endB = boldAncestor(range.endContainer, root);
-    if (startB) affected.add(startB);
-    if (endB) affected.add(endB);
-    root.querySelectorAll('b, strong').forEach((b) => {
-      const el = b as HTMLElement;
-      if (el.closest('.cz')) return;
-      if (range.intersectsNode(el)) affected.add(el);
-    });
-
-    // Split each affected <b> so only the covered part is unwrapped.
-    affected.forEach((b) => splitAndUnwrapBold(b, range, root));
-    normalize(root);
-    // Re-select roughly the same text region if possible.
-    const sel = window.getSelection();
-    if (sel) { try { sel.removeAllRanges(); sel.addRange(range); } catch { /* range may be stale */ } }
-  }
-
-  // Given a <b> and the selection range, keep the portions OUTSIDE the range
-  // bold and unwrap the portion INSIDE it. Works on the text of the <b>.
-  function splitAndUnwrapBold(b: HTMLElement, range: Range, root: HTMLElement) {
-    const bRange = document.createRange();
-    bRange.selectNodeContents(b);
-
-    // Intersection of the selection with this <b>.
-    const startsBefore = range.compareBoundaryPoints(Range.START_TO_START, bRange) <= 0;
-    const endsAfter = range.compareBoundaryPoints(Range.END_TO_END, bRange) >= 0;
-
-    // Portion of b before the selection stays bold.
-    let beforeFrag: DocumentFragment | null = null;
-    if (!startsBefore) {
-      const r = document.createRange();
-      r.setStart(bRange.startContainer, bRange.startOffset);
-      r.setEnd(range.startContainer, range.startOffset);
-      beforeFrag = r.cloneContents();
-    }
-    // Portion after the selection stays bold.
-    let afterFrag: DocumentFragment | null = null;
-    if (!endsAfter) {
-      const r = document.createRange();
-      r.setStart(range.endContainer, range.endOffset);
-      r.setEnd(bRange.endContainer, bRange.endOffset);
-      afterFrag = r.cloneContents();
-    }
-    // Covered portion becomes plain (unwrapped).
-    const coveredRange = document.createRange();
-    coveredRange.setStart(
-      startsBefore ? bRange.startContainer : range.startContainer,
-      startsBefore ? bRange.startOffset : range.startOffset,
-    );
-    coveredRange.setEnd(
-      endsAfter ? bRange.endContainer : range.endContainer,
-      endsAfter ? bRange.endOffset : range.endOffset,
-    );
-    const coveredFrag = coveredRange.cloneContents();
-
-    // Rebuild: [<b>before</b>] plainCovered [<b>after</b>] in place of b.
-    const parent = b.parentNode;
-    if (!parent) return;
-    const frag = document.createDocumentFragment();
-    if (beforeFrag && beforeFrag.textContent) {
-      const nb = document.createElement('b');
-      nb.appendChild(beforeFrag);
-      frag.appendChild(nb);
-    }
-    frag.appendChild(coveredFrag);
-    if (afterFrag && afterFrag.textContent) {
-      const nb = document.createElement('b');
-      nb.appendChild(afterFrag);
-      frag.appendChild(nb);
-    }
-    parent.replaceChild(frag, b);
-    void root;
-  }
-
   // ── Cloze / Uncloze ───────────────────────────────────────────────────────────
+  // Wrapper around the module-level toggleClozeOnRange DOM core. Pushes undo
+  // only when a mutation will actually happen (matches the old behavior: a
+  // no-op cloze on an empty/nested range leaves the undo stack untouched).
   function handleCloze() {
     const er = editorRange();
     if (!er) return;
     const { root, range } = er;
 
     const existing = rangeHasCloze(range, root);
-    if (existing) {
-      // UNCLOZE: replace the span with its plain text.
-      pushUndo(root === extraRef.current ? 'extra' : 'front');
-      const text = document.createTextNode(existing.textContent ?? '');
-      existing.parentNode?.replaceChild(text, existing);
-      normalize(root);
-      selectNode(text, root);
-    } else {
-      // CLOZE: guard against empty + nested.
+    if (!existing) {
+      // Same guards toggleClozeOnRange applies — check them here so we don't
+      // push an undo snapshot for a no-op.
       if (range.collapsed) return;
       if (clozeAncestor(range.startContainer, root) || clozeAncestor(range.endContainer, root)) return;
-      pushUndo(root === extraRef.current ? 'extra' : 'front');
-      const contents = range.extractContents();
-      if (!contents.textContent) {
-        // Nothing selected after all — drop the snapshot we just pushed.
-        undoStacks.current.front.pop();
-        setUndoDepth((d) => ({ ...d, front: undoStacks.current.front.length }));
-        return;
-      }
-      const span = document.createElement('span');
-      span.className = 'cz';
-      span.setAttribute('data-hint', '');
-      span.setAttribute('style', 'color:#1f77b4;font-weight:700');
-      span.appendChild(contents);
-      range.insertNode(span);
-      normalize(root);
-      selectNodeContents(span, root);
     }
+    pushUndo(root === extraRef.current ? 'extra' : 'front');
+    toggleClozeOnRange(root, range);
     refreshSelectionState();
   }
 
@@ -737,27 +783,6 @@ export default function CardEditPopup({ card, onSave, onSplit, onDelete, onClose
     // Persist first, then close (deselects + hides the popup). Only reached on
     // a successful save — a throw above skips this.
     onClose();
-  }
-
-  // ── Small DOM utilities ─────────────────────────────────────────────────────
-  function normalize(root: HTMLElement) {
-    root.normalize();
-  }
-  function selectNodeContents(node: Node, root: HTMLElement) {
-    const sel = window.getSelection();
-    if (!sel || !root.contains(node)) return;
-    const r = document.createRange();
-    r.selectNodeContents(node);
-    sel.removeAllRanges();
-    sel.addRange(r);
-  }
-  function selectNode(node: Node, root: HTMLElement) {
-    const sel = window.getSelection();
-    if (!sel || !root.contains(node)) return;
-    const r = document.createRange();
-    r.selectNode(node);
-    sel.removeAllRanges();
-    sel.addRange(r);
   }
 
   const canUndo = undoDepth[tab] > 0;

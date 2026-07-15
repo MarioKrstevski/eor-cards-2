@@ -61,6 +61,7 @@ import AnkifyModal from '../components/AnkifyModal';
 import CompareVersionsModal from '../components/CompareVersionsModal';
 import CreatePresentationModal from '../components/CreatePresentationModal';
 import CardEditPopup from '../components/CardEditPopup';
+import ClozeMiniEditor from '../components/ClozeMiniEditor';
 import MultiCardEditPopup from '../components/MultiCardEditPopup';
 import MultiExtraEditModal from '../components/MultiExtraEditModal';
 import SectionViewer from './SectionViewer';
@@ -393,35 +394,6 @@ function BigEditModal({ cards, cardId: startId, field: startField, activeCardVer
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-// Double-click-to-edit field used inside the split/combine review modals.
-function ProposalEditableField({ html, onSave, className }: { html: string; onSave: (v: string) => void; className?: string }) {
-  const [editing, setEditing] = useState(false);
-  const [val, setVal] = useState(html);
-  useEffect(() => { setVal(html); }, [html]);
-  if (editing) {
-    return (
-      <textarea
-        autoFocus
-        value={val}
-        onChange={(e) => setVal(e.target.value)}
-        onBlur={() => { setEditing(false); if (val !== html) onSave(val); }}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') { e.preventDefault(); setEditing(false); setVal(html); }
-          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); setEditing(false); if (val !== html) onSave(val); }
-        }}
-        className="w-full min-h-[90px] text-sm border border-blue-400 rounded p-2 outline-none resize-y font-mono leading-relaxed"
-      />
-    );
-  }
-  return (
-    <div onDoubleClick={() => { setVal(html); setEditing(true); }} title="Double-click to edit" className={`cursor-text ${className ?? ''}`}>
-      {html
-        ? <span dangerouslySetInnerHTML={{ __html: html }} />
-        : <span className="text-gray-300 italic">— double-click to add —</span>}
     </div>
   );
 }
@@ -2311,12 +2283,16 @@ export default function CardsPanel({
   const [regenProposal, setRegenProposal] = useState<{ cardId: number; front_html: string; extra: string | null } | null>(null);
   const [regenPreviewLoading, setRegenPreviewLoading] = useState(false);
   const [regenRetryPrompt, setRegenRetryPrompt] = useState('');
+  // Bumped on every preview/retry so the inline mini-editors re-seed from the
+  // fresh suggestion (they only read `value` on mount, keyed by this nonce).
+  const [regenNonce, setRegenNonce] = useState(0);
 
   const handleRegenPreview = useCallback(async (cardId: number, prompt: string) => {
     setRegenPreviewLoading(true);
     try {
       const res = await regenerateCardPreview(cardId, { model: selectedModel, prompt: prompt || undefined, card_version: activeCardVersion });
       setRegenProposal({ cardId, front_html: res.front_html, extra: res.extra ?? null });
+      setRegenNonce(n => n + 1);
       setShowBulkRegenModal(false);
     } catch {
       setActionError('Regenerate failed');
@@ -3955,7 +3931,7 @@ export default function CardsPanel({
             <div className="absolute inset-0 bg-black/40" onClick={handleSplitCancel} />
             <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[80vw] max-w-[960px] max-h-[82vh] flex flex-col">
               <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
-                <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">Review split — {splitCards.length} new card{splitCards.length !== 1 ? 's' : ''} · double-click to edit</h2>
+                <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">Review split — {splitCards.length} new card{splitCards.length !== 1 ? 's' : ''} · edit inline</h2>
                 <button onClick={handleSplitCancel} className="p-1 text-gray-400 hover:text-gray-600 rounded">✕</button>
               </div>
               <div className="grid grid-cols-2 gap-3 p-4 overflow-auto">
@@ -3975,10 +3951,10 @@ export default function CardsPanel({
                       <p className="text-xs text-gray-400">No new cards proposed.</p>
                     ) : splitCards.map((nc, i) => (
                       <div key={i} className="border border-green-200 rounded p-2 bg-green-50/40">
-                        <ProposalEditableField html={nc.front_html} className="text-sm text-gray-800" onSave={(v) => setSplitCards(prev => prev.map((c, idx) => idx === i ? { ...c, front_html: v } : c))} />
+                        <ClozeMiniEditor value={nc.front_html} onChange={(v) => setSplitCards(prev => prev.map((c, idx) => idx === i ? { ...c, front_html: v } : c))} />
                         <div className="border-t border-green-100 mt-1.5 pt-1.5">
                           <span className="text-[9px] text-gray-400 uppercase">Extra</span>
-                          <ProposalEditableField html={nc.extra ?? ''} className="text-xs text-gray-600" onSave={(v) => setSplitCards(prev => prev.map((c, idx) => idx === i ? { ...c, extra: v || null } : c))} />
+                          <ClozeMiniEditor value={nc.extra ?? ''} placeholder="— add extra —" onChange={(v) => setSplitCards(prev => prev.map((c, idx) => idx === i ? { ...c, extra: v || null } : c))} />
                         </div>
                       </div>
                     ))}
@@ -4020,12 +3996,12 @@ export default function CardsPanel({
                   </div>
                 </div>
                 <div>
-                  <p className="text-[10px] font-semibold text-green-600 uppercase mb-1">Combined card · double-click to edit</p>
+                  <p className="text-[10px] font-semibold text-green-600 uppercase mb-1">Combined card · edit inline</p>
                   <div className="border border-green-200 rounded p-2 bg-green-50/40">
-                    <ProposalEditableField html={combineProposal.front_html} className="text-sm text-gray-800" onSave={(v) => setCombineProposal({ ...combineProposal, front_html: v })} />
+                    <ClozeMiniEditor value={combineProposal.front_html} onChange={(v) => setCombineProposal({ ...combineProposal, front_html: v })} />
                     <div className="border-t border-green-100 mt-1.5 pt-1.5">
                       <span className="text-[9px] text-gray-400 uppercase">Extra</span>
-                      <ProposalEditableField html={combineProposal.extra ?? ''} className="text-xs text-gray-600" onSave={(v) => setCombineProposal({ ...combineProposal, extra: v || null })} />
+                      <ClozeMiniEditor value={combineProposal.extra ?? ''} placeholder="— add extra —" onChange={(v) => setCombineProposal({ ...combineProposal, extra: v || null })} />
                     </div>
                   </div>
                 </div>
@@ -4047,7 +4023,7 @@ export default function CardsPanel({
             <div className="absolute inset-0 bg-black/40" onClick={() => setRegenProposal(null)} />
             <div className="relative bg-white rounded-xl shadow-2xl border border-gray-200 w-[80vw] max-w-[960px] max-h-[82vh] flex flex-col">
               <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
-                <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">Review regenerated card · double-click to edit</h2>
+                <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider">Review regenerated card · edit inline</h2>
                 <button onClick={() => setRegenProposal(null)} className="p-1 text-gray-400 hover:text-gray-600 rounded">✕</button>
               </div>
               <div className="grid grid-cols-2 gap-3 p-4 overflow-auto">
@@ -4063,10 +4039,10 @@ export default function CardsPanel({
                 <div>
                   <p className="text-[10px] font-semibold text-green-600 uppercase mb-1">Suggested</p>
                   <div className="border border-green-200 rounded p-2 bg-green-50/40">
-                    <ProposalEditableField html={regenProposal.front_html} className="text-sm text-gray-800" onSave={(v) => setRegenProposal({ ...regenProposal, front_html: v })} />
+                    <ClozeMiniEditor key={`front-${regenProposal.cardId}-${regenNonce}`} value={regenProposal.front_html} onChange={(v) => setRegenProposal(p => p ? { ...p, front_html: v } : p)} />
                     <div className="border-t border-green-100 mt-1.5 pt-1.5">
                       <span className="text-[9px] text-gray-400 uppercase">Extra</span>
-                      <ProposalEditableField html={regenProposal.extra ?? ''} className="text-xs text-gray-600" onSave={(v) => setRegenProposal({ ...regenProposal, extra: v || null })} />
+                      <ClozeMiniEditor key={`extra-${regenProposal.cardId}-${regenNonce}`} value={regenProposal.extra ?? ''} placeholder="— add extra —" onChange={(v) => setRegenProposal(p => p ? { ...p, extra: v || null } : p)} />
                     </div>
                   </div>
                 </div>
