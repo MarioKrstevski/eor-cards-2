@@ -119,10 +119,12 @@ def export_cards(
             "topic_tree": tree_names.get(section.topic_tree_id, "") if section else "",
             "curriculum_topic_path": section.curriculum_topic_path if section else "",
         })
-    output.seek(0)
     filename = f"{_safe_filename(download_name)}.csv"
+    # Emit UTF-8 with a BOM so Excel/Anki read ≤, –, β etc. correctly instead of
+    # decoding as Windows-1252 (which produced mojibake like "â‰¤" / "â€“").
+    body = ("﻿" + output.getvalue()).encode("utf-8")
     return StreamingResponse(
-        output,
-        media_type="text/csv",
+        io.BytesIO(body),
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
