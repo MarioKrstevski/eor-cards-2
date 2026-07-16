@@ -368,10 +368,13 @@ def parse_card_output(raw: str) -> tuple[list[dict], bool]:
             for p in parts[1:]:
                 if p.strip().startswith("source:"):
                     source_ref = p.strip()[len("source:"):].strip() or None
-                else:
+                elif p.strip():
+                    # Skip empty fields. A trailing "||" (no extra, no source)
+                    # would otherwise make "|".join(["", ""]) == "|" and land a
+                    # stranded pipe in the extra.
                     non_source_parts.append(p)
             if non_source_parts:
-                raw_extra = "|".join(non_source_parts).strip()
+                raw_extra = "|".join(non_source_parts).strip().strip('|').strip()
                 if raw_extra:
                     extra = format_extra_as_list(fix_markdown_bold(raw_extra))
             cards.append({
