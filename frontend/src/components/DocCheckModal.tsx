@@ -7,7 +7,8 @@ interface Props {
 }
 
 export default function DocCheckModal({ report, fileName, onClose }: Props) {
-  const { summary, list_items, soft_break_items, split_candidates, raw_xml, notes } = report;
+  const { summary, soft_break_items, split_candidates, raw_xml, notes } = report;
+  const pagesEst = summary.pages_estimated;
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={onClose}>
@@ -39,14 +40,10 @@ export default function DocCheckModal({ report, fileName, onClose }: Props) {
           {/* Summary */}
           <section>
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Summary</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div className="bg-gray-50 rounded-lg p-3">
                 <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Paragraphs</p>
                 <p className="text-xl font-bold text-gray-800">{summary.total_paragraphs}</p>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">List items</p>
-                <p className="text-xl font-bold text-gray-800">{summary.list_item_count}</p>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">
                 <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">With soft breaks</p>
@@ -78,6 +75,9 @@ export default function DocCheckModal({ report, fileName, onClose }: Props) {
               <div className="space-y-2">
                 {split_candidates.map((sc, i) => (
                   <div key={i} className="border border-red-100 bg-red-50 rounded-lg p-3">
+                    <p className="text-[10px] text-gray-400 tabular-nums mb-0.5">
+                      #{sc.index}{pagesEst && ` · ~page ${sc.page}`}
+                    </p>
                     <p className="text-xs font-semibold text-gray-800 mb-1">{sc.text}</p>
                     <p className="text-[11px] text-gray-500 mb-0.5">
                       Continuation of: <span className="italic">{sc.prev_bullet_text}</span>
@@ -106,6 +106,7 @@ export default function DocCheckModal({ report, fileName, onClose }: Props) {
                   <thead>
                     <tr className="border-b border-gray-200">
                       <th className="text-left py-1.5 px-2 text-[10px] text-gray-400 font-medium w-12">#</th>
+                      {pagesEst && <th className="text-left py-1.5 px-2 text-[10px] text-gray-400 font-medium w-14">Page</th>}
                       <th className="text-left py-1.5 px-2 text-[10px] text-gray-400 font-medium">Text</th>
                       <th className="text-left py-1.5 px-2 text-[10px] text-gray-400 font-medium w-16">Type</th>
                       <th className="text-left py-1.5 px-2 text-[10px] text-gray-400 font-medium w-16">Breaks</th>
@@ -115,50 +116,12 @@ export default function DocCheckModal({ report, fileName, onClose }: Props) {
                     {soft_break_items.map((item) => (
                       <tr key={item.index} className="border-b border-gray-50 hover:bg-amber-50/40">
                         <td className="py-1 px-2 text-gray-400 tabular-nums">{item.index}</td>
+                        {pagesEst && <td className="py-1 px-2 text-gray-500 tabular-nums">~{item.page}</td>}
                         <td className="py-1 px-2 text-gray-700" title={item.text}>
                           {item.text.length > 90 ? item.text.slice(0, 90) + '…' : (item.text || <span className="text-gray-300 italic">(empty)</span>)}
                         </td>
                         <td className="py-1 px-2 text-gray-500">{item.is_list ? 'list' : 'text'}</td>
                         <td className="py-1 px-2 text-amber-600 font-semibold tabular-nums">{item.soft_break_count}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-
-          {/* List items table */}
-          <section>
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-              List items ({list_items.length})
-            </h3>
-            {list_items.length === 0 ? (
-              <p className="text-xs text-gray-400 italic">No list items found.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs border-collapse">
-                  <thead>
-                    <tr className="border-b border-gray-200">
-                      <th className="text-left py-1.5 px-2 text-[10px] text-gray-400 font-medium w-10">#</th>
-                      <th className="text-left py-1.5 px-2 text-[10px] text-gray-400 font-medium">Text</th>
-                      <th className="text-left py-1.5 px-2 text-[10px] text-gray-400 font-medium w-24">Soft break</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {list_items.map((item) => (
-                      <tr key={item.index} className="border-b border-gray-50 hover:bg-gray-50">
-                        <td className="py-1 px-2 text-gray-400 tabular-nums">{item.index}</td>
-                        <td className="py-1 px-2 text-gray-700 truncate max-w-[400px]" title={item.text}>
-                          {item.text.length > 80 ? item.text.slice(0, 80) + '…' : item.text}
-                        </td>
-                        <td className="py-1 px-2">
-                          {item.has_soft_break ? (
-                            <span className="text-amber-600 font-semibold">✓</span>
-                          ) : (
-                            <span className="text-gray-300">—</span>
-                          )}
-                        </td>
                       </tr>
                     ))}
                   </tbody>

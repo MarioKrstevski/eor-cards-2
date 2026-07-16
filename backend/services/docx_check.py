@@ -82,7 +82,14 @@ def check_docx(data: bytes) -> dict[str, Any]:
         raise ValueError("document.xml has no <w:body>")
 
     # ── 2. Collect paragraph info ─────────────────────────────────────────────
+    # Best-effort page estimate: OOXML has no stored page numbers (Word paginates
+    # at render time), but it does emit <w:lastRenderedPageBreak/> where the page
+    # last broke, plus explicit <w:br w:type="page"/>. We count those in document
+    # order to approximate a page number. If none are present (common for Google
+    # Docs exports), the estimate stays at 1 and we flag it as unavailable.
     paragraphs: list[dict[str, Any]] = []
+    current_page = 1
+    saw_page_break = False
     for idx, child in enumerate(body):
         if child.tag != _w("p"):
             continue
@@ -125,11 +132,24 @@ def check_docx(data: bytes) -> dict[str, Any]:
                         pass
 
         # --- soft_breaks: <w:br> that are line breaks (not page/column) ------
+        # In the same walk, count page breaks (explicit <w:br type="page"> and
+        # rendered <w:lastRenderedPageBreak/>) to advance the page estimate.
         soft_break_count = 0
+        page_break_count = 0
         for br in child.iter(_w("br")):
             br_type = _attr(br, "type")
             if br_type in (None, "textWrapping"):
                 soft_break_count += 1
+            elif br_type == "page":
+                page_break_count += 1
+        page_break_count += sum(1 for _ in child.iter(_w("lastRenderedPageBreak")))
+
+        # The paragraph starts on the current page; breaks inside it push the
+        # following paragraphs onto later pages.
+        page = current_page
+        if page_break_count:
+            current_page += page_break_count
+            saw_page_break = True
 
         paragraphs.append(
             {
@@ -140,6 +160,7 @@ def check_docx(data: bytes) -> dict[str, Any]:
                 "style": style_val,
                 "indent_left": indent_left,
                 "soft_breaks": soft_break_count,
+                "page": page,
                 "_el": child,  # keep reference for raw XML export (not serialised)
             }
         )
@@ -175,6 +196,7 @@ def check_docx(data: bytes) -> dict[str, Any]:
             "text": p["text"],
             "is_list": p["is_list"],
             "soft_break_count": p["soft_breaks"],
+            "page": p["page"],
         }
         for p in paragraphs
         if p["soft_breaks"] > 0
@@ -210,6 +232,7 @@ def check_docx(data: bytes) -> dict[str, Any]:
                     "prev_index": prev["index"],
                     "prev_bullet_text": prev["text"],
                     "reason": "; ".join(reasons),
+                    "page": p["page"],
                 }
             )
 
@@ -247,6 +270,9 @@ def check_docx(data: bytes) -> dict[str, Any]:
         "list_item_count": len(list_items),
         "with_soft_break_count": with_soft_break_count,
         "split_candidate_count": len(split_candidates),
+        # True only if the file contained page-break markers we could count.
+        # When False, the "page" fields are all 1 and should not be shown.
+        "pages_estimated": saw_page_break,
     }
 
     notes = [
@@ -262,6 +288,10 @@ def check_docx(data: bytes) -> dict[str, Any]:
         "headers, or footers).",
         "A split_candidate does NOT necessarily mean a broken bullet — review the "
         "raw_xml entries to confirm before editing the source document.",
+        "Page numbers are ESTIMATES inferred from <w:lastRenderedPageBreak/> and "
+        "explicit page breaks in document order; Word does not store true page "
+        "numbers. If the file has no such markers (common for Google Docs exports) "
+        "the estimate is unavailable and page columns are hidden.",
     ]
 
     return {
