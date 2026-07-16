@@ -518,7 +518,8 @@ interface HistoryVersion {
 // events) renders as "now".
 function relativeTime(iso: string | null): string {
   if (!iso) return 'now';
-  const t = Date.parse(iso);
+  // Backend timestamps are naive UTC (no 'Z') — parse as UTC, not local.
+  const t = Date.parse(/(?:Z|[+-]\d\d:?\d\d)$/.test(iso) ? iso : iso + 'Z');
   if (Number.isNaN(t)) return '';
   const secs = Math.max(0, Math.round((Date.now() - t) / 1000));
   if (secs < 45) return 'just now';

@@ -39,9 +39,16 @@ function kindLabel(kind: string): string {
 
 // ── Relative time ─────────────────────────────────────────────────────────────
 
+// Backend timestamps are naive UTC (no 'Z'); parse them as UTC so relative/local
+// display is correct (otherwise the browser reads them as local time).
+function parseUtc(iso: string): Date {
+  const s = /(?:Z|[+-]\d\d:?\d\d)$/.test(iso) ? iso : iso + 'Z';
+  return new Date(s);
+}
+
 function relativeTime(iso: string | null): string {
   if (!iso) return '—';
-  const ms = Date.now() - new Date(iso).getTime();
+  const ms = Date.now() - parseUtc(iso).getTime();
   if (ms < 60_000) return 'just now';
   if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
   if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
@@ -50,7 +57,7 @@ function relativeTime(iso: string | null): string {
 
 function fmtDate(iso: string | null): string {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString();
+  return parseUtc(iso).toLocaleString();
 }
 
 // ── Status badge ──────────────────────────────────────────────────────────────
