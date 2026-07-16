@@ -811,6 +811,47 @@ export async function sendChatMessage(
   return res.data;
 }
 
+// ── Edit Lab (silent edit-capture + per-card history) ─────────────────────────
+
+export interface LabEvent {
+  kind: string;
+  field: string;
+  front_html: string;
+  extra: string | null;
+  meta?: unknown;
+}
+
+export interface LabHistoryEntry {
+  seq: number;
+  kind: string;
+  field: string;
+  front_html: string;
+  extra: string | null;
+  meta: unknown;
+  created_at: string;
+}
+
+// Persist a batch of captured edit events for one card (fire-and-forget from the
+// caller's side — see CardEditPopup.handleSave, which swallows any failure).
+export async function recordEvents(
+  sectionId: number,
+  cardId: number,
+  events: LabEvent[]
+): Promise<{ saved: number }> {
+  const res = await http.post<{ saved: number }>('/lab/events', {
+    section_id: sectionId,
+    card_id: cardId,
+    events,
+  });
+  return res.data;
+}
+
+// Full edit history for a card (seq ascending; first entry is the origin).
+export async function getCardHistory(cardId: number): Promise<LabHistoryEntry[]> {
+  const res = await http.get<LabHistoryEntry[]>(`/lab/card/${cardId}/history`);
+  return res.data;
+}
+
 // ── Step-by-Step (SBS) generation ─────────────────────────────────────────────
 import type { SbsRuleSet, SbsPreview, SbsJob } from './types';
 

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Card } from '../types';
 import { useSettings } from '../context/SettingsContext';
-import { rewordSnippet, regenerateCardPreview } from '../api';
+import { rewordSnippet, regenerateCardPreview, recordEvents, getCardHistory } from '../api';
+import type { LabEvent } from '../api';
 
 type CardVersion = 'base' | 'v1' | 'v2' | 'v3';
 
@@ -481,8 +482,59 @@ type BoldMode = 'bold' | 'unbold';
 type ClozeMode = 'cloze' | 'uncloze';
 type EditorTab = 'front' | 'extra';
 
+// ── Edit-history labels + view model ──────────────────────────────────────────
+// Human labels for each event `kind`. Origin kinds describe how the card was
+// first created; the rest are the mutating ops captured in the popup.
+const HISTORY_LABELS: Record<string, string> = {
+  origin_generated: 'Generated',
+  origin_manual: 'Manually added',
+  origin_split: 'Split',
+  origin_combine: 'Combined',
+  bold: 'Bold',
+  unbold: 'Unbold',
+  cloze: 'Cloze',
+  uncloze: 'Uncloze',
+  units_out: 'Units out',
+  clean: 'Clean',
+  reword: 'Reword',
+  guided_reword: 'Guided reword',
+  regenerate: 'Regenerate',
+  typed: 'Typed edit',
+};
+
+function historyLabel(kind: string): string {
+  return HISTORY_LABELS[kind] ?? kind;
+}
+
+// A version to preview/restore — one row in the history dropdown.
+interface HistoryVersion {
+  label: string;
+  front_html: string;
+  extra: string | null;
+  created_at: string | null;
+}
+
+// Short git-log-style relative time. Null/blank created_at (in-progress unsaved
+// events) renders as "now".
+function relativeTime(iso: string | null): string {
+  if (!iso) return 'now';
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return '';
+  const secs = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (secs < 45) return 'just now';
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.round(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.round(months / 12)}y ago`;
+}
+
 export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelete, onClose }: CardEditPopupProps) {
-  const { activeCardVersion, selectedModel } = useSettings();
+  const { activeCardVersion, selectedModel, simpleView } = useSettings();
   const ver = activeCardVersion as CardVersion;
   const [tab, setTab] = useState<EditorTab>('front');
   const [hasSelection, setHasSelection] = useState(false);
@@ -512,6 +564,22 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
   const undoStacks = useRef<{ front: string[]; extra: string[] }>({ front: [], extra: [] });
   const [undoDepth, setUndoDepth] = useState({ front: 0, extra: 0 });
 
+  // ── Silent edit-capture ─────────────────────────────────────────────────────
+  // Every mutating op (and any typing between ops) is recorded as an event; the
+  // buffer is persisted on Save and discarded when the card changes. This is
+  // best-effort telemetry — it must NEVER break Save (see handleSave).
+  const eventsRef = useRef<LabEvent[]>([]);
+  const lastCapturedRef = useRef<{ front: string; extra: string }>({ front: '', extra: '' });
+
+  // ── History dropdown ────────────────────────────────────────────────────────
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyVersions, setHistoryVersions] = useState<HistoryVersion[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(0); // 0 = latest (top)
+  const [historyLoading, setHistoryLoading] = useState(false);
+  // Snapshot of the working editor content taken when the panel opens, so
+  // browsing/cancelling never loses an in-progress edit.
+  const historySnapshotRef = useRef<{ front: string; extra: string } | null>(null);
+
   // Load the draft into the editors when the target card or active version
   // changes (never on background refresh mid-edit — id/version are stable).
   useEffect(() => {
@@ -533,6 +601,17 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     setRegenError(false);
     undoStacks.current = { front: [], extra: [] };
     setUndoDepth({ front: 0, extra: 0 });
+    // Capture: discard any unsaved buffer and re-baseline to the loaded state.
+    eventsRef.current = [];
+    {
+      const s = serializeState();
+      lastCapturedRef.current = { front: s.front, extra: s.extra ?? '' };
+    }
+    // Close any open history panel (its snapshot belonged to the old card).
+    setHistoryOpen(false);
+    setHistoryVersions([]);
+    setHistoryIndex(0);
+    historySnapshotRef.current = null;
     refreshContentState();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card.id, ver]);
@@ -553,10 +632,19 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ankiMode]);
 
+  // Esc closes the popup — unless the history panel is open, where it cancels
+  // the preview (restoring the working content) instead.
+  const historyOpenRef = useRef(false);
+  historyOpenRef.current = historyOpen;
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (historyOpenRef.current) { e.preventDefault(); cancelHistory(); return; }
+      onClose();
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onClose]);
 
   // Which of the two editors (front/extra) contains a node, if either. Lets the
@@ -622,6 +710,41 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     if (ex) setExtraCleanable(needsClean(fromEditorHtml(ex)));
   }
 
+  // ── Silent edit-capture helpers ─────────────────────────────────────────────
+  // Serialize both editors EXACTLY the way handleSave persists them, so a
+  // captured event's front/extra matches what a Save would write.
+  function serializeState(): { front: string; extra: string | null } {
+    const fr = editorRef.current;
+    const ex = extraRef.current;
+    const front = fr ? fromEditorHtml(fr) : '';
+    const extraVal = ex ? fromEditorHtml(ex) : '';
+    return { front, extra: extraVal.trim() ? extraVal : null };
+  }
+
+  // Compare against the last-captured state; if front/extra drifted (i.e. the
+  // user typed since the last event), push a 'typed' event for the changed field.
+  function captureTyping() {
+    const s = serializeState();
+    const last = lastCapturedRef.current;
+    const frontChanged = s.front !== last.front;
+    const extraChanged = (s.extra ?? '') !== last.extra;
+    if (!frontChanged && !extraChanged) return;
+    eventsRef.current.push({
+      kind: 'typed',
+      field: frontChanged ? 'front' : 'extra',
+      front_html: s.front,
+      extra: s.extra,
+    });
+    lastCapturedRef.current = { front: s.front, extra: s.extra ?? '' };
+  }
+
+  // Push an event for a completed button/AI op and re-baseline lastCaptured.
+  function captureAction(kind: string, field: EditorTab) {
+    const s = serializeState();
+    eventsRef.current.push({ kind, field, front_html: s.front, extra: s.extra });
+    lastCapturedRef.current = { front: s.front, extra: s.extra ?? '' };
+  }
+
   // ── Undo ──────────────────────────────────────────────────────────────────────
   // Snapshot an editor's innerHTML before a mutating op so Undo can restore it.
   function pushUndo(which: EditorTab) {
@@ -651,8 +774,12 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     const er = editorRange();
     if (!er || er.range.collapsed) return;
     const { root, range } = er;
-    pushUndo(root === extraRef.current ? 'extra' : 'front');
+    const field: EditorTab = root === extraRef.current ? 'extra' : 'front';
+    const willUnbold = rangeHasBold(range, root);
+    captureTyping();
+    pushUndo(field);
     applyBoldToRange(root, range);
+    captureAction(willUnbold ? 'unbold' : 'bold', field);
     refreshSelectionState();
   }
 
@@ -672,8 +799,11 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
       if (range.collapsed) return;
       if (clozeAncestor(range.startContainer, root) || clozeAncestor(range.endContainer, root)) return;
     }
-    pushUndo(root === extraRef.current ? 'extra' : 'front');
+    const field: EditorTab = root === extraRef.current ? 'extra' : 'front';
+    captureTyping();
+    pushUndo(field);
     toggleClozeOnRange(root, range, ankiMode);
+    captureAction(existing ? 'uncloze' : 'cloze', field);
     refreshSelectionState();
   }
 
@@ -703,6 +833,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     const leadWS = selText.match(/^\s*/)?.[0] ?? '';
     const trailWS = selText.match(/\s*$/)?.[0] ?? '';
 
+    captureTyping();
     setRewordHint(null);
     setRewording(true);
     try {
@@ -722,6 +853,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
       range.deleteContents();
       range.insertNode(frag);
       normalize(root);
+      captureAction(guidance ? 'guided_reword' : 'reword', 'front');
     } catch {
       /* leave the text untouched on failure */
     } finally {
@@ -790,6 +922,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
   }
 
   async function handleRegenGo() {
+    captureTyping();
     setRegenerating(true);
     setRegenError(false);
     try {
@@ -812,6 +945,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
           extraEl.innerHTML = toEditorHtml(extra || '', ankiMode);
         }
       }
+      captureAction('regenerate', 'front');
       refreshSelectionState();
       refreshContentState();
       // Close the inline row and clear the prompt — result is now in the editor.
@@ -830,9 +964,11 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
   function handleUnitsOut() {
     const root = editorRef.current;
     if (!root) return;
+    captureTyping();
     pushUndo('front');
     const stored = fromEditorHtml(root);
     root.innerHTML = toEditorHtml(unitsOut(stored), ankiMode);
+    captureAction('units_out', 'front');
     refreshSelectionState();
     refreshContentState();
   }
@@ -843,10 +979,127 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     const which = tab;
     const root = which === 'extra' ? extraRef.current : editorRef.current;
     if (!root) return;
+    captureTyping();
     pushUndo(which);
     root.innerHTML = toEditorHtml(cleanFront(fromEditorHtml(root)), ankiMode);
+    captureAction('clean', which);
     refreshSelectionState();
     refreshContentState();
+  }
+
+  // ── History (preview + restore) ───────────────────────────────────────────────
+  // Render a version READ-ONLY in the editors without touching the working
+  // content (which is snapshotted on open and restored on cancel).
+  function previewVersion(idx: number, versions: HistoryVersion[]) {
+    const v = versions[idx];
+    if (!v) return;
+    const fr = editorRef.current;
+    const ex = extraRef.current;
+    if (fr) { fr.innerHTML = toEditorHtml(v.front_html, ankiMode); fr.contentEditable = 'false'; }
+    if (ex) { ex.innerHTML = toEditorHtml(v.extra ?? '', ankiMode); ex.contentEditable = 'false'; }
+  }
+
+  // Put the working content back and re-enable editing.
+  function restoreWorkingContent() {
+    const snap = historySnapshotRef.current;
+    const fr = editorRef.current;
+    const ex = extraRef.current;
+    if (fr) { if (snap) fr.innerHTML = snap.front; fr.contentEditable = 'true'; }
+    if (ex) { if (snap) ex.innerHTML = snap.extra; ex.contentEditable = 'true'; }
+  }
+
+  async function openHistory() {
+    // Snapshot the working content so browsing never loses an in-progress edit.
+    const fr = editorRef.current;
+    const ex = extraRef.current;
+    historySnapshotRef.current = { front: fr?.innerHTML ?? '', extra: ex?.innerHTML ?? '' };
+    setHistoryOpen(true);
+    setHistoryLoading(true);
+    try {
+      const persisted = await getCardHistory(card.id);
+      // Persisted is seq-asc (origin first). Append in-progress unsaved events so
+      // they show at the very top too.
+      const inProgress: HistoryVersion[] = eventsRef.current.map((e) => ({
+        label: historyLabel(e.kind),
+        front_html: e.front_html,
+        extra: e.extra,
+        created_at: null,
+      }));
+      const chron: HistoryVersion[] = [
+        ...persisted.map((h) => ({
+          label: historyLabel(h.kind),
+          front_html: h.front_html,
+          extra: h.extra,
+          created_at: h.created_at,
+        })),
+        ...inProgress,
+      ];
+      // TOP = latest, BOTTOM = origin.
+      const versions = chron.reverse();
+      setHistoryVersions(versions);
+      setHistoryIndex(0);
+      if (versions.length) previewVersion(0, versions);
+    } catch {
+      // On failure, close cleanly and restore working content.
+      setHistoryVersions([]);
+      restoreWorkingContent();
+      historySnapshotRef.current = null;
+      setHistoryOpen(false);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  // Cancel/close the panel WITHOUT restoring a version — put the working content
+  // back and re-enable editing.
+  function cancelHistory() {
+    restoreWorkingContent();
+    historySnapshotRef.current = null;
+    setHistoryOpen(false);
+    setHistoryVersions([]);
+    setHistoryIndex(0);
+    refreshSelectionState();
+    refreshContentState();
+  }
+
+  // Restore the previewed version as the new working content (user still has to
+  // Save to persist). Leaves the previewed content in the editors.
+  function restoreVersion() {
+    pushUndo('front');
+    pushUndo('extra');
+    const fr = editorRef.current;
+    const ex = extraRef.current;
+    if (fr) fr.contentEditable = 'true';
+    if (ex) ex.contentEditable = 'true';
+    historySnapshotRef.current = null;
+    setHistoryOpen(false);
+    setHistoryVersions([]);
+    setHistoryIndex(0);
+    // The restored content is now the working draft — record it as typing so it
+    // is captured on Save and re-baseline lastCaptured.
+    captureTyping();
+    refreshSelectionState();
+    refreshContentState();
+  }
+
+  // Step the selection: up = newer (toward index 0), down = older.
+  function stepHistory(dir: 'up' | 'down') {
+    setHistoryIndex((i) => {
+      const next = dir === 'up' ? Math.max(0, i - 1) : Math.min(historyVersions.length - 1, i + 1);
+      previewVersion(next, historyVersions);
+      return next;
+    });
+  }
+
+  function selectHistory(idx: number) {
+    setHistoryIndex(idx);
+    previewVersion(idx, historyVersions);
+  }
+
+  // Header History button toggles the panel (open loads; click-again cancels).
+  function toggleHistory() {
+    if (historyOpen) cancelHistory();
+    else void openHistory();
   }
 
   // ── Save ──────────────────────────────────────────────────────────────────────
@@ -856,11 +1109,18 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     const root = editorRef.current;
     const ex = extraRef.current;
     if (!root || !ex) return;
+    // Catch any trailing typing that had no button after it.
+    captureTyping();
     const extraVal = fromEditorHtml(ex);
     await onSave(card.id, {
       [frontPatchKey(ver)]: fromEditorHtml(root),
       [extraPatchKey(ver)]: extraVal.trim() ? extraVal : null,
     });
+    // Persist captured edit events — best-effort, MUST never break Save.
+    if (eventsRef.current.length) {
+      try { await recordEvents(card.section_id, card.id, eventsRef.current); } catch { /* swallowed */ }
+      eventsRef.current = [];
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
     // Persist first, then close (deselects + hides the popup). Only reached on
@@ -879,8 +1139,84 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
             <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-violet-50 text-violet-600 font-semibold uppercase">{ver}</span>
           )}
         </span>
-        <button onClick={onClose} className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-50 text-lg leading-none" title="Close (Esc)">✕</button>
+        <div className="flex items-center gap-1">
+          {!simpleView && (
+            <button
+              onClick={toggleHistory}
+              title="Edit history — preview and restore an earlier version"
+              className={`px-2 py-1 text-xs font-medium rounded border transition-colors duration-150 ${
+                historyOpen
+                  ? 'bg-gray-900 text-white border-gray-900'
+                  : 'text-gray-600 bg-white border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              History
+            </button>
+          )}
+          <button onClick={onClose} className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-50 text-lg leading-none" title="Close (Esc)">✕</button>
+        </div>
       </div>
+
+      {!simpleView && historyOpen && (
+        <div className="px-4 py-2 border-b border-gray-200 bg-gray-50">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold text-amber-700">Previewing history — Restore to keep</span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => stepHistory('up')}
+                disabled={historyLoading || historyIndex <= 0}
+                title="Newer"
+                className="px-2 py-1 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                ↑
+              </button>
+              <button
+                onClick={() => stepHistory('down')}
+                disabled={historyLoading || historyIndex >= historyVersions.length - 1}
+                title="Older"
+                className="px-2 py-1 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                ↓
+              </button>
+              <button
+                onClick={restoreVersion}
+                disabled={historyLoading || historyVersions.length === 0}
+                title="Restore this version into the editor (you still need to Save)"
+                className="ml-1 px-2.5 py-1 text-xs font-semibold text-white bg-green-600 rounded hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Restore this version
+              </button>
+              <button
+                onClick={cancelHistory}
+                title="Close history (keeps your in-progress edit)"
+                className="px-2 py-1 text-xs font-medium text-gray-500 bg-white border border-gray-200 rounded hover:bg-gray-50"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          {historyLoading ? (
+            <div className="text-xs text-gray-400 py-2">Loading history…</div>
+          ) : historyVersions.length === 0 ? (
+            <div className="text-xs text-gray-400 py-2">No history yet for this card.</div>
+          ) : (
+            <div className="max-h-40 overflow-auto rounded border border-gray-200 bg-white divide-y divide-gray-100">
+              {historyVersions.map((v, i) => (
+                <button
+                  key={i}
+                  onClick={() => selectHistory(i)}
+                  className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-left text-xs transition-colors duration-100 ${
+                    i === historyIndex ? 'bg-blue-50 text-blue-900' : 'text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  <span className="font-medium truncate">{v.label}</span>
+                  <span className="text-[10px] text-gray-400 shrink-0">{relativeTime(v.created_at)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="p-4 flex flex-col gap-2 overflow-auto">
         {/* WYSIWYG editors: bold shows bold, clozes show as blue-bold terms.
