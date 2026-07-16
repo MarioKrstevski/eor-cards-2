@@ -968,6 +968,7 @@ export interface DocCheckReport {
     split_candidate_count: number;
   };
   list_items: { index: number; text: string; has_soft_break: boolean; soft_break_count: number }[];
+  soft_break_items: { index: number; text: string; is_list: boolean; soft_break_count: number }[];
   split_candidates: { index: number; text: string; style: string | null; indent_left: number | null; prev_index: number; prev_bullet_text: string; reason: string }[];
   raw_xml: { index: number; kind: 'split_candidate' | 'has_soft_break'; xml: string }[];
   notes: string[];

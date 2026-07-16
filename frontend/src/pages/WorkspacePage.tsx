@@ -895,6 +895,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
   const [docCheckLoading, setDocCheckLoading] = useState(false);
   const [docCheckError, setDocCheckError] = useState<string | null>(null);
   const [docCheckReport, setDocCheckReport] = useState<DocCheckReport | null>(null);
+  const [docCheckName, setDocCheckName] = useState<string>('');
 
   // Section viewer
   const [viewingSectionId, setViewingSectionId] = useState<number | null>(null);
@@ -1217,6 +1218,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
+    setDocCheckName(file.name);
     setDocCheckLoading(true);
     setDocCheckError(null);
     setDocCheckReport(null);
@@ -1587,7 +1589,7 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
 
       {/* Doc check modal */}
       {docCheckReport && (
-        <DocCheckModal report={docCheckReport} onClose={() => setDocCheckReport(null)} />
+        <DocCheckModal report={docCheckReport} fileName={docCheckName} onClose={() => setDocCheckReport(null)} />
       )}
 
       {/* Curriculum sections preview modal */}

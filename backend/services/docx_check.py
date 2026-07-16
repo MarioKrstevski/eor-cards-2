@@ -164,6 +164,22 @@ def check_docx(data: bytes) -> dict[str, Any]:
         if p["is_list"]
     ]
 
+    # ── 3b. Build soft_break_items ────────────────────────────────────────────
+    # Every paragraph (list OR non-list) that still contains a soft line break
+    # (<w:br/>, Shift+Enter). This is the direct "find the soft breaks" list, as
+    # opposed to split_candidates (which is a heuristic guess about bullets that
+    # got broken onto a *new* paragraph on export).
+    soft_break_items = [
+        {
+            "index": p["index"],
+            "text": p["text"],
+            "is_list": p["is_list"],
+            "soft_break_count": p["soft_breaks"],
+        }
+        for p in paragraphs
+        if p["soft_breaks"] > 0
+    ]
+
     # ── 4. Build split_candidates ─────────────────────────────────────────────
     split_candidates = []
     for i, p in enumerate(paragraphs):
@@ -251,6 +267,7 @@ def check_docx(data: bytes) -> dict[str, Any]:
     return {
         "summary": summary,
         "list_items": list_items,
+        "soft_break_items": soft_break_items,
         "split_candidates": split_candidates,
         "raw_xml": raw_xml_entries,
         "notes": notes,

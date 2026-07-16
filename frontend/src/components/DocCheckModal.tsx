@@ -2,11 +2,12 @@ import type { DocCheckReport } from '../api';
 
 interface Props {
   report: DocCheckReport;
+  fileName?: string;
   onClose: () => void;
 }
 
-export default function DocCheckModal({ report, onClose }: Props) {
-  const { summary, list_items, split_candidates, raw_xml, notes } = report;
+export default function DocCheckModal({ report, fileName, onClose }: Props) {
+  const { summary, list_items, soft_break_items, split_candidates, raw_xml, notes } = report;
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={onClose}>
@@ -16,7 +17,12 @@ export default function DocCheckModal({ report, onClose }: Props) {
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
-          <h2 className="text-sm font-bold text-gray-900">Document check</h2>
+          <div className="min-w-0">
+            <h2 className="text-sm font-bold text-gray-900">Document check</h2>
+            {fileName && (
+              <p className="text-xs text-gray-500 truncate max-w-[560px]" title={fileName}>{fileName}</p>
+            )}
+          </div>
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
@@ -59,9 +65,13 @@ export default function DocCheckModal({ report, onClose }: Props) {
 
           {/* Split candidates */}
           <section>
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
               Split candidates ({split_candidates.length})
             </h3>
+            <p className="text-[11px] text-gray-400 mb-3">
+              A <b>guess</b> at bullets that broke onto a separate un-bulleted paragraph on export
+              (a non-list paragraph right after a bullet, indented or with a "List" style). Heuristic — confirm before editing.
+            </p>
             {split_candidates.length === 0 ? (
               <p className="text-xs text-gray-400 italic">No split bullets detected.</p>
             ) : (
@@ -75,6 +85,45 @@ export default function DocCheckModal({ report, onClose }: Props) {
                     <p className="text-[11px] text-gray-400">Reason: {sc.reason}</p>
                   </div>
                 ))}
+              </div>
+            )}
+          </section>
+
+          {/* Soft-break paragraphs — the direct "find the soft breaks" list */}
+          <section>
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+              Soft-break paragraphs ({soft_break_items.length})
+            </h3>
+            <p className="text-[11px] text-gray-400 mb-3">
+              Every paragraph that still contains a soft line break (Shift+Enter / <code>&lt;w:br/&gt;</code>).
+              These are the ones to open in Word and check — <b>#</b> is the paragraph's position in the document.
+            </p>
+            {soft_break_items.length === 0 ? (
+              <p className="text-xs text-gray-400 italic">No soft breaks found.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-gray-200">
+                      <th className="text-left py-1.5 px-2 text-[10px] text-gray-400 font-medium w-12">#</th>
+                      <th className="text-left py-1.5 px-2 text-[10px] text-gray-400 font-medium">Text</th>
+                      <th className="text-left py-1.5 px-2 text-[10px] text-gray-400 font-medium w-16">Type</th>
+                      <th className="text-left py-1.5 px-2 text-[10px] text-gray-400 font-medium w-16">Breaks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {soft_break_items.map((item) => (
+                      <tr key={item.index} className="border-b border-gray-50 hover:bg-amber-50/40">
+                        <td className="py-1 px-2 text-gray-400 tabular-nums">{item.index}</td>
+                        <td className="py-1 px-2 text-gray-700" title={item.text}>
+                          {item.text.length > 90 ? item.text.slice(0, 90) + '…' : (item.text || <span className="text-gray-300 italic">(empty)</span>)}
+                        </td>
+                        <td className="py-1 px-2 text-gray-500">{item.is_list ? 'list' : 'text'}</td>
+                        <td className="py-1 px-2 text-amber-600 font-semibold tabular-nums">{item.soft_break_count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </section>
