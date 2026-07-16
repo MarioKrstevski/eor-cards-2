@@ -967,10 +967,22 @@ export interface DocCheckReport {
     with_soft_break_count: number;
     split_candidate_count: number;
     pages_estimated: boolean;
+    typed_bullet_count: number;
+    heading_issue_count: number;
+    empty_list_item_count: number;
+    long_paragraph_count: number;
+    weird_char_count: number;
+    unparseable: { tables: number; text_boxes: number; drawings: number };
   };
   list_items: { index: number; text: string; has_soft_break: boolean; soft_break_count: number }[];
   soft_break_items: { index: number; text: string; is_list: boolean; soft_break_count: number; page: number }[];
   split_candidates: { index: number; text: string; style: string | null; indent_left: number | null; prev_index: number; prev_bullet_text: string; reason: string; page: number }[];
+  typed_bullets: { index: number; text: string; page: number; marker: string }[];
+  heading_issues: { index: number; text: string; page: number; kind: 'fake_heading' | 'skipped_level'; detail: string }[];
+  empty_list_items: { index: number; page: number }[];
+  long_paragraphs: { index: number; text: string; char_count: number; page: number }[];
+  unparseable: { tables: number; text_boxes: number; drawings: number };
+  weird_chars: { index: number; text: string; page: number; kinds: string[] }[];
   raw_xml: { index: number; kind: 'split_candidate' | 'has_soft_break'; xml: string }[];
   notes: string[];
 }

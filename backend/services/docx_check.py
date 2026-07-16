@@ -33,6 +33,7 @@ Heuristic limitations (noted in the returned `notes` field):
 from __future__ import annotations
 
 import io
+import re
 import zipfile
 from typing import Any
 
@@ -50,12 +51,46 @@ def _attr(el: etree._Element, tag: str) -> str | None:
     return el.get(_w(tag))
 
 
+# Regex: text bullets (typed, not real Word list formatting)
+_TYPED_BULLET_RE = re.compile(r"^\s*([•·◦▪‣∙▸►\-\*]|\(?\d+[.)])\s+\S")
+
+
+def _is_all_bold(el: etree._Element) -> bool:
+    """Return True if every run in the paragraph that has non-whitespace text is bold.
+
+    "Bold" means the run has <w:rPr><w:b/></w:rPr> (or <w:b w:val="true/1">)
+    and the val is NOT explicitly "false" or "0".
+    The paragraph must have at least one such run.
+    """
+    has_text_run = False
+    for r in el.iter(_w("r")):
+        # Does this run have any non-whitespace text?
+        run_text = "".join(t.text or "" for t in r.iter(_w("t")))
+        if not run_text.strip():
+            continue
+        has_text_run = True
+        # Is it bold?
+        rPr = r.find(_w("rPr"))
+        b_el = rPr.find(_w("b")) if rPr is not None else None
+        if b_el is None:
+            return False
+        val = b_el.get(_w("val"))
+        if val in ("false", "0"):
+            return False
+    return has_text_run
+
+
+_SENTENCE_END_RE = re.compile(r"[.;,]$")
+
+
 def check_docx(data: bytes) -> dict[str, Any]:
     """
-    Inspect a .docx file (raw bytes) for list soft-break problems.
+    Inspect a .docx file (raw bytes) for list soft-break problems and additional issues.
 
     Returns a dict with keys:
-      summary, list_items, split_candidates, raw_xml, notes
+      summary, list_items, soft_break_items, split_candidates,
+      typed_bullets, heading_issues, empty_list_items,
+      long_paragraphs, unparseable, weird_chars, raw_xml, notes
 
     Raises ValueError on a non-docx or corrupt file.
     """
@@ -236,6 +271,151 @@ def check_docx(data: bytes) -> dict[str, Any]:
                 }
             )
 
+    # ── NEW DETECTOR 1: typed_bullets ─────────────────────────────────────────
+    # Bullets typed as text instead of real Word list formatting.
+    typed_bullets = []
+    for p in paragraphs:
+        if p["is_list"]:
+            continue
+        if not p["text"]:
+            continue
+        m = _TYPED_BULLET_RE.match(p["text"])
+        if m:
+            typed_bullets.append(
+                {
+                    "index": p["index"],
+                    "text": p["text"],
+                    "page": p["page"],
+                    "marker": m.group(1),
+                }
+            )
+
+    # ── NEW DETECTOR 2: heading_issues ────────────────────────────────────────
+    # Two kinds: fake_heading (all-bold non-heading) and skipped_level.
+    heading_issues = []
+
+    # 2a. fake_heading
+    for p in paragraphs:
+        style = p["style"] or ""
+        is_heading_style = style.lower().startswith("heading") or style.lower().startswith("title")
+        if is_heading_style:
+            continue
+        text = p["text"]
+        if not text:
+            continue
+        if len(text) > 60:
+            continue
+        if _SENTENCE_END_RE.search(text):
+            continue
+        if _is_all_bold(p["_el"]):
+            heading_issues.append(
+                {
+                    "index": p["index"],
+                    "text": text,
+                    "page": p["page"],
+                    "kind": "fake_heading",
+                    "detail": "bold text used as a heading but not styled Heading 1-4",
+                }
+            )
+
+    # 2b. skipped_level — walk headings in document order
+    prev_level: int | None = None
+    for p in paragraphs:
+        style = p["style"] or ""
+        level: int | None = None
+        if style.lower().startswith("title"):
+            level = 0
+        elif style.lower().startswith("heading"):
+            # Extract trailing digit, e.g. "Heading1" or "Heading 1"
+            m = re.search(r"(\d+)$", style)
+            if m:
+                level = int(m.group(1))
+        if level is None:
+            continue
+        if prev_level is not None and level > prev_level + 1:
+            heading_issues.append(
+                {
+                    "index": p["index"],
+                    "text": p["text"],
+                    "page": p["page"],
+                    "kind": "skipped_level",
+                    "detail": f"jumps from Heading {prev_level} to Heading {level}",
+                }
+            )
+        prev_level = level
+
+    # ── NEW DETECTOR 3: empty_list_items ─────────────────────────────────────
+    empty_list_items = [
+        {
+            "index": p["index"],
+            "page": p["page"],
+        }
+        for p in paragraphs
+        if p["is_list"] and not p["text"].strip()
+    ]
+
+    # ── NEW DETECTOR 4: long_paragraphs ──────────────────────────────────────
+    LONG_PARA_THRESHOLD = 400
+    long_para_all = [
+        {
+            "index": p["index"],
+            "text": p["text"],
+            "char_count": len(p["text"]),
+            "page": p["page"],
+        }
+        for p in paragraphs
+        if len(p["text"]) > LONG_PARA_THRESHOLD
+    ]
+    long_para_total = len(long_para_all)
+    long_paragraphs = sorted(long_para_all, key=lambda x: x["char_count"], reverse=True)[:50]
+
+    # ── NEW DETECTOR 5: unparseable ───────────────────────────────────────────
+    # Count tables, text boxes, drawings using local-name iteration (namespace-agnostic).
+    tables_count = sum(1 for el in root.iter() if etree.QName(el.tag).localname == "tbl")
+    text_boxes_count = sum(1 for el in root.iter() if etree.QName(el.tag).localname == "txbxContent")
+    drawings_count = sum(1 for el in root.iter() if etree.QName(el.tag).localname == "drawing")
+    unparseable = {
+        "tables": tables_count,
+        "text_boxes": text_boxes_count,
+        "drawings": drawings_count,
+    }
+
+    # ── NEW DETECTOR 6: weird_chars ───────────────────────────────────────────
+    _ZERO_WIDTH = {"​", "‌", "‍", "﻿"}
+    _NBSP = {" ", " "}
+    _MOJIBAKE_PATTERNS = ["Ã", "â€", "Â "]
+    _REPLACEMENT_CHAR = "�"
+
+    def _weird_kinds(text: str) -> list[str]:
+        kinds: list[str] = []
+        if any(p in text for p in _MOJIBAKE_PATTERNS):
+            kinds.append("mojibake")
+        if _REPLACEMENT_CHAR in text:
+            kinds.append("replacement char (�)")
+        if any(c in text for c in _ZERO_WIDTH):
+            kinds.append("zero-width")
+        if any(c in text for c in _NBSP):
+            kinds.append("non-breaking space")
+        # C0/C1 control chars except tab(9), newline(10), carriage-return(13)
+        if any((ord(c) < 32 and ord(c) not in (9, 10, 13)) or (127 <= ord(c) <= 159) for c in text):
+            kinds.append("control char")
+        return kinds
+
+    weird_chars_all: list[dict[str, Any]] = []
+    for p in paragraphs:
+        kinds = _weird_kinds(p["text"])
+        if kinds:
+            weird_chars_all.append(
+                {
+                    "index": p["index"],
+                    "text": p["text"],
+                    "page": p["page"],
+                    "kinds": kinds,
+                }
+            )
+    weird_char_total = len(weird_chars_all)
+    weird_chars = weird_chars_all[:100]
+
     # ── 5. raw_xml snippets ───────────────────────────────────────────────────
     # Up to 3 split_candidates + up to 2 paragraphs with soft breaks
     raw_xml_entries = []
@@ -273,6 +453,13 @@ def check_docx(data: bytes) -> dict[str, Any]:
         # True only if the file contained page-break markers we could count.
         # When False, the "page" fields are all 1 and should not be shown.
         "pages_estimated": saw_page_break,
+        # New detector counts
+        "typed_bullet_count": len(typed_bullets),
+        "heading_issue_count": len(heading_issues),
+        "empty_list_item_count": len(empty_list_items),
+        "long_paragraph_count": long_para_total,
+        "weird_char_count": weird_char_total,
+        "unparseable": unparseable,
     }
 
     notes = [
@@ -292,6 +479,16 @@ def check_docx(data: bytes) -> dict[str, Any]:
         "explicit page breaks in document order; Word does not store true page "
         "numbers. If the file has no such markers (common for Google Docs exports) "
         "the estimate is unavailable and page columns are hidden.",
+        "typed_bullets detection is HEURISTIC: a paragraph starting with •, -, *, "
+        "or a number followed by . or ) is flagged, but the paragraph must not already "
+        "be a real list item. False positives are possible if the text genuinely starts "
+        "with these characters for other reasons.",
+        "fake_heading detection is HEURISTIC: a short paragraph (≤60 chars) with no "
+        "sentence-ending punctuation where every text run is bold, but the style is not "
+        "Heading 1-4. False positives are possible for bold emphasis phrases.",
+        "weird_chars detection is HEURISTIC: non-breaking spaces, zero-width characters, "
+        "replacement chars, mojibake patterns (Ã/â€), and C0/C1 control characters are "
+        "flagged. Some of these may be intentional in specialized content.",
     ]
 
     return {
@@ -299,6 +496,12 @@ def check_docx(data: bytes) -> dict[str, Any]:
         "list_items": list_items,
         "soft_break_items": soft_break_items,
         "split_candidates": split_candidates,
+        "typed_bullets": typed_bullets,
+        "heading_issues": heading_issues,
+        "empty_list_items": empty_list_items,
+        "long_paragraphs": long_paragraphs,
+        "unparseable": unparseable,
+        "weird_chars": weird_chars,
         "raw_xml": raw_xml_entries,
         "notes": notes,
     }
