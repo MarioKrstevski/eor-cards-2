@@ -502,8 +502,11 @@ const HISTORY_LABELS: Record<string, string> = {
   typed: 'Typed edit',
 };
 
-function historyLabel(kind: string): string {
-  return HISTORY_LABELS[kind] ?? kind;
+function historyLabel(kind: string, field?: string): string {
+  const base = HISTORY_LABELS[kind] ?? kind;
+  // Note which field the action touched (front vs extra); origins span the whole
+  // card (field 'both'/'none') so they get no suffix.
+  return field === 'front' || field === 'extra' ? `${base} · ${field}` : base;
 }
 
 // A version to preview/restore — one row in the history dropdown.
@@ -1021,14 +1024,14 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
       // Persisted is seq-asc (origin first). Append in-progress unsaved events so
       // they show at the very top too.
       const inProgress: HistoryVersion[] = eventsRef.current.map((e) => ({
-        label: historyLabel(e.kind),
+        label: historyLabel(e.kind, e.field),
         front_html: e.front_html,
         extra: e.extra,
         created_at: null,
       }));
       const chron: HistoryVersion[] = [
         ...persisted.map((h) => ({
-          label: historyLabel(h.kind),
+          label: historyLabel(h.kind, h.field),
           front_html: h.front_html,
           extra: h.extra,
           created_at: h.created_at,
