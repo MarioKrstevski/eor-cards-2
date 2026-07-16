@@ -515,6 +515,9 @@ interface HistoryVersion {
   front_html: string;
   extra: string | null;
   created_at: string | null;
+  // Which field the change touched ('front'/'extra'); used to switch the editor
+  // tab to the changed field when previewing. Origins span both → undefined.
+  field?: string;
 }
 
 // Short git-log-style relative time. Null/blank created_at (in-progress unsaved
@@ -1001,6 +1004,8 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     const ex = extraRef.current;
     if (fr) { fr.innerHTML = toEditorHtml(v.front_html, ankiMode); fr.contentEditable = 'false'; }
     if (ex) { ex.innerHTML = toEditorHtml(v.extra ?? '', ankiMode); ex.contentEditable = 'false'; }
+    // Switch the editor to the field this change touched, so the diff is visible.
+    if (v.field === 'front' || v.field === 'extra') setTab(v.field);
   }
 
   // Put the working content back and re-enable editing.
@@ -1028,6 +1033,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
         front_html: e.front_html,
         extra: e.extra,
         created_at: null,
+        field: e.field,
       }));
       const chron: HistoryVersion[] = [
         ...persisted.map((h) => ({
@@ -1035,6 +1041,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
           front_html: h.front_html,
           extra: h.extra,
           created_at: h.created_at,
+          field: h.field,
         })),
         ...inProgress,
       ];

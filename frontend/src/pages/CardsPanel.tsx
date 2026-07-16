@@ -108,6 +108,15 @@ export function renderClozeHtml(html: string): string {
   return result;
 }
 
+// Text view: keep the {{c1::...}} braces visible but tint the whole cloze the
+// same blue as Anki view, so the clozed term is always visually distinct.
+export function renderClozeText(html: string): string {
+  return html.replace(
+    /\{\{c\d+::[^}]+\}\}/g,
+    (m) => `<span style="color:#1f77b4;font-weight:700">${m}</span>`
+  );
+}
+
 function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, '').trim();
 }
@@ -1646,7 +1655,7 @@ export default function CardsPanel({
                       <div
                         className="text-sm leading-relaxed text-gray-800"
                         dangerouslySetInnerHTML={{
-                          __html: showAnkiFormat ? renderClozeHtml(v) : v,
+                          __html: showAnkiFormat ? renderClozeHtml(v) : renderClozeText(v),
                         }}
                       />
                     )}
