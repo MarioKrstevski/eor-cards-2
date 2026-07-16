@@ -1443,7 +1443,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
               title="Delete this card"
               className="px-2 py-1 text-xs font-medium text-red-600 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition-colors duration-150"
             >
-              Delete
+              Delete Card
             </button>
           )}
           <button
