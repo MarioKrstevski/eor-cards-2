@@ -18,6 +18,7 @@ from backend.models import (
     ContentBlock, SectionImage, Curriculum, Card, slugify, utcnow,
 )
 from backend.config import UPLOAD_DIR, SCAN_DIR
+from backend.services.docx_check import check_docx
 
 logger = logging.getLogger(__name__)
 
@@ -1311,3 +1312,28 @@ def _run_ai_heading_processing(job_id: int, curriculum_version: str = 'v1'):
             logger.exception("Failed to write error status for AI heading job %d", job_id)
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic endpoint — no DB writes, pure OOXML inspection
+# ---------------------------------------------------------------------------
+
+@router.post("/check")
+async def check_document(file: UploadFile = File(...)):
+    """
+    Inspect a .docx for list soft-break / paragraph-split problems.
+
+    POST multipart/form-data with field name ``file``.
+    Returns a JSON report (summary, list_items, split_candidates, raw_xml, notes).
+    Does NOT save anything or touch the database.
+    """
+    if not file.filename or not file.filename.lower().endswith(".docx"):
+        raise HTTPException(status_code=400, detail="Only .docx files are accepted")
+
+    data = await file.read()
+    try:
+        report = check_docx(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return report
