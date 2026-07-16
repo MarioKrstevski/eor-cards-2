@@ -47,6 +47,7 @@ import {
   getModels,
   addManualCards,
   getRuleSets,
+  finalizeSection,
   type DebugPromptResult,
   type DebugRunResult,
 } from '../api';
@@ -3246,6 +3247,25 @@ export default function CardsPanel({
               title="Add a card by hand, or paste cards from a Claude-chat session"
             >
               + Add card(s)
+            </button>
+          )}
+          {effectiveSectionId && (
+            <button
+              onClick={async () => {
+                const sid = effectiveSectionId ?? sectionId;
+                if (!sid) return;
+                try {
+                  await finalizeSection(sid);
+                  setActionNotice('Section marked done');
+                } catch {
+                  setActionError('Could not mark section done');
+                }
+              }}
+              disabled={jobRunning}
+              className="px-2 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors duration-150"
+              title="Snapshot current cards as a finalized version (visible in the lab dashboard)"
+            >
+              Mark Section Done
             </button>
           )}
           {!simpleView && inspectError && <span className="text-xs text-red-600">{inspectError}</span>}

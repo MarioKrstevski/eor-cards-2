@@ -852,6 +852,84 @@ export async function getCardHistory(cardId: number): Promise<LabHistoryEntry[]>
   return res.data;
 }
 
+// ── Lab admin endpoints ────────────────────────────────────────────────────────
+
+export interface LabFinalizationSummary {
+  id: number;
+  section_id: number;
+  section_heading: string | null;
+  card_count: number;
+  loop_status: string;
+  created_at: string | null;
+  finished_at: string | null;
+}
+
+export interface LabCardEntry {
+  card_id: number;
+  card_number: number;
+  front_html: string;
+  extra: string | null;
+}
+
+export interface LabSnapshot {
+  id: number;
+  rule_set_id: number | null;
+  model: string | null;
+  card_version: string | null;
+  cards_json: LabCardEntry[] | null;
+  created_at: string | null;
+}
+
+export interface LabEditEvent {
+  seq: number;
+  kind: string;
+  field: string | null;
+  front_html: string | null;
+  extra: string | null;
+  meta: unknown;
+  created_at: string | null;
+}
+
+export interface LabFinalization {
+  id: number;
+  loop_status: string;
+  cards_json: LabCardEntry[] | null;
+  created_at: string | null;
+  finished_at: string | null;
+}
+
+export interface LabSectionDetail {
+  section_id: number;
+  section_heading: string | null;
+  latest_snapshot: LabSnapshot | null;
+  events_by_card: Record<string, LabEditEvent[]>;
+  latest_finalization: LabFinalization | null;
+}
+
+// List all section finalizations (newest first).
+export async function getLabSections(): Promise<LabFinalizationSummary[]> {
+  const res = await http.get<LabFinalizationSummary[]>('/lab/sections');
+  return res.data;
+}
+
+// Full detail for a section: latest snapshot, all edit events by card, latest finalization.
+export async function getLabSection(sectionId: number): Promise<LabSectionDetail> {
+  const res = await http.get<LabSectionDetail>(`/lab/section/${sectionId}`);
+  return res.data;
+}
+
+// Snapshot the section's current active cards into a SectionFinalization.
+export async function finalizeSection(sectionId: number): Promise<LabFinalization> {
+  const res = await http.post<LabFinalization>(`/lab/finalize/${sectionId}`);
+  return res.data;
+}
+
+// Flip a finalization's loop_status to 'running'.
+export async function startFinalization(finalizationId: number): Promise<{ id: number; section_id: number; loop_status: string }> {
+  const res = await http.post<{ id: number; section_id: number; loop_status: string }>(`/lab/finalizations/${finalizationId}/start`);
+  return res.data;
+}
+
 // ── Step-by-Step (SBS) generation ─────────────────────────────────────────────
 import type { SbsRuleSet, SbsPreview, SbsJob } from './types';
 

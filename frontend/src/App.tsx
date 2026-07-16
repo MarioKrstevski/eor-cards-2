@@ -5,6 +5,7 @@ import WorkspacePage from './pages/WorkspacePage';
 import LibraryPage from './pages/LibraryPage';
 import ProposalsPage from './pages/ProposalsPage';
 import AnkiPlayerPage from './pages/AnkiPlayerPage';
+import AdminPage from './pages/AdminPage';
 import SettingsPopover from './components/SettingsPopover';
 import UsageModal from './components/UsageModal';
 import CostFlash from './components/CostFlash';
@@ -229,6 +230,7 @@ function AppInner() {
         <Route path="/" element={<WorkspacePage refreshUsage={refreshUsage} />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/proposals" element={<ProposalsPage />} />
+        <Route path="/admin" element={<AdminPage />} />
       </Routes>
 
       {showSettings && <SettingsPopover onClose={() => setShowSettings(false)} />}
