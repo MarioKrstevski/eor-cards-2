@@ -227,6 +227,7 @@ def _persist_cards(db: Session, section: Section, cards: list[dict], card_versio
     note_id_base = max(int(time.time() * 1000), (db.query(func.max(Card.note_id)).scalar() or 0) + 1)
 
     if card_version == "base":
+        created: list[Card] = []
         for i, c in enumerate(cards):
             kwargs = dict(
                 section_id=section.id, card_number=c["card_number"],
@@ -238,8 +239,16 @@ def _persist_cards(db: Session, section: Section, cards: list[dict], card_versio
                 kwargs["tags_mapped"] = tags; kwargs["tags"] = []
             else:
                 kwargs["tags"] = tags
-            db.add(Card(**kwargs))
+            new = Card(**kwargs)
+            db.add(new)
+            created.append(new)
         db.commit()
+        # Silent capture (best-effort, never raises). Shared by SBS + Verify.
+        try:
+            from backend.services import capture
+            capture.record_generation(db, section.id, None, None, card_version, created)
+        except Exception:
+            logger.exception("capture.record_generation hook failed (swallowed)")
         return
 
     # v1/v2/v3 — attach onto existing base cards by order.

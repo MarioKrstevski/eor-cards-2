@@ -378,6 +378,56 @@ class Presentation(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+# ── Edit-History / Learning Capture (silent, SEPARATE tables) ──
+# These record how cards evolve from generation to final. They are written by
+# best-effort helpers (backend/services/capture.py) that swallow all errors —
+# nothing here is on the critical path of a card operation. Deleting every row
+# in these tables has zero effect on normal card behavior.
+
+class GenerationSnapshot(Base):
+    """The exact set of cards a section produced in one generation run."""
+    __tablename__ = "generation_snapshots"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    section_id: Mapped[int] = mapped_column(ForeignKey("sections.id"))
+    rule_set_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    card_version: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    # list of {card_number, front_html, extra}
+    cards_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class EditEvent(Base):
+    """One recorded change to a card's front/extra. seq is per-card order.
+
+    card_id is a soft reference (plain Int, no FK) so events survive the card
+    being deleted — this is a history log, not operational data.
+    """
+    __tablename__ = "edit_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    section_id: Mapped[int] = mapped_column(ForeignKey("sections.id"))
+    card_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    seq: Mapped[int] = mapped_column(Integer, default=0)  # per-card order
+    kind: Mapped[str] = mapped_column(String(40))  # origin_generated/bold/cloze/reword/typed/...
+    field: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # front|extra|both|none
+    front_html: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    extra: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # source ids/content, guidance, etc.
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class SectionFinalization(Base):
+    """A snapshot of a section's final card set, taken when the reviewer is done.
+    loop_status scaffolds a later tuning phase (pending -> running -> done)."""
+    __tablename__ = "section_finalizations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    section_id: Mapped[int] = mapped_column(ForeignKey("sections.id"))
+    cards_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # final set snapshot
+    loop_status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|running|done
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+
 # ── AI Usage Log ──
 
 class AIUsageLog(Base):

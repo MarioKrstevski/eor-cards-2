@@ -563,8 +563,19 @@ def combine_apply(body: CombineApplyRequest, db: Session = Depends(get_db)):
         _delete_fix_proposals_for(db, [c.id for c in cards])
         for c in cards:
             db.delete(c)
+    # Capture the source front/extra BEFORE they're gone (best-effort, non-fatal).
+    combine_meta = {
+        "from_card_ids": [c.id for c in cards],
+        "from_cards": [{"front": c.front_html, "extra": c.extra} for c in cards],
+    }
     db.commit()
     db.refresh(new)
+    # Silent capture: origin_combine event for the new combined card.
+    try:
+        from backend.services import capture
+        capture.record_origin(db, new, "origin_combine", meta=combine_meta)
+    except Exception:
+        logger.exception("capture.record_origin (combine) hook failed (swallowed)")
     # Accuracy + EOR-yield score pass on the combined card (best-effort).
     sec = db.get(Section, new.section_id)
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -941,6 +952,8 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
     fixed = 0
     split_count = 0
     all_new_cards: list = []  # note_ids minted once at the end to avoid same-ms collisions
+    # Silent capture: (new sibling card, source meta) pairs, recorded after commit.
+    split_origins: list[tuple[Card, dict]] = []
     with ThreadPoolExecutor(max_workers=3) as ex:
         futures = [ex.submit(worker, cid) for cid in initial]
         for fut in as_completed(futures):
@@ -988,6 +1001,11 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                     )
                     db.add(nc)
                     new_cards.append(nc)
+                    split_origins.append((nc, {
+                        "from_card_id": card.id,
+                        "from_front": orig_front,
+                        "from_extra": orig_extra,
+                    }))
                 db.flush()  # so the next split's max(card_number) query sees these
                 all_new_cards.extend(new_cards)
                 split_count += 1
@@ -1014,6 +1032,15 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
     if all_new_cards:
         assign_note_ids(all_new_cards)  # unique across the whole request
     db.commit()
+
+    # Silent capture: origin_split event per new sibling (best-effort, non-fatal).
+    if split_origins:
+        try:
+            from backend.services import capture
+            for nc, meta in split_origins:
+                capture.record_origin(db, nc, "origin_split", meta=meta)
+        except Exception:
+            logger.exception("capture.record_origin (split) hook failed (swallowed)")
 
     for sid, u in per_section_usage.items():
         if u["i"] or u["o"]:
@@ -1301,6 +1328,16 @@ def add_manual_cards(body: AddManualCardsRequest, db: Session = Depends(get_db))
     db.flush()
     assign_note_ids(created)
     db.commit()
+
+    # Silent capture: one origin_manual event per newly created card (best-effort).
+    # Version-attach imports mutate existing cards rather than create rows, so only
+    # `created` (new rows) get an origin event.
+    try:
+        from backend.services import capture
+        for c in created:
+            capture.record_origin(db, c, "origin_manual")
+    except Exception:
+        logger.exception("capture.record_origin (manual) hook failed (swallowed)")
 
     if parse_usage:
         db.add(AIUsageLog(

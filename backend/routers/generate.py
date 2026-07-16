@@ -715,6 +715,18 @@ def _run_generation(
                 _acc_section(section_data["id"], usage)
                 db.commit()
 
+                # Silent capture: record the base cards this run created (best-effort,
+                # never raises). Only base generation creates fresh card rows.
+                if created_cards:
+                    try:
+                        from backend.services import capture
+                        capture.record_generation(
+                            db, section_data["id"], job.rule_set_id, model,
+                            card_version, created_cards,
+                        )
+                    except Exception:
+                        logger.exception("capture.record_generation hook failed (swallowed)")
+
                 # Score the cards created in this run (base generation only —
                 # v1/v2/v3 runs don't change the base content the score is based on)
                 if created_cards:
