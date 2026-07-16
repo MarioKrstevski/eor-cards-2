@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { DocCheckReport } from '../api';
 
 interface Props {
@@ -22,10 +23,34 @@ export default function DocCheckModal({ report, fileName, onClose }: Props) {
   } = report;
   const pagesEst = summary.pages_estimated;
 
-  const chipBase = 'rounded-lg p-3';
+  // Category chips double as filters — only the selected sections render, so the
+  // reviewer isn't flooded with every list at once. Nothing selected = a hint.
+  const CATS = [
+    { key: 'soft', label: 'Soft breaks', count: summary.with_soft_break_count },
+    { key: 'split', label: 'Split candidates', count: summary.split_candidate_count },
+    { key: 'typed', label: 'Typed bullets', count: summary.typed_bullet_count },
+    { key: 'heading', label: 'Heading issues', count: summary.heading_issue_count },
+    { key: 'empty', label: 'Empty items', count: summary.empty_list_item_count },
+    { key: 'long', label: 'Long paras', count: summary.long_paragraph_count },
+    { key: 'weird', label: 'Weird chars', count: summary.weird_char_count },
+    {
+      key: 'unparseable',
+      label: 'Unparseable',
+      count: summary.unparseable.tables + summary.unparseable.text_boxes + summary.unparseable.drawings,
+    },
+  ] as const;
+  const [active, setActive] = useState<Set<string>>(new Set());
+  const show = (k: string) => active.has(k);
+  const toggle = (k: string) =>
+    setActive((prev) => {
+      const n = new Set(prev);
+      if (n.has(k)) n.delete(k); else n.add(k);
+      return n;
+    });
+
+  const chipBase = 'rounded-lg p-3 text-left transition-all';
   const chipNeutral = `${chipBase} bg-gray-50`;
   const chipRed = `${chipBase} bg-red-50`;
-  const chipGreen = `${chipBase} bg-green-50`;
 
   const countChip = (count: number, neutral = false) => {
     if (neutral) return <p className="text-xl font-bold text-gray-800">{count}</p>;
@@ -63,48 +88,51 @@ export default function DocCheckModal({ report, fileName, onClose }: Props) {
           {/* Summary chip grid */}
           <section>
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Summary</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+            <p className="text-[11px] text-gray-400 mb-2">Click a category to show its list. Selected categories are outlined.</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-2">
               <div className={chipNeutral}>
                 <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Paragraphs</p>
                 {countChip(summary.total_paragraphs, true)}
               </div>
-              <div className={summary.with_soft_break_count > 0 ? chipRed : chipNeutral}>
-                <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Soft breaks</p>
-                {countChip(summary.with_soft_break_count)}
-              </div>
-              <div className={summary.split_candidate_count > 0 ? chipRed : chipNeutral}>
-                <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Split candidates</p>
-                {countChip(summary.split_candidate_count)}
-              </div>
-              <div className={summary.typed_bullet_count > 0 ? chipRed : chipNeutral}>
-                <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Typed bullets</p>
-                {countChip(summary.typed_bullet_count)}
-              </div>
-              <div className={summary.heading_issue_count > 0 ? chipRed : chipNeutral}>
-                <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Heading issues</p>
-                {countChip(summary.heading_issue_count)}
-              </div>
-              <div className={summary.empty_list_item_count > 0 ? chipRed : chipNeutral}>
-                <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Empty items</p>
-                {countChip(summary.empty_list_item_count)}
-              </div>
-              <div className={summary.long_paragraph_count > 0 ? chipRed : chipNeutral}>
-                <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Long paras</p>
-                {countChip(summary.long_paragraph_count)}
-              </div>
-              <div className={summary.weird_char_count > 0 ? chipRed : chipNeutral}>
-                <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Weird chars</p>
-                {countChip(summary.weird_char_count)}
-              </div>
+              {CATS.map((c) => (
+                <button
+                  key={c.key}
+                  type="button"
+                  onClick={() => toggle(c.key)}
+                  className={`${c.count > 0 ? chipRed : chipNeutral} ${
+                    show(c.key) ? 'ring-2 ring-blue-500' : 'ring-1 ring-transparent hover:ring-gray-300'
+                  }`}
+                >
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">{c.label}</p>
+                  {countChip(c.count)}
+                </button>
+              ))}
             </div>
-            {/* Unparseable content line */}
-            <div className="bg-gray-50 rounded-lg px-3 py-2 text-xs text-gray-600">
-              <span className="font-medium text-gray-500 uppercase tracking-wide text-[10px] mr-2">Unparseable:</span>
-              Tables {summary.unparseable.tables} · Text boxes {summary.unparseable.text_boxes} · Drawings {summary.unparseable.drawings}
+            <div className="flex items-center gap-3 mb-3">
+              <button
+                type="button"
+                onClick={() => setActive(new Set(CATS.map((c) => c.key)))}
+                className="text-[11px] font-medium text-blue-600 hover:text-blue-700"
+              >
+                Show all
+              </button>
+              {active.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActive(new Set())}
+                  className="text-[11px] font-medium text-gray-500 hover:text-gray-700"
+                >
+                  Clear
+                </button>
+              )}
             </div>
+            {active.size === 0 && (
+              <p className="text-xs text-gray-400 italic mt-1">Select a category above to view its items.</p>
+            )}
           </section>
 
           {/* ── Soft-break paragraphs ── */}
+          {show('soft') && (
           <section>
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
               Soft-break paragraphs ({soft_break_items.length})
@@ -144,8 +172,10 @@ export default function DocCheckModal({ report, fileName, onClose }: Props) {
               </div>
             )}
           </section>
+          )}
 
           {/* ── Split candidates ── */}
+          {show('split') && (
           <section>
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
               Split candidates ({split_candidates.length})
@@ -173,8 +203,10 @@ export default function DocCheckModal({ report, fileName, onClose }: Props) {
               </div>
             )}
           </section>
+          )}
 
           {/* ── Typed bullets ── */}
+          {show('typed') && (
           <section>
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
               Typed bullets ({typed_bullets.length})
@@ -211,8 +243,10 @@ export default function DocCheckModal({ report, fileName, onClose }: Props) {
               </div>
             )}
           </section>
+          )}
 
           {/* ── Heading issues ── */}
+          {show('heading') && (
           <section>
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
               Heading issues ({heading_issues.length})
@@ -237,8 +271,10 @@ export default function DocCheckModal({ report, fileName, onClose }: Props) {
               </div>
             )}
           </section>
+          )}
 
           {/* ── Empty list items ── */}
+          {show('empty') && (
           <section>
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
               Empty list items ({empty_list_items.length})
@@ -269,8 +305,10 @@ export default function DocCheckModal({ report, fileName, onClose }: Props) {
               </div>
             )}
           </section>
+          )}
 
           {/* ── Long paragraphs ── */}
+          {show('long') && (
           <section>
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
               Long paragraphs ({summary.long_paragraph_count}
@@ -308,8 +346,10 @@ export default function DocCheckModal({ report, fileName, onClose }: Props) {
               </div>
             )}
           </section>
+          )}
 
           {/* ── Unparseable content ── */}
+          {show('unparseable') && (
           <section>
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
               Unparseable content
@@ -332,8 +372,10 @@ export default function DocCheckModal({ report, fileName, onClose }: Props) {
               </div>
             </div>
           </section>
+          )}
 
           {/* ── Weird characters ── */}
+          {show('weird') && (
           <section>
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
               Weird characters ({summary.weird_char_count}
@@ -377,6 +419,7 @@ export default function DocCheckModal({ report, fileName, onClose }: Props) {
               </div>
             )}
           </section>
+          )}
 
           {/* ── Raw XML ── */}
           {raw_xml.length > 0 && (
