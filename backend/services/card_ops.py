@@ -6,10 +6,31 @@ import time
 import anthropic
 from sqlalchemy.orm import Session
 
-from backend.models import Card
+from backend.models import Card, ReviewMarkType
 from backend.services.scorer import score_cards
 
 logger = logging.getLogger(__name__)
+
+
+def ensure_split_combine_marks(db: Session) -> tuple[int, int]:
+    """Return (split_mark_id, combine_mark_id), creating the mark types if absent.
+
+    Colors: split = amber (#f59e0b), combine = violet (#7c3aed).
+    Idempotent — safe to call on every split/combine accept.
+    """
+    split_mark = db.query(ReviewMarkType).filter(ReviewMarkType.name == "From split").first()
+    if not split_mark:
+        split_mark = ReviewMarkType(name="From split", color="#f59e0b", sort_order=90)
+        db.add(split_mark)
+        db.flush()
+
+    combine_mark = db.query(ReviewMarkType).filter(ReviewMarkType.name == "From combine").first()
+    if not combine_mark:
+        combine_mark = ReviewMarkType(name="From combine", color="#7c3aed", sort_order=91)
+        db.add(combine_mark)
+        db.flush()
+
+    return split_mark.id, combine_mark.id
 
 
 def assign_note_ids(cards: list[Card]) -> None:

@@ -13,7 +13,7 @@ from backend.db import get_db
 from backend.models import Card, CardStatus, FixProposal, Section, SectionImage, RuleSet, AIUsageLog, Curriculum, utcnow
 from backend.services.generator import strip_card_html, regenerate_single_card, parse_card_output
 from backend.services.ai_utils import response_text
-from backend.services.card_ops import assign_note_ids, score_new_cards
+from backend.services.card_ops import assign_note_ids, score_new_cards, ensure_split_combine_marks
 from backend.services.manual_card_parser import parse_pasted_cards
 from backend.services.llm import complete_text
 from backend.config import (
@@ -538,7 +538,7 @@ def combine_preview(body: CombinePreviewRequest, db: Session = Depends(get_db)):
 
 @router.post("/combine-apply")
 def combine_apply(body: CombineApplyRequest, db: Session = Depends(get_db)):
-    """Create the combined card; reject the originals unless keep_original."""
+    """Create the combined card; originals are always kept (marked 'From combine')."""
     cards = db.query(Card).filter(Card.id.in_(body.card_ids)).all()
     if not cards:
         raise HTTPException(400, "No cards found")
@@ -546,6 +546,7 @@ def combine_apply(body: CombineApplyRequest, db: Session = Depends(get_db)):
     # Inherit tags + the first available vignette / teaching case from the sources.
     vignette = next((c.vignette for c in cards if c.vignette), None)
     teaching_case = next((c.teaching_case for c in cards if c.teaching_case), None)
+    _split_mark_id, combine_mark_id = ensure_split_combine_marks(db)
     new = Card(
         section_id=src.section_id,
         card_number=src.card_number,
@@ -558,16 +559,12 @@ def combine_apply(body: CombineApplyRequest, db: Session = Depends(get_db)):
         teaching_case=teaching_case,
         status=CardStatus.active,
         is_reviewed=True,
+        review_mark_id=combine_mark_id,
     )
     db.add(new)
     assign_note_ids([new])
-    if not body.keep_original:
-        # Hard-delete the originals so they actually disappear (reject would keep
-        # them visible under the default "All statuses" view).
-        _delete_fix_proposals_for(db, [c.id for c in cards])
-        for c in cards:
-            db.delete(c)
-    # Capture the source front/extra BEFORE they're gone (best-effort, non-fatal).
+    # Originals are always kept — the reviewer prunes manually.
+    # Capture the source front/extra for the origin audit log.
     combine_meta = {
         "from_card_ids": [c.id for c in cards],
         "from_cards": [{"front": c.front_html, "extra": c.extra} for c in cards],
@@ -973,13 +970,22 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                 inh_tags, inh_mapped = card.tags, card.tags_mapped
                 vig, tc = card.vignette, card.teaching_case
                 orig_front, orig_extra = card.front_html, card.extra
+                orig_card_number = card.card_number
                 split_change = {"base": {"action": "split", "prev_front_html": orig_front, "prev_extra": orig_extra, "at": now_iso}}
-                _delete_fix_proposals_for(db, [card.id])
-                db.delete(card)  # replace the original with its siblings
+                # Keep the original card — new siblings are inserted right after it.
+                # Shift any cards whose card_number > orig so siblings slot in neatly.
+                split_mark_id, _combine_mark_id = ensure_split_combine_marks(db)
+                sibling_count = len(out["siblings"])
+                if sibling_count:
+                    db.query(Card).filter(
+                        Card.section_id == sid,
+                        Card.card_number > orig_card_number,
+                    ).update(
+                        {Card.card_number: Card.card_number + sibling_count},
+                        synchronize_session=False,
+                    )
                 db.flush()
-                start_num = (
-                    db.query(func.coalesce(func.max(Card.card_number), 0)).filter(Card.section_id == sid).scalar()
-                ) or 0
+                start_num = orig_card_number  # siblings will be orig+1, orig+2, …
                 new_cards = []
                 for j, sib in enumerate(out["siblings"]):
                     res = sib["result"]
@@ -1002,6 +1008,7 @@ def validate_cards(body: ValidateRequest, db: Session = Depends(get_db)):
                         correctness_score=passed,
                         correctness=corr,
                         validation_change=split_change,
+                        review_mark_id=split_mark_id,
                     )
                     db.add(nc)
                     new_cards.append(nc)

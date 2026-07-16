@@ -7,7 +7,7 @@ import anthropic
 from backend.db import get_db
 from backend.models import Card, FixBatch, FixProposal, ReviewMarkType, CardStatus, Section, utcnow
 from backend.services.fix_service import run_fix_batch
-from backend.services.card_ops import assign_note_ids, score_new_cards
+from backend.services.card_ops import assign_note_ids, score_new_cards, ensure_split_combine_marks
 from backend.config import ANTHROPIC_API_KEY
 
 router = APIRouter()
@@ -269,13 +269,26 @@ def confirm_batch(batch_id: int, body: ConfirmBatchRequest, db: Session = Depend
             card.in_fix_batch = False
 
         elif action == "split":
-            # Create new cards from new_cards_json; reject the original unless keep_original.
-            # New cards inherit the original's tags and vignette/teaching case.
+            # Create new cards from new_cards_json; original is always kept.
+            # New cards inherit the original's tags and vignette/teaching case,
+            # and are marked with the "From split" review mark.
             if proposal.new_cards_json:
-                for nc in proposal.new_cards_json:
+                split_mark_id, _combine_mark_id = ensure_split_combine_marks(db)
+                sibling_count = len(proposal.new_cards_json)
+                # Shift cards after the original to make room for the siblings.
+                if sibling_count:
+                    db.query(Card).filter(
+                        Card.section_id == card.section_id,
+                        Card.card_number > card.card_number,
+                    ).update(
+                        {Card.card_number: Card.card_number + sibling_count},
+                        synchronize_session=False,
+                    )
+                db.flush()
+                for j, nc in enumerate(proposal.new_cards_json):
                     new_card = Card(
                         section_id=card.section_id,
-                        card_number=card.card_number,
+                        card_number=card.card_number + 1 + j,
                         front_html=nc.get("front_html", ""),
                         front_text=re.sub(r'<[^>]+>', '', nc.get("front_html", "")),
                         tags=card.tags,
@@ -285,11 +298,10 @@ def confirm_batch(batch_id: int, body: ConfirmBatchRequest, db: Session = Depend
                         teaching_case=card.teaching_case,
                         status=CardStatus.active,
                         is_reviewed=True,
+                        review_mark_id=split_mark_id,
                     )
                     db.add(new_card)
                     created_cards.append(new_card)
-            if not body.keep_original:
-                card.status = CardStatus.rejected
             card.is_reviewed = True
             card.review_mark_id = None
             card.in_fix_batch = False

@@ -2183,7 +2183,7 @@ export default function CardsPanel({
   const [bulkRegenPrompt, setBulkRegenPrompt] = useState('');
   // Regenerate-modal mode: recreate (1:1, today) | split (1→N) | combine (N→1, Phase B).
   const [regenMode, setRegenMode] = useState<'recreate' | 'split' | 'combine'>('recreate');
-  const [splitKeepOriginal, setSplitKeepOriginal] = useState(false);  // default: delete (reject) original
+  const [splitKeepOriginal, setSplitKeepOriginal] = useState(true);  // originals are always kept; marked with "From split"/"From combine"
   const [splitLoading, setSplitLoading] = useState(false);
   const [splitBatchId, setSplitBatchId] = useState<number | null>(null);
   const [splitProposal, setSplitProposal] = useState<FixProposal | null>(null);  // in-place review modal when set
@@ -3958,7 +3958,7 @@ export default function CardsPanel({
               </div>
               <div className="grid grid-cols-2 gap-3 p-4 overflow-auto">
                 <div>
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase mb-1">Original {splitKeepOriginal ? '(kept)' : '(will be removed)'}</p>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase mb-1">Original (kept)</p>
                   {orig ? (
                     <>
                       <div className="border border-gray-200 rounded p-2 text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: orig.front_html }} />
@@ -4007,7 +4007,7 @@ export default function CardsPanel({
               </div>
               <div className="grid grid-cols-2 gap-3 p-4 overflow-auto">
                 <div>
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase mb-1">Originals {splitKeepOriginal ? '(kept)' : '(will be removed)'}</p>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase mb-1">Originals (kept)</p>
                   <div className="flex flex-col gap-2">
                     {sources.map(c => (
                       <div key={c.id} className="border border-gray-200 rounded p-2">
@@ -4295,10 +4295,8 @@ export default function CardsPanel({
               )}
             </div>
             {(regenMode === 'split' || regenMode === 'combine') && (
-              <div className="flex items-center gap-3 mb-3 text-[11px] text-gray-600">
-                <span>Original card{regenMode === 'combine' ? 's' : ''} after this:</span>
-                <label className="flex items-center gap-1 cursor-pointer"><input type="radio" checked={!splitKeepOriginal} onChange={() => setSplitKeepOriginal(false)} />Delete</label>
-                <label className="flex items-center gap-1 cursor-pointer"><input type="radio" checked={splitKeepOriginal} onChange={() => setSplitKeepOriginal(true)} />Keep</label>
+              <div className="flex items-center gap-3 mb-3 text-[11px] text-gray-500">
+                <span>Original card{regenMode === 'combine' ? 's' : ''} will be kept and marked "{regenMode === 'split' ? 'From split' : 'From combine'}" on the new card{regenMode === 'split' ? 's' : ''}.</span>
               </div>
             )}
             <p className="text-xs text-gray-500 mb-3">
