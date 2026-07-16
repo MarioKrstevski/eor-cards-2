@@ -18,7 +18,9 @@ import {
   createCurriculumNode,
   updateSection,
   apiErrorMessage,
+  checkDocx,
 } from '../api';
+import type { DocCheckReport } from '../api';
 import type { GenerationJob, CurriculumSection, CostEstimate, SectionDetail, MergedNode, ScanResult } from '../types';
 import type {
   CurriculumNode,
@@ -30,6 +32,7 @@ import CardsPanel from './CardsPanel';
 import SectionViewer from './SectionViewer';
 import ConfirmModal from '../components/ConfirmModal';
 import ReconcileModal from '../components/ReconcileModal';
+import DocCheckModal from '../components/DocCheckModal';
 import CurriculumPicker from '../components/CurriculumPicker';
 import CurriculumSectionPreview from '../components/CurriculumSectionPreview';
 import { buildAggregatedCounts, sortTree, curriculumOrderByPath } from '../utils';
@@ -851,7 +854,7 @@ interface WorkspacePageProps {
 }
 
 export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
-  const { curriculumVersion, selectedModel, selectedRuleSetId } = useSettings();
+  const { curriculumVersion, selectedModel, selectedRuleSetId, simpleView } = useSettings();
 
   // Sidebar tab
   const [sidebarTab, setSidebarTab] = useState<'documents' | 'topics'>('documents');
@@ -886,6 +889,12 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
   const [processingStep, setProcessingStep] = useState<string | null>(null);
   const [reconcile, setReconcile] = useState<{ scanToken: string; tree: MergedNode; summary: ScanResult['summary'] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Doc check
+  const docCheckInputRef = useRef<HTMLInputElement>(null);
+  const [docCheckLoading, setDocCheckLoading] = useState(false);
+  const [docCheckError, setDocCheckError] = useState<string | null>(null);
+  const [docCheckReport, setDocCheckReport] = useState<DocCheckReport | null>(null);
 
   // Section viewer
   const [viewingSectionId, setViewingSectionId] = useState<number | null>(null);
@@ -1203,6 +1212,24 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
     }
   }, [pastedHtml, pasteName, expandedTreeId, pasteCurriculumId]);
 
+  // Doc check handler
+  const handleDocCheck = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setDocCheckLoading(true);
+    setDocCheckError(null);
+    setDocCheckReport(null);
+    try {
+      const report = await checkDocx(file);
+      setDocCheckReport(report);
+    } catch (err: unknown) {
+      setDocCheckError(apiErrorMessage(err, 'Check failed'));
+    } finally {
+      setDocCheckLoading(false);
+    }
+  }, []);
+
   function toggleSidebar() {
     setSidebarCollapsed(prev => {
       const next = !prev;
@@ -1292,6 +1319,37 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
               e.target.value = '';
             }}
           />
+          {!simpleView && (
+            <>
+              <input
+                ref={docCheckInputRef}
+                type="file"
+                accept=".docx"
+                className="hidden"
+                onChange={handleDocCheck}
+              />
+              <button
+                onClick={() => docCheckInputRef.current?.click()}
+                disabled={docCheckLoading}
+                className="mt-1.5 w-full px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors duration-150 flex items-center justify-center gap-1.5"
+              >
+                {docCheckLoading ? (
+                  <>
+                    <svg className="h-3 w-3 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    Checking…
+                  </>
+                ) : (
+                  'Check document'
+                )}
+              </button>
+              {docCheckError && (
+                <p className="text-xs text-red-600 mt-1">{docCheckError}</p>
+              )}
+            </>
+          )}
           {uploadError && (
             <p className="text-xs text-red-600 mt-1.5">{uploadError}</p>
           )}
@@ -1526,6 +1584,11 @@ export default function WorkspacePage({ refreshUsage }: WorkspacePageProps) {
           }}
         />
       </div>
+
+      {/* Doc check modal */}
+      {docCheckReport && (
+        <DocCheckModal report={docCheckReport} onClose={() => setDocCheckReport(null)} />
+      )}
 
       {/* Curriculum sections preview modal */}
       {previewCurriculumPath != null && (
