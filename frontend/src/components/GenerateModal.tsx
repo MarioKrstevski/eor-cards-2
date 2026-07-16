@@ -59,7 +59,9 @@ export default function GenerateModal({ models, ruleSets, estimateLabel, onGener
   });
 
   const [cardVersion, setCardVersion] = useState<string>('base');
-  const [replaceExisting, setReplaceExisting] = useState<boolean>(false);
+  // Default ON: re-generating a section replaces its cards (avoids stacking a
+  // second run's output on top of the first — the 32→49 append surprise).
+  const [replaceExisting, setReplaceExisting] = useState<boolean>(true);
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {

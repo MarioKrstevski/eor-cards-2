@@ -458,10 +458,13 @@ class CombineApplyRequest(BaseModel):
 
 
 _COMBINE_SYSTEM = (
-    "You merge several Anki cloze flashcards covering related material into ONE consolidated cloze card. "
+    "You merge several Anki cloze flashcard FRONTS into ONE consolidated cloze card. "
+    "Merge ONLY the content provided in the fronts — do NOT introduce any information that was not "
+    "explicitly present in the provided fronts. "
     "Keep the medically important facts, remove redundancy, and keep it answerable for a PA EOR exam. "
     "Use cloze deletions of the form {{c1::answer}} (always c1). Use <b>...</b> for bold — never markdown. "
-    'Return ONLY JSON: {"front_html": "...", "extra": "... or null", "tags": ["..."]}.'
+    "The combined card is standalone — do NOT add any sibling-set footer or reference to other cards. "
+    'Return ONLY JSON: {"front_html": "...", "extra": null, "tags": ["..."]}.'
 )
 
 # Appended to _COMBINE_SYSTEM (and to the fix-service SYSTEM_PROMPT for split)
@@ -483,11 +486,12 @@ def combine_preview(body: CombinePreviewRequest, db: Session = Depends(get_db)):
         raise HTTPException(400, "Select at least two cards to combine")
     lines = []
     for i, c in enumerate(cards, 1):
-        tags = (c.tags or c.tags_mapped) or []
-        lines.append(f"Card {i}:\n  front: {c.front_text}\n  extra: {c.extra or '(none)'}\n  tags: {', '.join(tags)}")
+        # Send ONLY the front — the extra field is deliberately excluded so the model
+        # cannot pull sibling-set footers or unrelated context into the combined front.
+        lines.append(f"Card {i} front:\n{c.front_text}")
     guidance = (body.prompt or "").strip() or "Combine them sensibly into one focused card."
     user = (
-        "Combine the following flashcards into a single consolidated cloze card. "
+        "Combine the following flashcard fronts into a single consolidated cloze card. "
         f"Goal/guidance: {guidance}\n\n" + "\n\n".join(lines) +
         "\n\nReturn the combined card as JSON only."
     )
