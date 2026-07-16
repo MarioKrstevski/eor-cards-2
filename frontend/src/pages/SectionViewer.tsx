@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getSection, verifySection, pasteSectionContent, updateSection, updateSectionImage, deleteSection, createCurriculumNode, getCurriculum, getSectionCost, resetSectionCost, type SectionCost } from '../api';
+import { getSection, verifySection, pasteSectionContent, updateSection, updateSectionImage, uploadSectionImage, deleteSection, createCurriculumNode, getCurriculum, getSectionCost, resetSectionCost, type SectionCost } from '../api';
 import type { SectionDetail, SectionImage, CurriculumNode } from '../types';
 import CurriculumPicker from '../components/CurriculumPicker';
 
@@ -74,6 +74,28 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
       if (wantedSectionIdRef.current === sectionId) setLoading(false);
     }
   }, [sectionId]);
+
+  // Plain multi-file image upload into the section's image library. No AI, no
+  // EXTRACT/REF — every file is stored in section_images as ref-image potential,
+  // to be attached to a card later via the Ref Image cell.
+  const imageUploadRef = useRef<HTMLInputElement>(null);
+  const [uploadingImages, setUploadingImages] = useState(false);
+  const handleImageUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    if (!files.length) return;
+    setUploadingImages(true);
+    try {
+      for (const f of files) {
+        await uploadSectionImage(sectionId, f);
+      }
+      await loadSection();
+    } catch {
+      // ignore — a failed file just won't appear
+    } finally {
+      setUploadingImages(false);
+    }
+  }, [sectionId, loadSection]);
 
   useEffect(() => {
     loadSection();
@@ -201,7 +223,7 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
             {isLeft ? '⤢ Center' : '⤡ Dock left'}
           </button>
 
-          {section && (section.images?.length ?? 0) > 0 && (
+          {section && (
             <button
               onClick={() => setShowImages(v => !v)}
               className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-colors duration-150 ${
@@ -213,7 +235,7 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
               <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
-              {section.images!.length} image{section.images!.length !== 1 ? 's' : ''}
+              {(section.images?.length ?? 0)} image{(section.images?.length ?? 0) !== 1 ? 's' : ''}
             </button>
           )}
 
@@ -542,11 +564,32 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
             </div>
 
             {/* Image sidebar — toggled */}
-            {showImages && section.images && section.images.length > 0 && (
+            {showImages && section && (
               <div className="w-64 border-l border-gray-200 overflow-y-auto p-3 shrink-0 bg-gray-50">
-                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Images ({section.images.length})</h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Images ({section.images?.length ?? 0})</h3>
+                  <button
+                    onClick={() => imageUploadRef.current?.click()}
+                    disabled={uploadingImages}
+                    className="text-[11px] font-medium text-blue-600 hover:text-blue-700 disabled:opacity-50"
+                  >
+                    {uploadingImages ? 'Uploading…' : '+ Upload'}
+                  </button>
+                </div>
+                <input
+                  ref={imageUploadRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImageUpload}
+                  className="hidden"
+                />
+                <p className="text-[10px] text-gray-400 mb-3">Images sit in this section's library, ready to attach to a card later via the Ref Image cell. No AI is run on them.</p>
+                {(section.images?.length ?? 0) === 0 && !uploadingImages && (
+                  <p className="text-xs text-gray-400 italic mb-2">No images yet — upload some above.</p>
+                )}
                 <div className="space-y-2">
-                  {section.images.map((img, idx) => (
+                  {(section.images ?? []).map((img, idx) => (
                     <div
                       key={img.id}
                       onClick={() => setSelectedImage(img)}
