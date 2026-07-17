@@ -4324,9 +4324,9 @@ export default function CardsPanel({
             )}
             <p className="text-xs text-gray-500 mb-3">
               {regenMode === 'split'
-                ? `This card will be split into multiple cards using ${selectedModel}; you'll review before anything changes.`
+                ? `This card will be split into multiple cards using Sonnet 4.5; you'll review before anything changes.`
                 : regenMode === 'combine'
-                  ? `These ${selectedIds.size} cards will be merged into one using ${selectedModel}; you'll review before anything changes.`
+                  ? `These ${selectedIds.size} cards will be merged into one using Sonnet 4.5; you'll review before anything changes.`
                   : `Cards will be regenerated one by one using ${selectedModel}. You can optionally provide guidance.`}
             </p>
             <textarea

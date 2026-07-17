@@ -499,7 +499,8 @@ def combine_preview(body: CombinePreviewRequest, db: Session = Depends(get_db)):
     # model redistributes content rather than rewriting it.
     system = _COMBINE_SYSTEM + (_SPLIT_COMBINE_SCOPE if (body.prompt or "").strip() else "")
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    model = anthropic_model(body.model)
+    # Combine is a small, narrow-scope op — always Sonnet 4.5, ignore the global model.
+    model = "claude-sonnet-4-5"
     resp = client.messages.create(
         model=resolve_model(model)[0],
         **effort_kwargs(model),
@@ -584,7 +585,7 @@ def combine_apply(body: CombineApplyRequest, db: Session = Depends(get_db)):
     # Accuracy + EOR-yield score pass on the combined card (best-effort).
     sec = db.get(Section, new.section_id)
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    score_new_cards(db, client, [new], sec.curriculum_topic_path if sec else "", anthropic_model(body.model))
+    score_new_cards(db, client, [new], sec.curriculum_topic_path if sec else "", "claude-sonnet-4-5")
     return card_to_dict(new, db)
 
 

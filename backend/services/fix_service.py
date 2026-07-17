@@ -3,12 +3,17 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from backend.db import SessionLocal
 from backend.models import Card, FixBatch, FixProposal, ReviewMarkType, Section, AIUsageLog, utcnow
-from backend.config import ANTHROPIC_API_KEY, compute_cost, resolve_model, effort_kwargs, anthropic_model
+from backend.config import ANTHROPIC_API_KEY, compute_cost, resolve_model, effort_kwargs
 import anthropic
 
 logger = logging.getLogger(__name__)
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+# Split / card-fix is a small, narrow-scope operation — always run it on Sonnet 4.5
+# regardless of the reviewer's global model choice (which may be a non-Anthropic
+# model this Anthropic-only service can't use).
+FIX_MODEL = "claude-sonnet-4-5"
 
 SYSTEM_PROMPT = """You are a medical flashcard quality reviewer. You receive a cloze-style flashcard and instructions for fixing a specific issue.
 
@@ -84,11 +89,9 @@ Respond with JSON only."""
         # For split-type prompts, append the scoping instruction so the model
         # redistributes existing content instead of rewriting it.
         system = SYSTEM_PROMPT + (_SPLIT_SCOPE if _is_split_prompt(prompt) else "")
-        # fix_service only speaks to the Anthropic client, so coerce a Gemini
-        # selection to the default Anthropic model — otherwise the Anthropic API
-        # rejects the unknown model id, the batch errors, and the reviewer just
-        # sees "no suggestion".
-        amodel = anthropic_model(model)
+        # Pinned to Sonnet 4.5 (see FIX_MODEL) — the reviewer's global model is
+        # ignored here on purpose; this is a small, narrow-scope operation.
+        amodel = FIX_MODEL
         response = client.messages.create(
             model=resolve_model(amodel)[0],
             **effort_kwargs(amodel),
