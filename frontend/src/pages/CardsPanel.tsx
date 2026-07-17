@@ -2263,10 +2263,11 @@ export default function CardsPanel({
       if (splitProposal) {
         await updateFixProposalContent(splitBatchId, splitProposal.id, { new_cards_json: splitCards });
       }
-      // Confirm with keep_original=true so it only creates the new cards; if the
-      // user chose "delete", hard-delete the original so it actually disappears
-      // (a soft reject would still show under the default "All statuses" view).
-      await confirmFixBatch(splitBatchId, undefined, true);
+      // Confirm THIS proposal explicitly (by id) — passing undefined would only
+      // apply proposals flagged is_resolved, which the split flow never sets, so
+      // the split would silently do nothing. keep_original=true creates the new
+      // cards; if the user chose "delete" we hard-delete the original below.
+      await confirmFixBatch(splitBatchId, splitProposal ? [splitProposal.id] : undefined, true);
       if (!splitKeepOriginal && originalId != null) {
         await bulkDeleteCards({ card_ids: [originalId] });
       }
