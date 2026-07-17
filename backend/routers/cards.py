@@ -563,12 +563,16 @@ def combine_apply(body: CombineApplyRequest, db: Session = Depends(get_db)):
     )
     db.add(new)
     assign_note_ids([new])
-    # Originals are always kept — the reviewer prunes manually.
-    # Capture the source front/extra for the origin audit log.
+    # Capture the source front/extra for the origin audit log (before any delete).
     combine_meta = {
         "from_card_ids": [c.id for c in cards],
         "from_cards": [{"front": c.front_html, "extra": c.extra} for c in cards],
     }
+    # Keep the sources (reviewer prunes manually) unless the reviewer chose Delete.
+    if not body.keep_original:
+        _delete_fix_proposals_for(db, [c.id for c in cards])
+        for c in cards:
+            db.delete(c)
     db.commit()
     db.refresh(new)
     # Silent capture: origin_combine event for the new combined card.

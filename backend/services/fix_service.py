@@ -3,7 +3,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from backend.db import SessionLocal
 from backend.models import Card, FixBatch, FixProposal, ReviewMarkType, Section, AIUsageLog, utcnow
-from backend.config import ANTHROPIC_API_KEY, compute_cost, resolve_model, effort_kwargs
+from backend.config import ANTHROPIC_API_KEY, compute_cost, resolve_model, effort_kwargs, anthropic_model
 import anthropic
 
 logger = logging.getLogger(__name__)
@@ -84,9 +84,14 @@ Respond with JSON only."""
         # For split-type prompts, append the scoping instruction so the model
         # redistributes existing content instead of rewriting it.
         system = SYSTEM_PROMPT + (_SPLIT_SCOPE if _is_split_prompt(prompt) else "")
+        # fix_service only speaks to the Anthropic client, so coerce a Gemini
+        # selection to the default Anthropic model — otherwise the Anthropic API
+        # rejects the unknown model id, the batch errors, and the reviewer just
+        # sees "no suggestion".
+        amodel = anthropic_model(model)
         response = client.messages.create(
-            model=resolve_model(model)[0],
-            **effort_kwargs(model),
+            model=resolve_model(amodel)[0],
+            **effort_kwargs(amodel),
             max_tokens=1500,
             temperature=0,
             system=system,
@@ -109,7 +114,7 @@ Respond with JSON only."""
         action = data.get("action", "keep")
 
         # Log usage
-        cost = compute_cost(model, response.usage.input_tokens, response.usage.output_tokens)
+        cost = compute_cost(amodel, response.usage.input_tokens, response.usage.output_tokens)
         db.add(AIUsageLog(
             operation="card_fix",
             model=model,
