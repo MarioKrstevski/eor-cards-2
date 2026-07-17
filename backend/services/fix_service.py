@@ -80,7 +80,7 @@ Reviewer instruction: {prompt}
 Card to fix:
 Front: {card.front_html}
 Extra: {card.extra or '(none)'}
-Tags: {', '.join(card.tags)}
+Tags: {', '.join(card.tags or card.tags_mapped or [])}
 Section: {section_heading}
 
 Respond with JSON only."""

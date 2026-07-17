@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getSection, verifySection, pasteSectionContent, updateSection, updateSectionImage, uploadSectionImage, deleteSection, createCurriculumNode, getCurriculum, getSectionCost, resetSectionCost, type SectionCost } from '../api';
+import { getSection, verifySection, pasteSectionContent, updateSection, updateSectionImage, uploadSectionImage, uploadSectionImageFromUrl, deleteSectionImage, deleteSection, createCurriculumNode, getCurriculum, getSectionCost, resetSectionCost, type SectionCost } from '../api';
 import type { SectionDetail, SectionImage, CurriculumNode } from '../types';
 import CurriculumPicker from '../components/CurriculumPicker';
 
@@ -101,11 +101,41 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
     e.target.value = '';
     void uploadImageFiles(files);
   }, [uploadImageFiles]);
-  const handleImageDrop = useCallback((e: React.DragEvent) => {
+  const handleImageDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     setImageDragActive(false);
-    void uploadImageFiles(Array.from(e.dataTransfer.files ?? []));
-  }, [uploadImageFiles]);
+    const files = Array.from(e.dataTransfer.files ?? []);
+    if (files.length) { void uploadImageFiles(files); return; }
+    // Dragged from a web page: no file on disk, just a URL in the drag data.
+    const fromList = (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain') || '')
+      .split('\n').map((s) => s.trim()).find((s) => /^https?:\/\//i.test(s));
+    let url = fromList;
+    if (!url) {
+      const html = e.dataTransfer.getData('text/html');
+      const m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+      if (m) url = m[1];
+    }
+    if (!url) return;
+    setUploadingImages(true);
+    try {
+      await uploadSectionImageFromUrl(sectionId, url);
+      await loadSection();
+    } catch {
+      // ignore — a bad/blocked URL just won't appear
+    } finally {
+      setUploadingImages(false);
+    }
+  }, [uploadImageFiles, sectionId, loadSection]);
+  const handleDeleteImage = useCallback(async (img: SectionImage) => {
+    if (!window.confirm('Delete this image from the section library? This cannot be undone.')) return;
+    try {
+      await deleteSectionImage(img.section_id, img.id);
+      setSelectedImage((cur) => (cur?.id === img.id ? null : cur));
+      await loadSection();
+    } catch {
+      window.alert('Failed to delete image');
+    }
+  }, [loadSection]);
 
   useEffect(() => {
     loadSection();
@@ -620,8 +650,17 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
                     <div
                       key={img.id}
                       onClick={() => setSelectedImage(img)}
-                      className="cursor-pointer rounded-lg border border-gray-200 overflow-hidden bg-white hover:shadow-md transition-shadow duration-150"
+                      className="group relative cursor-pointer rounded-lg border border-gray-200 overflow-hidden bg-white hover:shadow-md transition-shadow duration-150"
                     >
+                      <button
+                        onClick={(e) => { e.stopPropagation(); void handleDeleteImage(img); }}
+                        title="Delete image"
+                        className="absolute top-1 right-1 z-10 p-1 rounded-md bg-white/90 text-gray-400 shadow-sm hover:text-red-600 hover:bg-white transition-colors"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
                       <img src={img.data_uri} alt={img.alt_text_hint ?? ''} className="w-full object-contain max-h-32" />
                       <div className="px-2 py-1.5">
                         <div className="flex items-center gap-1.5 mb-1">
