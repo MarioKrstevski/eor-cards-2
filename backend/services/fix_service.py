@@ -41,11 +41,7 @@ Output ONLY valid JSON, no other text. Schema:
 # Appended to SYSTEM_PROMPT only for split operations (when the reviewer prompt
 # indicates a split) to prevent prose rewriting during content redistribution.
 _SPLIT_SCOPE = (
-    "\nThe reviewer has EXPLICITLY requested a split, so you MUST return action \"split\" "
-    "with at least 2 new cards. Do NOT return \"keep\" or \"edit\" — declining is not an "
-    "option here. If the card has several cloze deletions or lists multiple items, make "
-    "roughly one card per item/cloze (a couple of tightly-linked clozes may stay together). "
-    "The guidance below describes ONLY how to split the card content — which facts "
+    "\nThe guidance below describes ONLY how to split the card content — which facts "
     "go where. Do NOT rewrite, rephrase, re-cloze, or reformat the underlying content; "
     "preserve the existing wording, cloze deletions (and c1 indices), and bold/anchor "
     "formatting exactly. Only redistribute the existing content as the guidance directs."
