@@ -129,13 +129,15 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
   const handleDeleteImage = useCallback(async (img: SectionImage) => {
     if (!window.confirm('Delete this image from the section library? This cannot be undone.')) return;
     try {
-      await deleteSectionImage(img.section_id, img.id);
+      // Use the known sectionId (same as the Ref Image cell) — the section-detail
+      // image objects don't carry a reliable section_id.
+      await deleteSectionImage(sectionId, img.id);
       setSelectedImage((cur) => (cur?.id === img.id ? null : cur));
       await loadSection();
     } catch {
       window.alert('Failed to delete image');
     }
-  }, [loadSection]);
+  }, [sectionId, loadSection]);
 
   useEffect(() => {
     loadSection();
