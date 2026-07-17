@@ -2275,6 +2275,9 @@ export default function CardsPanel({
       setBulkRegenPrompt('');
       setSelectedIds(new Set());
       fetchCards(sectionId, topicPath, true, undefined, sectionIds);
+      // Refresh mark types so the 'From split' pill renders even if that mark
+      // type was created lazily by this run.
+      getReviewMarkTypes().then(setMarkTypes).catch(() => {});
       onReviewChange?.();
     } catch {
       setActionError('Could not apply split');
@@ -2364,6 +2367,9 @@ export default function CardsPanel({
       setBulkRegenPrompt('');
       setSelectedIds(new Set());
       fetchCards(sectionId, topicPath, true, undefined, sectionIds);
+      // Refresh mark types so the 'From combine' pill renders even if that mark
+      // type was created lazily by this run.
+      getReviewMarkTypes().then(setMarkTypes).catch(() => {});
       onReviewChange?.();
     } catch {
       setActionError('Could not apply combine');

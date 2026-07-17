@@ -80,13 +80,13 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
   // to be attached to a card later via the Ref Image cell.
   const imageUploadRef = useRef<HTMLInputElement>(null);
   const [uploadingImages, setUploadingImages] = useState(false);
-  const handleImageUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    e.target.value = '';
-    if (!files.length) return;
+  const [imageDragActive, setImageDragActive] = useState(false);
+  const uploadImageFiles = useCallback(async (files: File[]) => {
+    const images = files.filter((f) => f.type.startsWith('image/'));
+    if (!images.length) return;
     setUploadingImages(true);
     try {
-      for (const f of files) {
+      for (const f of images) {
         await uploadSectionImage(sectionId, f);
       }
       await loadSection();
@@ -96,6 +96,16 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
       setUploadingImages(false);
     }
   }, [sectionId, loadSection]);
+  const handleImageUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    void uploadImageFiles(files);
+  }, [uploadImageFiles]);
+  const handleImageDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setImageDragActive(false);
+    void uploadImageFiles(Array.from(e.dataTransfer.files ?? []));
+  }, [uploadImageFiles]);
 
   useEffect(() => {
     loadSection();
@@ -563,9 +573,21 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
               )}
             </div>
 
-            {/* Image sidebar — toggled */}
+            {/* Image sidebar — toggled; whole panel is a drop zone */}
             {showImages && section && (
-              <div className="w-64 border-l border-gray-200 overflow-y-auto p-3 shrink-0 bg-gray-50">
+              <div
+                onDragOver={(e) => { e.preventDefault(); if (!imageDragActive) setImageDragActive(true); }}
+                onDragLeave={(e) => { e.preventDefault(); setImageDragActive(false); }}
+                onDrop={handleImageDrop}
+                className={`relative w-64 border-l overflow-y-auto p-3 shrink-0 bg-gray-50 transition-colors ${
+                  imageDragActive ? 'border-blue-400 ring-2 ring-inset ring-blue-400 bg-blue-50' : 'border-gray-200'
+                }`}
+              >
+                {imageDragActive && (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-blue-50/80 border-2 border-dashed border-blue-400 rounded-lg pointer-events-none">
+                    <p className="text-xs font-semibold text-blue-600">Drop images to upload</p>
+                  </div>
+                )}
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Images ({section.images?.length ?? 0})</h3>
                   <button
@@ -584,9 +606,9 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
                   onChange={handleImageUpload}
                   className="hidden"
                 />
-                <p className="text-[10px] text-gray-400 mb-3">Images sit in this section's library, ready to attach to a card later via the Ref Image cell. No AI is run on them.</p>
+                <p className="text-[10px] text-gray-400 mb-3">Drag &amp; drop images here, or click Upload. They sit in this section's library, ready to attach to a card later via the Ref Image cell. No AI is run on them.</p>
                 {(section.images?.length ?? 0) === 0 && !uploadingImages && (
-                  <p className="text-xs text-gray-400 italic mb-2">No images yet — upload some above.</p>
+                  <p className="text-xs text-gray-400 italic mb-2">No images yet — drop or upload some above.</p>
                 )}
                 <div className="space-y-2">
                   {(section.images ?? []).map((img, idx) => (

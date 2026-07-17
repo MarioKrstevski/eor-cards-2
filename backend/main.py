@@ -74,6 +74,13 @@ STYLE: Second person present tense. Bold key clinical terms using <b> tags. Use 
                     _seed_curriculum(db, tree, parent_id=None, level=0, parent_path="", version=version)
             db.commit()
 
+        # Ensure the 'From split' / 'From combine' review marks exist up-front, so
+        # they're in the UI's mark-type list at page load and the pills render
+        # immediately after a split/combine (not created lazily on first use).
+        from backend.services.card_ops import ensure_split_combine_marks
+        ensure_split_combine_marks(db)
+        db.commit()
+
 
 def _seed_curriculum(db, nodes, parent_id, level, parent_path, version="v1"):
     from backend.models import Curriculum
@@ -339,7 +346,7 @@ async def _no_store_api(request, call_next):
 
 
 # Bumped on each deploy so /api/version can confirm what's actually running.
-APP_VERSION = 89
+APP_VERSION = 90
 
 
 @app.get("/api/version")
