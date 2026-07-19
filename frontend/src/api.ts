@@ -220,7 +220,7 @@ export async function getSection(id: number): Promise<SectionDetail> {
 
 export async function updateSection(
   id: number,
-  params: { heading?: string; curriculum_topic_id?: number | null; curriculum_topic_path?: string | null; is_verified?: boolean; is_done?: boolean; section_status?: string }
+  params: { heading?: string; curriculum_topic_id?: number | null; curriculum_topic_path?: string | null; is_verified?: boolean; is_done?: boolean; section_status?: string; content_text?: string; content_html?: string }
 ): Promise<Section> {
   const res = await http.patch<Section>(`/sections/${id}`, params);
   return res.data;

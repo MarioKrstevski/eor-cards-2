@@ -47,6 +47,8 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
   const [editMode, setEditMode] = useState(false);
   const [pasteHtml, setPasteHtml] = useState('');
   const [pasting, setPasting] = useState(false);
+  const [inlineEdit, setInlineEdit] = useState(false);
+  const [savingInline, setSavingInline] = useState(false);
   const pasteAreaRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
@@ -149,13 +151,75 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
     }
   }, [showCreateLeaf, curriculumNodes.length]);
 
+  // Inline text editing of the section content (small corrections without
+  // round-tripping through Word). Saves content_html via PATCH — the backend
+  // rebuilds content_source from it, so the next generation sees the edits.
+  const startInlineEdit = useCallback(() => {
+    setInlineEdit(true);
+    setTimeout(() => {
+      const el = contentRef.current;
+      if (!el) return;
+      // Image placeholders are app-managed markers — keep them atomic (movable/
+      // deletable as a whole, not editable inside).
+      el.querySelectorAll('.image-placeholder').forEach((n) => {
+        (n as HTMLElement).contentEditable = 'false';
+      });
+      el.focus();
+    }, 50);
+  }, []);
+
+  const cancelInlineEdit = useCallback(() => {
+    setInlineEdit(false);
+    // React won't re-set identical dangerouslySetInnerHTML, so restore manually.
+    const el = contentRef.current;
+    if (el && section) el.innerHTML = section.content_html;
+  }, [section]);
+
+  const saveInlineEdit = useCallback(async () => {
+    const el = contentRef.current;
+    if (!el) return;
+    setSavingInline(true);
+    try {
+      const clone = el.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll('[contenteditable]').forEach((n) => n.removeAttribute('contenteditable'));
+      const html = clone.innerHTML;
+      const text = el.innerText.replace(/\[Image \d+\]\s*/g, '').trim();
+      await updateSection(sectionId, { content_html: html, content_text: text });
+      setInlineEdit(false);
+      await loadSection();
+    } catch {
+      window.alert('Failed to save changes');
+    } finally {
+      setSavingInline(false);
+    }
+  }, [sectionId, loadSection]);
+
+  // Formatting commands for the inline editor. onMouseDown+preventDefault on the
+  // buttons keeps the text selection alive so the command applies to it.
+  const execFormat = useCallback((cmd: string) => {
+    document.execCommand(cmd, false);
+    contentRef.current?.focus();
+  }, []);
+
+  // Leaving the section discards any in-progress inline edit.
+  useEffect(() => {
+    setInlineEdit(false);
+  }, [sectionId]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (inlineEdit) cancelInlineEdit();
+        else onClose();
+      }
+      if (inlineEdit && (e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        void saveInlineEdit();
+      }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [onClose]);
+  }, [onClose, inlineEdit, cancelInlineEdit, saveInlineEdit]);
 
   const handleVerify = useCallback(async () => {
     setVerifying(true);
@@ -370,10 +434,17 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
             <div className="flex-1 min-w-[8px]" />
 
             <button
+              onClick={() => { if (inlineEdit) cancelInlineEdit(); else startInlineEdit(); }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium ${inlineEdit ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}
+            >
+              {inlineEdit ? 'Cancel Edit' : 'Edit Text'}
+            </button>
+
+            <button
               onClick={() => { setEditMode(!editMode); if (!editMode) setTimeout(() => pasteAreaRef.current?.focus(), 100); }}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium ${editMode ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}
             >
-              {editMode ? 'Cancel Edit' : 'Edit Section'}
+              {editMode ? 'Cancel Paste' : 'Paste Replace'}
             </button>
 
             <button
@@ -577,10 +648,53 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
                 <span>{section.card_count} cards</span>
               </div>
 
+              {/* Inline edit toolbar */}
+              {inlineEdit && (
+                <div className="sticky top-0 z-10 mb-3 flex items-center gap-1 flex-wrap bg-white border border-blue-200 rounded-lg p-1.5 shadow-sm">
+                  {([
+                    ['bold', 'Bold (Cmd/Ctrl+B)', <b>B</b>],
+                    ['italic', 'Italic (Cmd/Ctrl+I)', <i>I</i>],
+                    ['underline', 'Underline (Cmd/Ctrl+U)', <u>U</u>],
+                    ['insertUnorderedList', 'Bullet list', '• List'],
+                    ['insertOrderedList', 'Numbered list', '1. List'],
+                    ['outdent', 'Decrease indent', '⇤'],
+                    ['indent', 'Increase indent', '⇥'],
+                    ['removeFormat', 'Clear formatting', 'Tx'],
+                  ] as [string, string, React.ReactNode][]).map(([cmd, title, label]) => (
+                    <button
+                      key={cmd}
+                      title={title}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => execFormat(cmd)}
+                      className="px-2 py-1 rounded text-xs font-medium text-gray-700 hover:bg-gray-100 min-w-[28px]"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <div className="flex-1 min-w-[8px]" />
+                  <button
+                    onClick={() => void saveInlineEdit()}
+                    disabled={savingInline}
+                    className="px-3 py-1 rounded text-xs font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                  >
+                    {savingInline ? 'Saving...' : 'Save'}
+                  </button>
+                  <button
+                    onClick={cancelInlineEdit}
+                    disabled={savingInline}
+                    className="px-3 py-1 rounded text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+
               {/* Content HTML */}
               <div
                 ref={contentRef}
-                className="section-content prose prose-sm max-w-none"
+                contentEditable={inlineEdit}
+                suppressContentEditableWarning
+                className={`section-content prose prose-sm max-w-none ${inlineEdit ? 'outline-none ring-2 ring-blue-300 rounded-lg p-3 min-h-[200px] bg-blue-50/20' : ''}`}
                 dangerouslySetInnerHTML={{ __html: section.content_html }}
               />
 
