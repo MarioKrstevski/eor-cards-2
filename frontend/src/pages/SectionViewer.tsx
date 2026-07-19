@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSection, verifySection, pasteSectionContent, updateSection, updateSectionImage, uploadSectionImage, uploadSectionImageFromUrl, deleteSectionImage, deleteSection, createCurriculumNode, getCurriculum, getSectionCost, resetSectionCost, type SectionCost } from '../api';
 import type { SectionDetail, SectionImage, CurriculumNode } from '../types';
 import CurriculumPicker from '../components/CurriculumPicker';
@@ -150,6 +150,16 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
       getCurriculum('v1').then(setCurriculumNodes).catch(() => {});
     }
   }, [showCreateLeaf, curriculumNodes.length]);
+
+  // React 19 diffs dangerouslySetInnerHTML by OBJECT IDENTITY, not string value
+  // — an inline {__html: ...} literal is a new object every render, so every
+  // parent re-render (e.g. the 3s active-jobs poll) would re-set innerHTML and
+  // wipe in-progress contentEditable edits. Memoize so the DOM is only rewritten
+  // when the content string actually changes.
+  const contentHtmlObj = useMemo(
+    () => ({ __html: section?.content_html ?? '' }),
+    [section?.content_html]
+  );
 
   // Inline text editing of the section content (small corrections without
   // round-tripping through Word). Saves content_html via PATCH — the backend
@@ -695,7 +705,7 @@ export default function SectionViewer({ sectionId, onClose, initialVariant = 'ce
                 contentEditable={inlineEdit}
                 suppressContentEditableWarning
                 className={`section-content prose prose-sm max-w-none ${inlineEdit ? 'outline-none ring-2 ring-blue-300 rounded-lg p-3 min-h-[200px] bg-blue-50/20' : ''}`}
-                dangerouslySetInnerHTML={{ __html: section.content_html }}
+                dangerouslySetInnerHTML={contentHtmlObj}
               />
 
               {/* Contributing uploads */}
