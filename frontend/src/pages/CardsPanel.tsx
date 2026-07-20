@@ -121,6 +121,21 @@ function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, '').trim();
 }
 
+// The extra/vignette/teaching-case fields store line breaks as <br> and bullets
+// as a literal "• " glyph (see backend format_extra_as_list) — never <ul>/<li>.
+// The reviewer edits them as plain text: <br> becomes a real newline on load,
+// newlines become <br> on save, and a line started with "- " or "* " becomes a
+// "• " bullet — no HTML knowledge needed.
+function htmlToEditText(html: string): string {
+  return html.replace(/<br\s*\/?>/gi, '\n');
+}
+function editTextToHtml(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => line.replace(/^(\s*)[-*]\s+/, '$1• '))
+    .join('<br>');
+}
+
 // ── EditableCell ───────────────────────────────────────────────────────────────
 interface EditableCellProps {
   value: string;
@@ -133,9 +148,11 @@ interface EditableCellProps {
   // When set, double-click calls this instead of entering the inline textarea
   // edit (used by the front column to open the right-side edit popup).
   onDoubleClickOverride?: () => void;
+  // Edit a <br>-based HTML field as plain text (extra/vignette/teaching case).
+  htmlNewlines?: boolean;
 }
 
-function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, renderDisplay, onDoubleClickOverride }: EditableCellProps) {
+function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, renderDisplay, onDoubleClickOverride, htmlNewlines }: EditableCellProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [localVal, setLocalVal] = useState(value);
   // Anchor (viewport coords) for the floating multiline edit box, captured when
@@ -150,7 +167,7 @@ function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, 
   const BOX_H = 240;   // fixed height with internal scroll — no more runaway tallness
 
   function startEdit() {
-    setLocalVal(value);
+    setLocalVal(htmlNewlines ? htmlToEditText(value) : value);
     if (multiline) {
       const r = cellRef.current?.getBoundingClientRect();
       if (r) {
@@ -165,7 +182,11 @@ function EditableCell({ value, cellId, onSave, onSelect, onNavigate, multiline, 
     }
     setIsEditing(true);
   }
-  function save() { setIsEditing(false); if (localVal !== value) onSave(localVal); }
+  function save() {
+    setIsEditing(false);
+    const orig = htmlNewlines ? htmlToEditText(value) : value;
+    if (localVal !== orig) onSave(htmlNewlines ? editTextToHtml(localVal) : localVal);
+  }
   function cancel() { setIsEditing(false); setLocalVal(value); }
 
   if (isEditing && multiline) {
@@ -320,11 +341,15 @@ function BigEditModal({ cards, cardId: startId, field: startField, activeCardVer
   // (old → tags, new → tags_mapped), shown/edited as a "::"-separated string.
   const tagsString = (c: Card) => joinTags(activeTagSet === 'old' ? (c.tags ?? []) : (c.tags_mapped ?? []));
   const valueFor = (c: Card) => fieldKey === 'tags' ? tagsString(c) : getFieldValue(c, fieldKey, activeCardVersion);
+  // These fields store line breaks as <br> — edit them as plain text (see
+  // htmlToEditText/editTextToHtml) so the reviewer never touches HTML.
+  const isBrField = fieldKey === 'extra' || fieldKey === 'vignette' || fieldKey === 'teaching_case';
+  const editValueFor = (c: Card) => isBrField ? htmlToEditText(valueFor(c)) : valueFor(c);
 
   // Reload the draft when the (card, field) target changes — not on background
   // refreshes, so we never clobber what the user is typing.
   useEffect(() => {
-    if (card) setDraft(valueFor(card));
+    if (card) setDraft(editValueFor(card));
     requestAnimationFrame(() => taRef.current?.focus());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cardId, fieldKey]);
@@ -333,13 +358,12 @@ function BigEditModal({ cards, cardId: startId, field: startField, activeCardVer
 
   function flush() {
     if (!card) return;
-    const orig = valueFor(card);
-    if (draft === orig) return;
+    if (draft === editValueFor(card)) return;
     if (fieldKey === 'tags') {
       const tags = splitTags(draft);
       onSave(card.id, activeTagSet === 'old' ? { tags } : { tags_mapped: tags });
     } else {
-      onSave(card.id, fieldPatch(fieldKey, draft, activeCardVersion));
+      onSave(card.id, fieldPatch(fieldKey, isBrField ? editTextToHtml(draft) : draft, activeCardVersion));
     }
   }
   function switchField(k: string) { if (k === fieldKey) return; flush(); setFieldKey(k); }
@@ -396,6 +420,8 @@ function BigEditModal({ cards, cardId: startId, field: startField, activeCardVer
           <span className="text-[11px] text-gray-400">
             {fieldKey === 'tags'
               ? `Tags for the "${activeTagSet === 'old' ? 'Current' : 'New'}" set — separate with :: (no spaces) · ⌘/Ctrl+Enter saves & closes`
+              : isBrField
+              ? 'Enter starts a new line (kept in Anki) · start a line with "- " to make a • bullet · ⌘/Ctrl+Enter saves & closes'
               : 'Click outside or Save keeps changes · Esc cancels · ⌘/Ctrl+Enter saves & closes'}
           </span>
           <div className="flex items-center gap-2">
@@ -1159,6 +1185,11 @@ export default function CardsPanel({
   // Big editor modal: opened from a cell double-click (nav: true) or the row
   // Edit action (nav: false → tabs only, current card).
   const [bigEdit, setBigEdit] = useState<{ cardId: number; field: string; nav: boolean } | null>(null);
+  // Which editor the docked CardEditPopup should land on (front vs extra cell
+  // double-click); nonce re-triggers the focus when the same cell is re-clicked,
+  // and cardId scopes the request so a plain checkbox-selection of some other
+  // card doesn't inherit a stale focus target.
+  const [popupFocus, setPopupFocus] = useState<{ cardId: number | null; field: 'front' | 'extra'; nonce: number }>({ cardId: null, field: 'front', nonce: 0 });
 
   // ── Review marks ─────────────────────────────────────────────────────────
   const [markTypes, setMarkTypes] = useState<ReviewMarkType[]>([]);
@@ -1631,7 +1662,10 @@ export default function CardsPanel({
               multiline
               // Double-click the front cell opens the right-side edit popup by
               // selecting only this card (selectedIds.size === 1 renders it).
-              onDoubleClickOverride={() => setSelectedIds(new Set([card.id]))}
+              onDoubleClickOverride={() => {
+                setSelectedIds(new Set([card.id]));
+                setPopupFocus((f) => ({ cardId: card.id, field: 'front', nonce: f.nonce + 1 }));
+              }}
               renderDisplay={(v) => {
                 const histCount = regenHistory[card.id]?.length ?? 0;
                 return (
@@ -1707,8 +1741,17 @@ export default function CardsPanel({
               onSelect={handleCellSelect}
               onNavigate={(dir) => handleCellNavigate(row.index, 'extra', dir)}
               multiline
+              htmlNewlines
+              // Double-click opens the docked edit popup directly on its Extra
+              // editor (WYSIWYG); Enter still opens the quick floating editor.
+              onDoubleClickOverride={() => {
+                setSelectedIds(new Set([row.original.id]));
+                setPopupFocus((f) => ({ cardId: row.original.id, field: 'extra', nonce: f.nonce + 1 }));
+              }}
               renderDisplay={(v) => v
-                ? <div className="text-xs text-gray-600" dangerouslySetInnerHTML={{ __html: v }} />
+                // \n → <br>: legacy extras saved with raw newlines (they render
+                // collapsed as HTML); new saves already use <br>.
+                ? <div className="text-xs text-gray-600" dangerouslySetInnerHTML={{ __html: v.replace(/\n/g, '<br>') }} />
                 : <span className="text-gray-300 text-xs">—</span>
               }
             />
@@ -1750,6 +1793,7 @@ export default function CardsPanel({
               onSelect={handleCellSelect}
               onNavigate={(dir) => handleCellNavigate(row.index, 'vignette', dir)}
               multiline
+              htmlNewlines
               renderDisplay={(v) => v
                 ? <div className="text-xs text-gray-600 line-clamp-3">{v}</div>
                 : <span className="text-gray-300 text-xs">—</span>
@@ -1773,6 +1817,7 @@ export default function CardsPanel({
               onSelect={handleCellSelect}
               onNavigate={(dir) => handleCellNavigate(row.index, 'teaching_case', dir)}
               multiline
+              htmlNewlines
               renderDisplay={(v) => v
                 ? <div className="text-xs text-gray-600 line-clamp-3">{v}</div>
                 : <span className="text-gray-300 text-xs">—</span>
@@ -3849,6 +3894,8 @@ export default function CardsPanel({
             card={card}
             onSave={handleCellSave}
             ankiMode={showAnkiFormat}
+            focusField={popupFocus.cardId === card.id ? popupFocus.field : undefined}
+            focusNonce={popupFocus.nonce}
             onSplit={() => doRegenWithMode('split')}
             onDelete={() => setConfirmDeleteCardId(card.id)}
             onClose={() => setSelectedIds(new Set())}

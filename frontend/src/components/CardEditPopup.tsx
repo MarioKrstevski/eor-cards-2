@@ -218,6 +218,56 @@ function serializeNode(node: ChildNode): string {
   return inner;
 }
 
+// editor DOM → stored EXTRA. Unlike fromEditorHtml (front), line breaks are
+// PRESERVED as literal <br> — the extra field renders as HTML in the table cell
+// and in Anki, where a raw \n collapses into a space. Blocks the browser makes
+// on Enter (<div>/<p>) become <br> too. Shared with MultiExtraEditModal.
+function serializeExtraEditorNode(node: ChildNode, isFirstBlock?: boolean): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.textContent ?? '';
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) return '';
+
+  const el = node as HTMLElement;
+  const tag = el.tagName.toLowerCase();
+
+  // Cloze span → stored cloze markup (auto-detects TEXT vs ANKI display mode).
+  if (el.classList.contains('cz')) {
+    return `<span style="color:#1f77b4"><b>{{c1::${clozeBodyFromSpan(el)}}}</b></span>`;
+  }
+
+  let inner = '';
+  el.childNodes.forEach((c) => { inner += serializeExtraEditorNode(c); });
+
+  if (tag === 'b' || tag === 'strong') return `<b>${inner}</b>`;
+  if (tag === 'br') return '<br>';
+  // Block elements from Enter: prefix <br> for all but the very first block
+  // child (avoids a spurious leading blank line).
+  if (tag === 'div' || tag === 'p') {
+    const prefix = isFirstBlock ? '' : '<br>';
+    return prefix + inner;
+  }
+  return inner;
+}
+
+export function serializeExtraEditor(node: HTMLElement): string {
+  let out = '';
+  let blockIndex = 0;
+  node.childNodes.forEach((child) => {
+    const isBlock =
+      child.nodeType === Node.ELEMENT_NODE &&
+      ['div', 'p'].includes((child as HTMLElement).tagName.toLowerCase());
+    out += serializeExtraEditorNode(child, isBlock && blockIndex === 0);
+    if (isBlock) blockIndex++;
+  });
+  return out
+    // Heal raw newlines (from older saves that went through fromEditorHtml —
+    // they display fine in the pre-wrap editor but collapse in HTML rendering).
+    .replace(/\n/g, '<br>')
+    // "- " / "* " at the start of a line → the "• " bullet the generator uses.
+    .replace(/(^|<br>)[ \t]*[-*][ \t]+/g, '$1• ');
+}
+
 interface CardEditPopupProps {
   card: Card;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -226,6 +276,10 @@ interface CardEditPopupProps {
   onSplit?: () => void;
   onDelete?: () => void;
   onClose: () => void;
+  // Which editor to open on / focus (double-click on the Front vs Extra cell).
+  // focusNonce bumps to re-trigger the focus even when field/card are unchanged.
+  focusField?: EditorTab;
+  focusNonce?: number;
 }
 
 // The correct patch key for the active version's front column.
@@ -540,7 +594,7 @@ function relativeTime(iso: string | null): string {
   return `${Math.round(months / 12)}y ago`;
 }
 
-export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelete, onClose }: CardEditPopupProps) {
+export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelete, onClose, focusField, focusNonce }: CardEditPopupProps) {
   const { activeCardVersion, selectedModel, simpleView } = useSettings();
   const ver = activeCardVersion as CardVersion;
   const [tab, setTab] = useState<EditorTab>('front');
@@ -623,6 +677,27 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card.id, ver]);
 
+  // Land on the requested editor (Front vs Extra cell double-click) with the
+  // caret at the end. Keyed on the nonce so it fires only on an explicit
+  // double-click — not when a card is merely selected — and runs after the load
+  // effect above (declaration order); touches no content.
+  useEffect(() => {
+    if (!focusField) return;
+    setTab(focusField);
+    const el = focusField === 'extra' ? extraRef.current : editorRef.current;
+    if (!el) return;
+    el.focus();
+    const sel = window.getSelection();
+    if (sel) {
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      r.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(r);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusField, focusNonce]);
+
   // When the global Text/Anki toggle flips while the popup is open, re-render
   // both editors in the new mode without data loss: serialize the current DOM
   // (auto-detect, no mode) then re-render in the new mode. Skips the first run
@@ -633,7 +708,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     const el = editorRef.current;
     if (el) el.innerHTML = toEditorHtml(fromEditorHtml(el), ankiMode);
     const ex = extraRef.current;
-    if (ex) ex.innerHTML = toEditorHtml(fromEditorHtml(ex), ankiMode);
+    if (ex) ex.innerHTML = toEditorHtml(serializeExtraEditor(ex), ankiMode);
     refreshSelectionState();
     refreshContentState();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -714,7 +789,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     const fr = editorRef.current;
     if (fr) setFrontCleanable(needsClean(fromEditorHtml(fr)));
     const ex = extraRef.current;
-    if (ex) setExtraCleanable(needsClean(fromEditorHtml(ex)));
+    if (ex) setExtraCleanable(needsClean(serializeExtraEditor(ex)));
   }
 
   // ── Silent edit-capture helpers ─────────────────────────────────────────────
@@ -724,7 +799,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     const fr = editorRef.current;
     const ex = extraRef.current;
     const front = fr ? fromEditorHtml(fr) : '';
-    const extraVal = ex ? fromEditorHtml(ex) : '';
+    const extraVal = ex ? serializeExtraEditor(ex) : '';
     return { front, extra: extraVal.trim() ? extraVal : null };
   }
 
@@ -988,7 +1063,10 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     if (!root) return;
     captureTyping();
     pushUndo(which);
-    root.innerHTML = toEditorHtml(cleanFront(fromEditorHtml(root)), ankiMode);
+    root.innerHTML = toEditorHtml(
+      cleanFront(which === 'extra' ? serializeExtraEditor(root) : fromEditorHtml(root)),
+      ankiMode
+    );
     captureAction('clean', which);
     refreshSelectionState();
     refreshContentState();
@@ -1116,13 +1194,38 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
   // ── Save ──────────────────────────────────────────────────────────────────────
   // Both editors stay mounted (the inactive tab is just hidden), so we always
   // persist both current serialized values for the active version.
+  // Insert a bullet line into the extra editor at the caret (or at the end when
+  // the caret isn't in it): "• " on an empty editor, otherwise "<br>• ".
+  function handleBulletLine() {
+    const ex = extraRef.current;
+    if (!ex) return;
+    captureTyping();
+    pushUndo('extra');
+    ex.focus();
+    const er = editorRange();
+    if (!er || er.root !== ex) {
+      const sel = window.getSelection();
+      if (sel) {
+        const r = document.createRange();
+        r.selectNodeContents(ex);
+        r.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(r);
+      }
+    }
+    const empty = !(ex.textContent ?? '').trim();
+    document.execCommand('insertHTML', false, empty ? '• ' : '<br>• ');
+    captureAction('bullet', 'extra');
+    refreshContentState();
+  }
+
   async function handleSave() {
     const root = editorRef.current;
     const ex = extraRef.current;
     if (!root || !ex) return;
     // Catch any trailing typing that had no button after it.
     captureTyping();
-    const extraVal = fromEditorHtml(ex);
+    const extraVal = serializeExtraEditor(ex);
     await onSave(card.id, {
       [frontPatchKey(ver)]: fromEditorHtml(root),
       [extraPatchKey(ver)]: extraVal.trim() ? extraVal : null,
@@ -1279,6 +1382,15 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
             >
               {boldMode === 'unbold' ? 'Unbold' : 'Bold'}
             </button>
+            {tab === 'extra' && (
+              <button
+                onClick={handleBulletLine}
+                title='Start a new bullet line ("- " at a line start also becomes a bullet on save)'
+                className="min-w-[84px] text-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-150"
+              >
+                • Bullet
+              </button>
+            )}
             {tab === 'front' && (
               <>
                 <button

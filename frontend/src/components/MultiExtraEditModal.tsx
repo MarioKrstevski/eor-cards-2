@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Card } from '../types';
 import { renderClozeHtml } from '../pages/CardsPanel';
-import { toEditorHtml, applyBoldToRange, clozeBodyFromSpan } from './CardEditPopup';
+import { toEditorHtml, applyBoldToRange, serializeExtraEditor } from './CardEditPopup';
 
 interface MultiExtraEditModalProps {
   cards: Card[];
@@ -14,68 +14,8 @@ interface MultiExtraEditModalProps {
 
 type DisplayMode = 'extra-only' | 'front-and-extra';
 
-// Walk the editor DOM and return stored HTML, PRESERVING <br> literals.
-// Unlike fromEditorHtml (CardEditPopup), we do NOT convert <br> to \n, since
-// extra footers rely on literal <br> for line-breaks.
-//
-// Rules:
-//   .cz span      → <span style="color:#1f77b4"><b>{{c1::TERM[::HINT]}}</b></span>
-//   <b>/<strong>  → <b>…</b>
-//   <br>          → <br>  (PRESERVED — NOT converted to newline)
-//   <div>/<p>     → prefix <br> (except the very first block child, to avoid
-//                   a spurious leading <br>) + recurse inner content
-//   text node     → textContent
-//   other tags    → drop tag, keep inner text
-function serializeExtraNode(node: ChildNode, isFirstBlock?: boolean): string {
-  if (node.nodeType === Node.TEXT_NODE) {
-    return node.textContent ?? '';
-  }
-  if (node.nodeType !== Node.ELEMENT_NODE) return '';
-
-  const el = node as HTMLElement;
-  const tag = el.tagName.toLowerCase();
-
-  // Cloze span → stored cloze markup. AUTO-DETECT the display mode (TEXT vs
-  // ANKI) from the span's text so save is identical in both modes.
-  if (el.classList.contains('cz')) {
-    return `<span style="color:#1f77b4"><b>{{c1::${clozeBodyFromSpan(el)}}}</b></span>`;
-  }
-
-  // Recurse for inner content.
-  let inner = '';
-  el.childNodes.forEach((c) => { inner += serializeExtraNode(c); });
-
-  // Non-cloze bold.
-  if (tag === 'b' || tag === 'strong') {
-    return `<b>${inner}</b>`;
-  }
-
-  // Hard line-break — PRESERVE as <br>.
-  if (tag === 'br') return '<br>';
-
-  // Block elements the browser inserts when the user presses Enter.
-  // Prefix with <br> for all but the very first block child.
-  if (tag === 'div' || tag === 'p') {
-    const prefix = isFirstBlock ? '' : '<br>';
-    return prefix + inner;
-  }
-
-  // Any other tag: drop the wrapper, keep inner content.
-  return inner;
-}
-
-function serializeExtra(node: HTMLElement): string {
-  let out = '';
-  let blockIndex = 0;
-  node.childNodes.forEach((child) => {
-    const isBlock =
-      child.nodeType === Node.ELEMENT_NODE &&
-      ['div', 'p'].includes((child as HTMLElement).tagName.toLowerCase());
-    out += serializeExtraNode(child, isBlock && blockIndex === 0);
-    if (isBlock) blockIndex++;
-  });
-  return out;
-}
+// The <br>-preserving extra serializer now lives in CardEditPopup
+// (serializeExtraEditor) and is shared by both editors.
 
 export default function MultiExtraEditModal({
   cards,
@@ -108,7 +48,7 @@ export default function MultiExtraEditModal({
     const map: Record<number, string> = {};
     for (const card of cards) {
       const el = editorRefs.current[card.id];
-      map[card.id] = el ? serializeExtra(el) : (initialExtras[card.id] ?? '');
+      map[card.id] = el ? serializeExtraEditor(el) : (initialExtras[card.id] ?? '');
     }
     await onSaveAll(map);
     onClose();

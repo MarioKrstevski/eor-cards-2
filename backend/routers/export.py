@@ -108,9 +108,11 @@ def export_cards(
                 if tag_set == "new"
                 else (card.tags or card.tags_mapped or [])
             ),
-            "extra": v_extra,
-            "vignette": card.vignette or "",
-            "teaching_case": card.teaching_case or "",
+            # These fields render as HTML in Anki, where a raw \n collapses into
+            # a space — heal legacy newline-saved values into real <br> breaks.
+            "extra": v_extra.replace("\n", "<br>"),
+            "vignette": (card.vignette or "").replace("\n", "<br>"),
+            "teaching_case": (card.teaching_case or "").replace("\n", "<br>"),
             "ref_img_position": card.ref_img_position or "",
             "source_ref": card.source_ref or "",
             "status": card.status,
