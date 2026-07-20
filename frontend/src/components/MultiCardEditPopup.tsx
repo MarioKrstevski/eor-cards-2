@@ -7,13 +7,16 @@ interface MultiCardEditPopupProps {
   onEditExtras: () => void;
   onDelete?: () => void;
   onClose: () => void;
+  // Viewport-px top edge for the docked panel — aligned by CardsPanel with the
+  // table header so the toolbar/column names above stay visible.
+  topOffset?: number;
 }
 
 // Docked right-side panel shown when 2+ cards are selected — the multi-card
 // counterpart to CardEditPopup. Same chrome (fixed right-4 top-24 w-80 z-40,
 // white/rounded/border/shadow, Esc-to-close). Buttons call handlers that live in
 // CardsPanel: doRegenWithMode('combine') and handleRebuildFooters.
-export default function MultiCardEditPopup({ count, onCombine, onRebuildFooters, onEditExtras, onDelete, onClose }: MultiCardEditPopupProps) {
+export default function MultiCardEditPopup({ count, onCombine, onRebuildFooters, onEditExtras, onDelete, onClose, topOffset }: MultiCardEditPopupProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -21,7 +24,10 @@ export default function MultiCardEditPopup({ count, onCombine, onRebuildFooters,
   }, [onClose]);
 
   return (
-    <div className="fixed right-4 top-24 w-80 z-40 bg-white rounded-xl border border-gray-200 shadow-2xl flex flex-col max-h-[calc(100vh-8rem)]">
+    <div
+      className="fixed right-4 w-80 z-40 bg-white rounded-xl border border-gray-200 shadow-2xl flex flex-col"
+      style={{ top: topOffset ?? 96, maxHeight: `calc(100vh - ${(topOffset ?? 96) + 16}px)` }}
+    >
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
         <span className="text-xs font-semibold text-gray-900">{count} cards selected</span>
         <button onClick={onClose} className="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-50" title="Close (Esc)">✕</button>

@@ -280,6 +280,9 @@ interface CardEditPopupProps {
   // focusNonce bumps to re-trigger the focus even when field/card are unchanged.
   focusField?: EditorTab;
   focusNonce?: number;
+  // Viewport-px top edge for the docked panel — aligned by CardsPanel with the
+  // table header so the toolbar/column names above stay visible.
+  topOffset?: number;
 }
 
 // The correct patch key for the active version's front column.
@@ -594,7 +597,7 @@ function relativeTime(iso: string | null): string {
   return `${Math.round(months / 12)}y ago`;
 }
 
-export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelete, onClose, focusField, focusNonce }: CardEditPopupProps) {
+export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelete, onClose, focusField, focusNonce, topOffset }: CardEditPopupProps) {
   const { activeCardVersion, selectedModel, simpleView } = useSettings();
   const ver = activeCardVersion as CardVersion;
   const [tab, setTab] = useState<EditorTab>('front');
@@ -1245,7 +1248,10 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
   const canUndo = undoDepth[tab] > 0;
 
   return (
-    <div className="fixed right-4 top-24 w-[640px] max-w-[calc(100vw-2rem)] z-40 bg-white rounded-xl border border-gray-200 shadow-2xl flex flex-col max-h-[85vh]">
+    <div
+      className="fixed right-4 w-[640px] max-w-[calc(100vw-2rem)] z-40 bg-white rounded-xl border border-gray-200 shadow-2xl flex flex-col"
+      style={{ top: topOffset ?? 96, maxHeight: `calc(100vh - ${(topOffset ?? 96) + 16}px)` }}
+    >
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
         <span className="text-base font-semibold text-gray-900">
           Edit card #{card.card_number}

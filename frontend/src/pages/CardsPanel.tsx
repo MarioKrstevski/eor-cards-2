@@ -1292,6 +1292,22 @@ export default function CardsPanel({
 
   // ── Cell selection (DOM refs — no React re-render on select) ─────────────
   const tableContainerRef = useRef<HTMLDivElement>(null);
+
+  // Anchor the docked edit popups (single/multi card) to the table's top edge —
+  // where the sticky column-header row sits — so they never cover the toolbar,
+  // Actions/Add buttons, or column names above the table. Re-measured when the
+  // selection opens a popup and on window resize.
+  const [popupTop, setPopupTop] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    if (selectedIds.size === 0) return;
+    const measure = () => {
+      const r = tableContainerRef.current?.getBoundingClientRect();
+      if (r) setPopupTop(r.top);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [selectedIds.size]);
   const selectedTdRef = useRef<HTMLElement | null>(null);
 
   // Load mark types on mount
@@ -3896,6 +3912,7 @@ export default function CardsPanel({
             ankiMode={showAnkiFormat}
             focusField={popupFocus.cardId === card.id ? popupFocus.field : undefined}
             focusNonce={popupFocus.nonce}
+            topOffset={popupTop}
             onSplit={() => doRegenWithMode('split')}
             onDelete={() => setConfirmDeleteCardId(card.id)}
             onClose={() => setSelectedIds(new Set())}
@@ -3910,6 +3927,7 @@ export default function CardsPanel({
           onEditExtras={handleEditExtras}
           onDelete={() => setConfirmBulkDelete('selected')}
           onClose={() => setSelectedIds(new Set())}
+          topOffset={popupTop}
         />
       )}
 
