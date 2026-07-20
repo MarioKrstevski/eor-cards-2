@@ -724,6 +724,10 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      // A modal dialog (Add Cards, big editor, confirms) is open above this
+      // docked panel — Esc belongs to it. Closing here would also clear the
+      // card selection, silently changing e.g. the add-card insert position.
+      if (document.querySelector('[aria-modal="true"]')) return;
       if (historyOpenRef.current) { e.preventDefault(); cancelHistory(); return; }
       onClose();
     };

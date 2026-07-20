@@ -18,7 +18,13 @@ interface MultiCardEditPopupProps {
 // CardsPanel: doRegenWithMode('combine') and handleRebuildFooters.
 export default function MultiCardEditPopup({ count, onCombine, onRebuildFooters, onEditExtras, onDelete, onClose, topOffset }: MultiCardEditPopupProps) {
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // Esc belongs to any modal dialog open above this docked panel — closing
+      // here would also clear the multi-card selection mid-action.
+      if (document.querySelector('[aria-modal="true"]')) return;
+      onClose();
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);

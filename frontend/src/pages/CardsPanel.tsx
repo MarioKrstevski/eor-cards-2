@@ -1328,6 +1328,25 @@ export default function CardsPanel({
     );
   }, [cards, deferredSearchQ]);
 
+  // Mirror for handlers with empty dep lists (handleCellSelect).
+  const filteredCardsRef = useRef<Card[]>([]);
+  filteredCardsRef.current = filteredCards;
+
+  // The card whose row was last clicked (the blue cell outline). Clicking a row
+  // reads as "selecting" the card even though only checkboxes/double-click fill
+  // selectedIds — so Add Cards also accepts it as the insert-after target.
+  const [lastClickedCardId, setLastClickedCardId] = useState<number | null>(null);
+
+  // The card new cards are inserted after: last checkbox-selected, else the
+  // last-clicked row — only if it belongs to the section being added to (a
+  // stale id from another section would make the backend reject the add).
+  const addAfterCard = useMemo(() => {
+    const id = selectedIds.size >= 1 ? [...selectedIds].at(-1) : lastClickedCardId ?? undefined;
+    if (id == null) return null;
+    const c = cards.find((cc) => cc.id === id);
+    return c && c.section_id === effectiveSectionId ? c : null;
+  }, [selectedIds, lastClickedCardId, cards, effectiveSectionId]);
+
   // ── Cell selection handlers ──────────────────────────────────────────────
   const handleCellSelect = useCallback((cellId: string) => {
     if (selectedTdRef.current) {
@@ -1337,6 +1356,8 @@ export default function CardsPanel({
     const colonIdx = cellId.indexOf(':');
     const rowIdx = cellId.slice(0, colonIdx);
     const colId = cellId.slice(colonIdx + 1);
+    const clicked = filteredCardsRef.current[Number(rowIdx)];
+    if (clicked) setLastClickedCardId(clicked.id);
     const td = tableContainerRef.current?.querySelector(
       `td[data-row="${rowIdx}"][data-col="${colId}"]`
     ) as HTMLElement | null;
@@ -2082,9 +2103,9 @@ export default function CardsPanel({
     setAddLoading(true);
     setAddError(null);
     try {
-      // If cards are selected, insert after the last-selected card (Set preserves
-      // insertion order, so .at(-1) is the most recently clicked card).
-      const afterCardId = selectedIds.size >= 1 ? [...selectedIds].at(-1) : undefined;
+      // Insert after the last checkbox-selected card, or the last-clicked row
+      // (see addAfterCard) — matches the "Will insert after…" hint in the modal.
+      const afterCardId = addAfterCard?.id;
       const payload: Parameters<typeof addManualCards>[0] = {
         section_id: effectiveSectionId,
         model: selectedModel,
@@ -2118,7 +2139,7 @@ export default function CardsPanel({
     } finally {
       setAddLoading(false);
     }
-  }, [effectiveSectionId, sectionId, selectedModel, addMode, addFront, addExtra, addTags, addPaste, addCsv, addVersion, addIncludeSupp, selectedIds, fetchCards, topicPath, sectionIds, onReviewChange, refreshUsage]);
+  }, [effectiveSectionId, sectionId, selectedModel, addMode, addFront, addExtra, addTags, addPaste, addCsv, addVersion, addIncludeSupp, addAfterCard, fetchCards, topicPath, sectionIds, onReviewChange, refreshUsage]);
 
   // Resume polling for active jobs on mount and when topic/section context changes (handles page refresh)
   useEffect(() => {
@@ -3842,13 +3863,13 @@ export default function CardsPanel({
                   Heads up: these cards go into <b>{addVersion.toUpperCase()}</b> only — their base front stays empty, so they show as version-only cards.
                 </p>
               )}
-              {selectedIds.size >= 1 ? (
+              {addAfterCard ? (
                 <p className="text-[11px] text-violet-600">
-                  Will insert after card #{cards.find(c => c.id === [...selectedIds].at(-1))?.card_number ?? '?'} (last selected).
+                  Will insert after card <b>#{addAfterCard.card_number}</b> ({selectedIds.size >= 1 ? 'last selected' : 'last clicked row'}).
                 </p>
               ) : (
-                <p className="text-[11px] text-gray-400">
-                  No selection — will append at the end of the section.
+                <p className="text-[11px] font-medium text-amber-600">
+                  No card selected — will be added at the END of the section. To insert after a specific card, close this, click that card's row, and reopen.
                 </p>
               )}
               {addError && <div className="text-xs text-red-600">{addError}</div>}
