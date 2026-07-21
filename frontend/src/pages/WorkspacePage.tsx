@@ -222,9 +222,19 @@ function SectionTreeGroup<T extends SectionLike>({
             </span>
             {totalCards > 0 && <span className="text-[9px] text-gray-400 tabular-nums shrink-0">{totalCards}</span>}
             <button
-              onClick={(e) => { e.stopPropagation(); setViewingGroup(true); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                // Reviewers confuse this with opening a section — make the
+                // read-only combined scope explicit before loading N sections.
+                const n = collectIds(node).length;
+                if (window.confirm(
+                  `This loads all ${n} section${n !== 1 ? 's' : ''} under this topic into one combined READ-ONLY preview.\n\n` +
+                  'You cannot edit content or generate cards from there — to do that, open a specific section instead.\n\n' +
+                  'Open the combined preview?'
+                )) setViewingGroup(true);
+              }}
               className="p-1 rounded text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-colors duration-150 shrink-0"
-              title="View all sections in this group"
+              title="View all sections in this group (read-only combined preview)"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -420,6 +430,10 @@ function GroupViewer({ sectionIds, title, onClose }: { sectionIds: number[]; tit
     return () => document.removeEventListener('keydown', handler);
   }, [onClose]);
 
+  // Key the fetch on the ids' VALUE, not the array identity — the parent builds
+  // a fresh collectIds() array every render, so an identity dep would refetch
+  // (and flash "Loading…") on every 3s job-poll re-render.
+  const idsKey = sectionIds.join(',');
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -427,7 +441,25 @@ function GroupViewer({ sectionIds, title, onClose }: { sectionIds: number[]; tit
       if (!cancelled) { setSections(results); setLoading(false); }
     }).catch(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [sectionIds]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsKey]);
+
+  // Memoized body: React 19 diffs dangerouslySetInnerHTML by object identity,
+  // so inline {__html} literals would re-set every section's innerHTML on each
+  // poll-driven re-render (visible flicker). Stable elements → React bails out.
+  const body = useMemo(() => (
+    <div className="prose prose-sm max-w-none">
+      {sections.map((s, i) => (
+        <div key={s.id} className={i > 0 ? 'mt-8 pt-6 border-t border-gray-200' : ''}>
+          <h2 className="text-base font-bold text-gray-800 mb-1">{s.heading}</h2>
+          {s.curriculum_topic_path && (
+            <p className="text-[10px] text-gray-400 mb-3">{s.curriculum_topic_path}</p>
+          )}
+          <div className="section-content" dangerouslySetInnerHTML={{ __html: s.content_html || s.content_text || '' }} />
+        </div>
+      ))}
+    </div>
+  ), [sections]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -446,19 +478,7 @@ function GroupViewer({ sectionIds, title, onClose }: { sectionIds: number[]; tit
             <p className="text-sm text-gray-400 text-center py-8">Loading sections...</p>
           ) : sections.length === 0 ? (
             <p className="text-sm text-gray-400 text-center py-8">No sections found</p>
-          ) : (
-            <div className="prose prose-sm max-w-none">
-              {sections.map((s, i) => (
-                <div key={s.id} className={i > 0 ? 'mt-8 pt-6 border-t border-gray-200' : ''}>
-                  <h2 className="text-base font-bold text-gray-800 mb-1">{s.heading}</h2>
-                  {s.curriculum_topic_path && (
-                    <p className="text-[10px] text-gray-400 mb-3">{s.curriculum_topic_path}</p>
-                  )}
-                  <div className="section-content" dangerouslySetInnerHTML={{ __html: s.content_html || s.content_text || '' }} />
-                </div>
-              ))}
-            </div>
-          )}
+          ) : body}
         </div>
       </div>
     </div>
