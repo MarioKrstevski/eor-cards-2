@@ -614,7 +614,18 @@ function CurriculumActionBar({
       {/* Action bar */}
       <div className="px-2 py-1.5 bg-slate-50 border-b border-slate-100 flex items-center gap-1 flex-wrap">
         <span className="text-[10px] text-gray-400">{sections.length} section{sections.length !== 1 ? 's' : ''}</span>
-        <button onClick={onPreview} className="px-1.5 py-0.5 text-[10px] font-medium text-gray-600 bg-white border border-gray-200 rounded hover:bg-gray-50">
+        <button
+          onClick={() => {
+            // Reviewers confuse this with opening a section — make the scope
+            // explicit before loading N sections into the combined view.
+            if (window.confirm(
+              `This loads all ${sections.length} section${sections.length !== 1 ? 's' : ''} under this topic into one combined READ-ONLY preview.\n\n` +
+              'You cannot edit content or generate cards from there — to do that, open a specific section instead.\n\n' +
+              'Open the combined preview?'
+            )) onPreview();
+          }}
+          className="px-1.5 py-0.5 text-[10px] font-medium text-gray-600 bg-white border border-gray-200 rounded hover:bg-gray-50"
+        >
           Preview
         </button>
         <button

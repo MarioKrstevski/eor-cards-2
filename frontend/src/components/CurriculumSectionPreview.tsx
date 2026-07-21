@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { getSection } from '../api';
 import type { CurriculumSection, SectionDetail } from '../types';
 
@@ -32,6 +32,54 @@ export default function CurriculumSectionPreview({ expandedPath, sections, onClo
   // We detect this by checking if any section went deeper (has longer path)
   const hasDeepSections = sections.some(s => (s.curriculum_topic_path ?? '').startsWith(expandedPath + ' > '));
 
+  // Memoize the body: React 19 diffs dangerouslySetInnerHTML by OBJECT identity,
+  // so inline {__html} literals would re-set every section's innerHTML on each
+  // parent re-render (the 3s job poll) — the "flickering modal". Stable element
+  // identity here makes React bail out of the whole subtree between loads.
+  const body = useMemo(() => (
+    <div className="flex-1 overflow-y-auto p-8 space-y-10">
+      {chunks.map((chunk) => {
+        const meta = sections.find(s => s.id === chunk.id);
+        const isOrphan = hasDeepSections && meta?.curriculum_topic_path === expandedPath;
+        const subPath = meta?.curriculum_topic_path
+          ? meta.curriculum_topic_path.slice(expandedPath.length).replace(/^ > /, '')
+          : '';
+        return (
+          <div key={chunk.id}>
+            {/* Section heading bar */}
+            <div className={`flex items-start gap-3 mb-4 pb-3 border-b ${isOrphan ? 'border-amber-200' : 'border-gray-200'}`}>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-bold text-gray-900">{chunk.heading}</h3>
+                {subPath && (
+                  <p className="text-xs text-gray-500 mt-0.5">{subPath}</p>
+                )}
+                {meta?.topic_tree_name && (
+                  <p className="text-[10px] text-gray-400 mt-0.5">Source: {meta.topic_tree_name}</p>
+                )}
+              </div>
+              {isOrphan && (
+                <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5 font-medium shrink-0 mt-0.5">
+                  No leaf match
+                </span>
+              )}
+              {chunk.card_count > 0 && (
+                <span className="text-[10px] bg-blue-50 text-blue-700 border border-blue-100 rounded px-1.5 py-0.5 font-medium shrink-0 mt-0.5">
+                  {chunk.card_count} cards
+                </span>
+              )}
+            </div>
+            {/* Section content */}
+            <div
+              className="section-content prose prose-sm max-w-none"
+              dangerouslySetInnerHTML={{ __html: chunk.content_html }}
+            />
+          </div>
+        );
+      })}
+    </div>
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [chunks, sections, expandedPath, hasDeepSections]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div
@@ -62,48 +110,7 @@ export default function CurriculumSectionPreview({ expandedPath, sections, onClo
           <div className="flex-1 flex items-center justify-center">
             <p className="text-sm text-gray-400">Loading {sections.length} sections…</p>
           </div>
-        ) : (
-          <div className="flex-1 overflow-y-auto p-8 space-y-10">
-            {chunks.map((chunk) => {
-              const meta = sections.find(s => s.id === chunk.id);
-              const isOrphan = hasDeepSections && meta?.curriculum_topic_path === expandedPath;
-              const subPath = meta?.curriculum_topic_path
-                ? meta.curriculum_topic_path.slice(expandedPath.length).replace(/^ > /, '')
-                : '';
-              return (
-                <div key={chunk.id}>
-                  {/* Section heading bar */}
-                  <div className={`flex items-start gap-3 mb-4 pb-3 border-b ${isOrphan ? 'border-amber-200' : 'border-gray-200'}`}>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-base font-bold text-gray-900">{chunk.heading}</h3>
-                      {subPath && (
-                        <p className="text-xs text-gray-500 mt-0.5">{subPath}</p>
-                      )}
-                      {meta?.topic_tree_name && (
-                        <p className="text-[10px] text-gray-400 mt-0.5">Source: {meta.topic_tree_name}</p>
-                      )}
-                    </div>
-                    {isOrphan && (
-                      <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5 font-medium shrink-0 mt-0.5">
-                        No leaf match
-                      </span>
-                    )}
-                    {chunk.card_count > 0 && (
-                      <span className="text-[10px] bg-blue-50 text-blue-700 border border-blue-100 rounded px-1.5 py-0.5 font-medium shrink-0 mt-0.5">
-                        {chunk.card_count} cards
-                      </span>
-                    )}
-                  </div>
-                  {/* Section content */}
-                  <div
-                    className="section-content prose prose-sm max-w-none"
-                    dangerouslySetInnerHTML={{ __html: chunk.content_html }}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        )}
+        ) : body}
       </div>
     </div>
   );
