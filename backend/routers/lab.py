@@ -87,6 +87,20 @@ def card_history(card_id: int, db: Session = Depends(get_db)):
     ]
 
 
+@router.delete("/card/{card_id}/history")
+def delete_card_history_after(card_id: int, after_seq: int, db: Session = Depends(get_db)):
+    """Delete a card's edit events with seq > after_seq. Used by the History
+    panel's "restore and discard newer edits": the restored version becomes the
+    latest, and the events made after it are gone for good."""
+    deleted = (
+        db.query(EditEvent)
+        .filter(EditEvent.card_id == card_id, EditEvent.seq > after_seq)
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {"deleted": deleted}
+
+
 # ── Finalize a section ────────────────────────────────────────────────────────
 @router.post("/finalize/{section_id}")
 def finalize_section(section_id: int, db: Session = Depends(get_db)):

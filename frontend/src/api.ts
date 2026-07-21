@@ -852,6 +852,12 @@ export async function getCardHistory(cardId: number): Promise<LabHistoryEntry[]>
   return res.data;
 }
 
+// Delete a card's edit events newer than after_seq (restore-and-discard).
+export async function deleteCardHistoryAfter(cardId: number, afterSeq: number): Promise<{ deleted: number }> {
+  const res = await http.delete<{ deleted: number }>(`/lab/card/${cardId}/history`, { params: { after_seq: afterSeq } });
+  return res.data;
+}
+
 // ── Lab admin endpoints ────────────────────────────────────────────────────────
 
 export interface LabFinalizationSummary {

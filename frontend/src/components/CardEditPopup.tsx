@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Card } from '../types';
 import { useSettings } from '../context/SettingsContext';
-import { rewordSnippet, regenerateCardPreview, recordEvents, getCardHistory } from '../api';
+import { rewordSnippet, regenerateCardPreview, recordEvents, getCardHistory, deleteCardHistoryAfter } from '../api';
 import type { LabEvent } from '../api';
 
 type CardVersion = 'base' | 'v1' | 'v2' | 'v3';
@@ -575,6 +575,9 @@ interface HistoryVersion {
   // Which field the change touched ('front'/'extra'); used to switch the editor
   // tab to the changed field when previewing. Origins span both → undefined.
   field?: string;
+  // Persisted per-card sequence number; undefined for unsaved in-progress
+  // entries. Needed by restore-and-discard (delete events with seq > this).
+  seq?: number;
 }
 
 // Short git-log-style relative time. Null/blank created_at (in-progress unsaved
@@ -643,6 +646,9 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
   // Snapshot of the working editor content taken when the panel opens, so
   // browsing/cancelling never loses an in-progress edit.
   const historySnapshotRef = useRef<{ front: string; extra: string } | null>(null);
+  // Set when the user restores a version AND opts to discard the newer edits:
+  // applied on Save (events with seq > this are deleted server-side first).
+  const pendingTruncateSeqRef = useRef<number | null>(null);
 
   // Load the draft into the editors when the target card or active version
   // changes (never on background refresh mid-edit — id/version are stable).
@@ -674,6 +680,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     // Close any open history panel (its snapshot belonged to the old card).
     setHistoryOpen(false);
     setHistoryVersions([]);
+    pendingTruncateSeqRef.current = null;
     setHistoryIndex(0);
     historySnapshotRef.current = null;
     refreshContentState();
@@ -911,6 +918,16 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
       setTimeout(() => setRewordHint(null), 2500);
       return;
     }
+    // Hard-stop when the selection sweeps in the bolded anchor or a cloze —
+    // the model tends to re-cloze/re-bold surrounding text in that case.
+    if (rangeHasBold(range, root) || rangeHasCloze(range, root)) {
+      window.alert(
+        'Your selection includes a bolded anchor or a cloze term.\n\n' +
+        'Reword only rephrases plain text. Select just the words around the anchor/cloze (not the anchor or cloze itself) — ' +
+        'or, if you want the whole card rewritten, use the Regenerate button instead.'
+      );
+      return;
+    }
 
     // Selection → stored HTML (clozes/bold intact).
     const holder = document.createElement('div');
@@ -968,6 +985,15 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
     if (!hasRewordableProse(er.range, er.root)) {
       setRewordHint('That selection is a bold/cloze term — nothing to reword.');
       setTimeout(() => setRewordHint(null), 2500);
+      return;
+    }
+    // Same hard-stop as executeReword, but before opening the guidance input.
+    if (rangeHasBold(er.range, er.root) || rangeHasCloze(er.range, er.root)) {
+      window.alert(
+        'Your selection includes a bolded anchor or a cloze term.\n\n' +
+        'Reword only rephrases plain text. Select just the words around the anchor/cloze (not the anchor or cloze itself) — ' +
+        'or, if you want the whole card rewritten, use the Regenerate button instead.'
+      );
       return;
     }
     capturedRangeRef.current = er.range.cloneRange();
@@ -1127,6 +1153,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
           extra: h.extra,
           created_at: h.created_at,
           field: h.field,
+          seq: h.seq,
         })),
         ...inProgress,
       ];
@@ -1161,6 +1188,21 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
   // Restore the previewed version as the new working content (user still has to
   // Save to persist). Leaves the previewed content in the editors.
   function restoreVersion() {
+    // Restoring an older version: offer to discard everything made after it.
+    // "Newer" = persisted events with a higher seq + any unsaved in-progress
+    // edits from this session (those are always newer than persisted ones).
+    const restoredSeq = historyVersions[historyIndex]?.seq;
+    if (restoredSeq != null) {
+      const newer = historyVersions.filter((x) => x.seq == null || x.seq > restoredSeq).length;
+      if (newer > 0 && window.confirm(
+        `Also delete the ${newer} newer edit${newer === 1 ? '' : 's'} from this card's history?\n\n` +
+        'OK — this version becomes the latest; the newer edits can no longer be restored (applied when you Save).\n' +
+        'Cancel — keep them; the restore just goes on top of the history.'
+      )) {
+        pendingTruncateSeqRef.current = restoredSeq;
+        eventsRef.current = [];  // unsaved in-progress edits are newer too — drop them
+      }
+    }
     pushUndo('front');
     pushUndo('extra');
     const fr = editorRef.current;
@@ -1237,6 +1279,12 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
       [frontPatchKey(ver)]: fromEditorHtml(root),
       [extraPatchKey(ver)]: extraVal.trim() ? extraVal : null,
     });
+    // Apply a pending "restore and discard newer edits" BEFORE appending new
+    // events, so their seq continues right after the restored version.
+    if (pendingTruncateSeqRef.current != null) {
+      try { await deleteCardHistoryAfter(card.id, pendingTruncateSeqRef.current); } catch { /* best-effort */ }
+      pendingTruncateSeqRef.current = null;
+    }
     // Persist captured edit events — best-effort, MUST never break Save.
     if (eventsRef.current.length) {
       try { await recordEvents(card.section_id, card.id, eventsRef.current); } catch { /* swallowed */ }
