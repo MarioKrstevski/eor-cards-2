@@ -567,6 +567,13 @@ function historyLabel(kind: string, field?: string): string {
 }
 
 // A version to preview/restore — one row in the history dropdown.
+// What an AI op recorded alongside its event: the guidance prompt (if any) and
+// the text that was highlighted when the button was clicked.
+interface ActionMeta {
+  prompt?: string | null;
+  selection?: string | null;
+}
+
 interface HistoryVersion {
   label: string;
   front_html: string;
@@ -578,6 +585,21 @@ interface HistoryVersion {
   // Persisted per-card sequence number; undefined for unsaved in-progress
   // entries. Needed by restore-and-discard (delete events with seq > this).
   seq?: number;
+  kind?: string;
+  meta?: ActionMeta | null;
+}
+
+// AI ops whose history entries get the ⓘ prompt/selection details icon.
+const AI_META_KINDS = ['reword', 'guided_reword', 'regenerate'];
+
+function metaDetails(v: HistoryVersion): string {
+  const m = v.meta ?? {};
+  const prompt = (m.prompt ?? '').trim();
+  const sel = (m.selection ?? '').trim();
+  const selLine = v.kind === 'regenerate'
+    ? (sel || '(whole card — Regenerate does not use a selection)')
+    : (sel || 'not recorded (older edit)');
+  return `Prompt: ${prompt || 'No prompt was used.'}\n\nHighlighted text: ${selLine}`;
 }
 
 // Short git-log-style relative time. Null/blank created_at (in-progress unsaved
@@ -835,9 +857,10 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
   }
 
   // Push an event for a completed button/AI op and re-baseline lastCaptured.
-  function captureAction(kind: string, field: EditorTab) {
+  // AI ops pass meta (guidance prompt + highlighted selection) for the history ⓘ.
+  function captureAction(kind: string, field: EditorTab, meta?: ActionMeta) {
     const s = serializeState();
-    eventsRef.current.push({ kind, field, front_html: s.front, extra: s.extra });
+    eventsRef.current.push({ kind, field, front_html: s.front, extra: s.extra, meta });
     lastCapturedRef.current = { front: s.front, extra: s.extra ?? '' };
   }
 
@@ -959,7 +982,10 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
       range.deleteContents();
       range.insertNode(frag);
       normalize(root);
-      captureAction(guidance ? 'guided_reword' : 'reword', 'front');
+      captureAction(guidance ? 'guided_reword' : 'reword', 'front', {
+        prompt: guidance?.trim() || null,
+        selection: selText.trim() || null,
+      });
     } catch {
       /* leave the text untouched on failure */
     } finally {
@@ -1060,7 +1086,7 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
           extraEl.innerHTML = toEditorHtml(extra || '', ankiMode);
         }
       }
-      captureAction('regenerate', 'front');
+      captureAction('regenerate', 'front', { prompt: regenPrompt.trim() || null, selection: null });
       refreshSelectionState();
       refreshContentState();
       // Close the inline row and clear the prompt — result is now in the editor.
@@ -1145,6 +1171,8 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
         extra: e.extra,
         created_at: null,
         field: e.field,
+        kind: e.kind,
+        meta: (e.meta ?? null) as ActionMeta | null,
       }));
       const chron: HistoryVersion[] = [
         ...persisted.map((h) => ({
@@ -1154,6 +1182,8 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
           created_at: h.created_at,
           field: h.field,
           seq: h.seq,
+          kind: h.kind,
+          meta: (h.meta ?? null) as ActionMeta | null,
         })),
         ...inProgress,
       ];
@@ -1382,6 +1412,20 @@ export default function CardEditPopup({ card, onSave, ankiMode, onSplit, onDelet
                   }`}
                 >
                   <span className="font-medium truncate">{v.label}</span>
+                  {v.kind && AI_META_KINDS.includes(v.kind) && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      title={metaDetails(v)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.alert(`${v.label}\n\n${metaDetails(v)}`);
+                      }}
+                      className="shrink-0 px-1 rounded text-[11px] leading-none text-violet-500 hover:bg-violet-100 cursor-help"
+                    >
+                      ⓘ
+                    </span>
+                  )}
                   <span className="text-[10px] text-gray-400 shrink-0">{relativeTime(v.created_at)}</span>
                 </button>
               ))}
